@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://provenance.dev/upc/1.1.0/schemas/event.schema.json",
+  "title": "UPC Activity Event",
+  "description": "One line of provenance/events.jsonl: a recorded step in how the corpus was built or corrected. Append-only; a correction or removal is a new event, never a rewrite (§07, §10).",
+  "type": "object",
+  "required": ["event_id", "activity_type", "tool", "started_at", "status"],
+  "properties": {
+    "event_id": { "type": "string", "description": "evt-<counter>, sequential and monotonic within one journal." },
+    "activity_type": { "$ref": "../vocab/vocab.json#/$defs/activity_type" },
+    "tool": { "type": "string" },
+    "tool_version": { "type": "string" },
+    "model": { "type": "string" },
+    "prompt_version": { "type": "string" },
+    "person": { "type": ["string", "null"] },
+    "started_at": { "type": "string", "format": "date-time" },
+    "ended_at": { "type": ["string", "null"], "format": "date-time" },
+    "inputs": {
+      "type": "object",
+      "properties": {
+        "source_ids": { "type": "array", "items": { "type": "string" } },
+        "representation_refs": { "type": "array", "items": { "type": "string" } },
+        "extraction_ids": { "type": "array", "items": { "type": "string" } },
+        "generation_ids": { "type": "array", "items": { "type": "string" } },
+        "synthesis_ids": { "type": "array", "items": { "type": "string" } }
+      },
+      "additionalProperties": true
+    },
+    "outputs": {
+      "type": "object",
+      "properties": {
+        "source_ids": { "type": "array", "items": { "type": "string" } },
+        "representation_refs": { "type": "array", "items": { "type": "string" } },
+        "extraction_ids": { "type": "array", "items": { "type": "string" } },
+        "generation_ids": { "type": "array", "items": { "type": "string" } },
+        "synthesis_ids": { "type": "array", "items": { "type": "string" } }
+      },
+      "additionalProperties": true
+    },
+    "status": { "$ref": "../vocab/vocab.json#/$defs/status" },
+    "notes": { "type": ["string", "null"] }
+  },
+  "additionalProperties": true
+}

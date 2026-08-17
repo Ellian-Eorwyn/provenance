@@ -1,0 +1,55 @@
+{
+  "upc_spec_version": "1.1.0",
+  "corpus_id": "cor-bd9a8eb07fb8",
+  "title": "Migration downtime research",
+  "readme": "Universal Provenance Corpus. Work only from ids resolved through the manifests; sources are immutable; derived objects link back via provenance.derived_from. Quotations are verified byte-for-byte (spec/03).",
+  "rules_note": "spec/00-overview.md",
+  "created": "2026-08-17T12:00:00Z",
+  "modified": "2026-08-17T12:00:00Z",
+  "generated_by": {
+    "tool": "pi-forge",
+    "tool_version": "0.2.0"
+  },
+  "sections": {
+    "sources": "sources/",
+    "extractions": "extractions/",
+    "syntheses": "syntheses/",
+    "provenance": "provenance/events.jsonl",
+    "sources_csv": "sources.csv",
+    "extractions_csv": "extractions.csv",
+    "index_html": "index.html"
+  },
+  "counts": {
+    "sources": 2,
+    "representations": 5,
+    "extractions": 3,
+    "generations": 1,
+    "syntheses": 1
+  },
+  "sources": [
+    {
+      "source_id": "src-604878cb9e3d",
+      "path": "sources/cloudlore-2023-blue-green-deploys/",
+      "title": "Blue-green deployments explained",
+      "primary_url": "https://cloudlore.example/blog/blue-green",
+      "sha256": "sha256:43835cc18b3442cc7ba81a00d62a2ee5a95ac5512c17e4507b15c93e874b759d"
+    },
+    {
+      "source_id": "src-b95bb22d8232",
+      "path": "sources/watchdog-2024-migrate-with-no-downtime/",
+      "title": "How to migrate a WordPress site with no downtime",
+      "primary_url": "https://watchdogstudio.example/blog/migrate-with-no-downtime",
+      "sha256": "sha256:411adf136fbbba9fc09390fc34428469ea62f7cb28970452f41deb8c7a84fb07"
+    }
+  ],
+  "syntheses": [
+    {
+      "synthesis_id": "syn-78fa307f3a32",
+      "path": "syntheses/syn-78fa307f3a32/",
+      "title": "Zero-downtime migration approaches"
+    }
+  ],
+  "integrity": {
+    "schema_hash": "sha256:683f31b5b5e48f9ca2e924dba3d75dbc8f425b0a7115a06618b07a1795b8c86e"
+  }
+}

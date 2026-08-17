@@ -1,0 +1,32 @@
+{
+  "type": "summary",
+  "title": "Summary",
+  "output": {
+    "path": "sources/note-migration/generated/gen-da726886de9b.md",
+    "media_type": "text/markdown",
+    "sha256": "sha256:6598eab8c027d9d35ca33dccd1f41c96b4cafd5889e1b3b9ecd050a6db44b034"
+  },
+  "stale": false,
+  "provenance": {
+    "produced_by": {
+      "tool": "t",
+      "model": "m",
+      "method": "model"
+    },
+    "created_at": "2026-08-17T12:00:00Z",
+    "derived_from": {
+      "source_ids": [
+        "src-c76847068a0a"
+      ],
+      "representation_refs": [
+        "rep-8389412e9ea7"
+      ],
+      "extraction_ids": [
+        "ext-39e7147f61a4"
+      ]
+    },
+    "input_digest": "sha256:8389412e9ea792add58bb528fff88b6d201eb0573272bfc144091c01d365dabd",
+    "activity_ref": "evt-000001"
+  },
+  "generation_id": "gen-da726886de9b"
+}

@@ -1,0 +1,106 @@
+{
+  "source_id": "src-b95bb22d8232",
+  "aliases": {
+    "researchassistant": "000123"
+  },
+  "source_kind": "url",
+  "title": "How to migrate a WordPress site with no downtime",
+  "bibliographic": {
+    "item_type": "webpage",
+    "title": "How to migrate a WordPress site with no downtime",
+    "authors": [
+      {
+        "literal": "Watchdog Studio"
+      }
+    ],
+    "issued": {
+      "date_parts": [
+        [
+          2024
+        ]
+      ]
+    },
+    "url": "https://watchdogstudio.example/blog/migrate-with-no-downtime"
+  },
+  "retrieval": {
+    "original_url": "https://watchdogstudio.example/blog/migrate-with-no-downtime",
+    "final_url": "https://watchdogstudio.example/blog/migrate-with-no-downtime",
+    "fetch_status": "success",
+    "http_status": 200,
+    "content_type": "text/html; charset=UTF-8",
+    "fetch_method": "http",
+    "fetched_at": "2026-08-17T12:00:00Z",
+    "sha256": "sha256:411adf136fbbba9fc09390fc34428469ea62f7cb28970452f41deb8c7a84fb07"
+  },
+  "representations": [
+    {
+      "representation_id": "rep-411adf136fbb",
+      "role": "raw_html",
+      "media_type": "text/html",
+      "path": "sources/watchdog-2024-migrate-with-no-downtime/representations/raw.html",
+      "sha256": "sha256:411adf136fbbba9fc09390fc34428469ea62f7cb28970452f41deb8c7a84fb07",
+      "bytes": 311,
+      "produced_by": "http",
+      "provenance": {
+        "produced_by": {
+          "tool": "pi-forge",
+          "tool_version": "0.2.0",
+          "method": "http"
+        },
+        "created_at": "2026-08-17T12:00:00Z"
+      }
+    },
+    {
+      "representation_id": "rep-53de3cc48d82",
+      "role": "clean_markdown",
+      "media_type": "text/markdown",
+      "path": "sources/watchdog-2024-migrate-with-no-downtime/representations/clean.md",
+      "sha256": "sha256:53de3cc48d826dab705aa4f8af91145a1388ecd93f630726fe6fc136e0cc0c9c",
+      "char_count": 355,
+      "parent_representation_ref": "rep-411adf136fbb",
+      "produced_by": "readability",
+      "provenance": {
+        "produced_by": {
+          "tool": "pi-forge",
+          "tool_version": "0.2.0",
+          "method": "readability"
+        },
+        "created_at": "2026-08-17T12:00:00Z"
+      }
+    },
+    {
+      "representation_id": "img-b26e480807a2",
+      "role": "image",
+      "media_type": "image/svg+xml",
+      "path": "sources/watchdog-2024-migrate-with-no-downtime/representations/images/figure.svg",
+      "sha256": "sha256:b26e480807a2175e25323e9e058f4733097a7111e90ac73e8ad66579e6e7e3bd",
+      "parent_representation_ref": "rep-53de3cc48d82",
+      "description": "Bar note: staging-first migration shows zero downtime.",
+      "produced_by": "conversion",
+      "dimensions": {
+        "width": 240,
+        "height": 120
+      },
+      "provenance": {
+        "produced_by": {
+          "tool": "pi-forge",
+          "tool_version": "0.2.0",
+          "method": "conversion"
+        },
+        "created_at": "2026-08-17T12:00:00Z"
+      }
+    }
+  ],
+  "extractions_path": "sources/watchdog-2024-migrate-with-no-downtime/extractions.jsonl",
+  "generations": [
+    "gen-9a03fbd7e3ff"
+  ],
+  "provenance": {
+    "produced_by": {
+      "tool": "pi-forge",
+      "tool_version": "0.2.0",
+      "method": "http"
+    },
+    "created_at": "2026-08-17T12:00:00Z"
+  }
+}

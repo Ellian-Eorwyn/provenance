@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://provenance.dev/upc/1.1.0/schemas/provenance-stamp.schema.json",
+  "title": "UPC Provenance Stamp",
+  "description": "Embedded on every derived object (representation, extraction, generation, synthesis). Records who/what produced it, when, how, and what it was derived from. input_digest lives here and only here.",
+  "type": "object",
+  "required": ["produced_by", "created_at"],
+  "properties": {
+    "produced_by": {
+      "type": "object",
+      "required": ["tool"],
+      "properties": {
+        "tool": { "type": "string", "description": "Software that created the object; \"manual\" for a human edit." },
+        "tool_version": { "type": "string" },
+        "model": { "type": "string", "description": "Present when a model produced the object." },
+        "method": { "$ref": "../vocab/vocab.json#/$defs/produced_by_method", "description": "How the object was produced (http, readability, ocr, conversion, vision, model, manual, import, …). Read by the trust boundary (§05) and the browser badges." },
+        "prompt_version": { "type": "string" },
+        "person": { "type": ["string", "null"], "description": "Set when a human produced or edited the object." }
+      },
+      "additionalProperties": true
+    },
+    "created_at": { "type": "string", "format": "date-time" },
+    "modified_at": { "type": ["string", "null"], "format": "date-time", "description": "Set when the object is later corrected in place by an allowed edit; created_at is preserved." },
+    "derived_from": {
+      "type": "object",
+      "properties": {
+        "source_ids": { "type": "array", "items": { "type": "string" } },
+        "representation_refs": { "type": "array", "items": { "type": "string" } },
+        "extraction_ids": { "type": "array", "items": { "type": "string" } },
+        "generation_ids": { "type": "array", "items": { "type": "string" } },
+        "synthesis_ids": { "type": "array", "items": { "type": "string" } }
+      },
+      "additionalProperties": true
+    },
+    "input_digest": { "type": "string", "description": "sha256 of the exact bytes consumed (single input) or of the JCS input manifest (multi-input, §07). Drives staleness." },
+    "activity_ref": { "type": "string", "description": "Optional evt-id linking to the activity journal." }
+  },
+  "additionalProperties": true
+}

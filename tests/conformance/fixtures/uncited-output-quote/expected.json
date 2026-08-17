@@ -1,0 +1,6 @@
+{
+  "fixture": "uncited-output-quote",
+  "expect": [
+    "output_quote_uncited"
+  ]
+}

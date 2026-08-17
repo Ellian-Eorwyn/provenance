@@ -1,0 +1,2 @@
+{"event_id":"evt-000001","activity_type":"generate","tool":"t","started_at":"2026-08-17T12:00:00Z","ended_at":"2026-08-17T12:00:00Z","inputs":{"representation_refs":["rep-8389412e9ea7"]},"outputs":{"generation_ids":["gen-da726886de9b"]},"status":"success","notes":null}
+{"event_id":"evt-000002","activity_type":"synthesize","tool":"t","started_at":"2026-08-17T12:00:00Z","ended_at":"2026-08-17T12:00:00Z","inputs":{"extraction_ids":["ext-39e7147f61a4"]},"outputs":{"synthesis_ids":["syn-908828cd665d"]},"status":"success","notes":null}

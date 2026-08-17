@@ -1,0 +1,44 @@
+{
+  "type": "answer",
+  "title": "Answer",
+  "question": "How do you migrate without downtime?",
+  "claims": [
+    {
+      "claim_id": "cl-1",
+      "text": "Cut over DNS after validating staging.",
+      "evidence_ids": [
+        "ext-39e7147f61a4"
+      ],
+      "source_ids": [
+        "src-c76847068a0a"
+      ],
+      "confidence": "high",
+      "notes": null
+    }
+  ],
+  "output": {
+    "path": "syntheses/syn-908828cd665d/synthesis.md",
+    "media_type": "text/markdown",
+    "sha256": "sha256:e5540b1911d5094437253e83551a250105ef612beebd8dbc0b8397a6fc276380"
+  },
+  "stale": false,
+  "provenance": {
+    "produced_by": {
+      "tool": "t",
+      "model": "m",
+      "method": "model"
+    },
+    "created_at": "2026-08-17T12:00:00Z",
+    "derived_from": {
+      "source_ids": [
+        "src-c76847068a0a"
+      ],
+      "extraction_ids": [
+        "ext-39e7147f61a4"
+      ]
+    },
+    "input_digest": "sha256:8389412e9ea792add58bb528fff88b6d201eb0573272bfc144091c01d365dabd",
+    "activity_ref": "evt-000002"
+  },
+  "synthesis_id": "syn-908828cd665d"
+}

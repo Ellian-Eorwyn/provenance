@@ -1,0 +1,60 @@
+{
+  "type": "answer",
+  "title": "Zero-downtime migration approaches",
+  "question": "How do you migrate a WordPress site without downtime?",
+  "claims": [
+    {
+      "claim_id": "cl-0001",
+      "text": "Cutting over DNS only after validating a staging copy avoids visitor-facing downtime.",
+      "evidence_ids": [
+        "ext-d8129f9b7114"
+      ],
+      "source_ids": [
+        "src-b95bb22d8232"
+      ],
+      "confidence": "high",
+      "notes": null
+    },
+    {
+      "claim_id": "cl-0002",
+      "text": "Blue-green routing makes switchover and rollback instant.",
+      "evidence_ids": [
+        "ext-77004eca0a27"
+      ],
+      "source_ids": [
+        "src-604878cb9e3d"
+      ],
+      "confidence": "medium",
+      "notes": null
+    }
+  ],
+  "output": {
+    "path": "syntheses/syn-78fa307f3a32/synthesis.md",
+    "media_type": "text/markdown",
+    "sha256": "sha256:a126ff1f9ebc5727cfb47d350bb9ddcf34ce1f890664deb49af8100c1c321936"
+  },
+  "stale": false,
+  "provenance": {
+    "produced_by": {
+      "tool": "pi-forge",
+      "tool_version": "0.2.0",
+      "model": "local-llm",
+      "method": "model",
+      "prompt_version": "deep-research/report@1"
+    },
+    "created_at": "2026-08-17T12:00:00Z",
+    "derived_from": {
+      "source_ids": [
+        "src-b95bb22d8232",
+        "src-604878cb9e3d"
+      ],
+      "extraction_ids": [
+        "ext-d8129f9b7114",
+        "ext-77004eca0a27"
+      ]
+    },
+    "input_digest": "sha256:69bcfb26fce3d42b6a8ad1803fa712889674f6b2bb2293fc796ebfd5bee10d89",
+    "activity_ref": "evt-000005"
+  },
+  "synthesis_id": "syn-78fa307f3a32"
+}

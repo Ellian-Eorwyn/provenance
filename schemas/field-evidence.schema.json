@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://provenance.dev/upc/1.1.0/schemas/field-evidence.schema.json",
+  "title": "UPC Field Evidence Map",
+  "description": "Per-field provenance: maps a field name to the evidence that justifies its value. A source-level sibling of `bibliographic`. manual_override:true records a human correction and MUST be preserved across regeneration.",
+  "type": "object",
+  "additionalProperties": {
+    "type": "object",
+    "properties": {
+      "value": { "description": "The justified value (string, or a structured value such as a CSL date)." },
+      "origin": { "$ref": "../vocab/vocab.json#/$defs/field_origin" },
+      "evidence": { "type": "string" },
+      "confidence": { "$ref": "../vocab/vocab.json#/$defs/confidence_score" },
+      "locator": { "$ref": "locator.schema.json" },
+      "manual_override": { "type": "boolean" }
+    },
+    "additionalProperties": true
+  }
+}

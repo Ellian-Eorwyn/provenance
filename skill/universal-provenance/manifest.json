@@ -1,0 +1,85 @@
+{
+  "name": "universal-provenance",
+  "type": "provenance-skill",
+  "version": "1.1.0",
+  "upc_spec_version": "1.1.0",
+  "description": "Read, write, validate, verify, browse, and export a Universal Provenance Corpus (UPC) with byte-exact quotation gates.",
+  "skill_file": "SKILL.md",
+  "scripts_dir": "scripts",
+  "references_dir": "references",
+  "restart_safe": true,
+  "tools": [
+    {
+      "name": "upc_validate",
+      "command": "node scripts/upc.mjs validate",
+      "args_hint": "<corpus-dir> [--strict]",
+      "description": "Validate a UPC corpus against the spec/08 rule registry: schema conformance, referential integrity, content-addressed id recompute, and the hop-A/B/C quotation gates (byte-exact). Prints a bounded JSON report keyed by error code; level is computed from rules passed. Exits non-zero on any error.",
+      "destructive": false
+    },
+    {
+      "name": "upc_verify_quotes",
+      "command": "node scripts/upc.mjs verify-quotes",
+      "args_hint": "<file> --corpus <corpus-dir> [--strict]",
+      "description": "Run the hop-C gate over any output file: every \"…\" [ext-id] marker must equal that extraction's direct_quote exactly. The gate for anything an LLM emits with quotations. Exits non-zero on any mismatch.",
+      "destructive": false
+    },
+    {
+      "name": "upc_quote",
+      "command": "node scripts/upc.mjs quote",
+      "args_hint": "<ext-id> --corpus <corpus-dir> [--narrow <start> <end>]",
+      "description": "Print an exact, ready-to-paste citation marker \"<quote>\" [ext-id] for a verified extraction. --narrow mints a sub-quote extraction (deterministic slice) and prints its marker. The copy-don't-retype path.",
+      "destructive": false
+    },
+    {
+      "name": "upc_verify",
+      "command": "node scripts/upc.mjs verify",
+      "args_hint": "<ext-id> --corpus <corpus-dir>",
+      "description": "Report the full verification chain (hop A rep-hash + hop B quote-gate) for one extraction, with a reanchor hint if the quote drifted.",
+      "destructive": false
+    },
+    {
+      "name": "upc_regen",
+      "command": "node scripts/upc.mjs regen",
+      "args_hint": "<corpus-dir>",
+      "description": "Regenerate corpus.json (counts, indexes, schema_hash), the CSV mirrors, and index.html from the objects, atomically. The projection-refresh and crash-recovery command.",
+      "destructive": true
+    },
+    {
+      "name": "upc_export",
+      "command": "node scripts/upc.mjs export",
+      "args_hint": "<corpus-dir> --format bibtex|ris|csl-json|jsonl|markdown [-o <file>]",
+      "description": "Export bibliographic and object projections: CSL-JSON (authoritative), BibTeX, RIS, JSONL (raw objects), or a Markdown bibliography.",
+      "destructive": false
+    },
+    {
+      "name": "upc_reanchor",
+      "command": "node scripts/upc.mjs reanchor",
+      "args_hint": "<ext-id>|--all --corpus <corpus-dir> [--to <rep-id>]",
+      "description": "After a representation is re-rendered, byte-exact-search the successor for each affected quote: a unique match mints a replacement extraction (supersedes chain); zero or multiple matches flag needs_review. Never re-anchors silently.",
+      "destructive": true
+    },
+    {
+      "name": "upc_build_index",
+      "command": "node scripts/upc.mjs build-index",
+      "args_hint": "<corpus-dir>",
+      "description": "Generate a self-contained, offline index.html browser (a projection): findability, the provenance graph both ways, and a verification badge on every quotation with context read from the representation at the locator. Read-only, written atomically.",
+      "destructive": false
+    },
+    {
+      "name": "upc_mint",
+      "command": "node scripts/upc.mjs mint",
+      "args_hint": "<src|ext|gen|syn>  (JSON object on stdin)",
+      "description": "Compute a content-addressed id (spec/06 recipe) for an object read from stdin. Deterministic across implementations.",
+      "destructive": false
+    }
+  ],
+  "requires": {
+    "runtime": "node>=18",
+    "schemas": "UPC schemas/ and vocab/ (walk-up discovery, or UPC_SCHEMA_DIR / UPC_VOCAB_DIR)"
+  },
+  "safety": {
+    "destructive_by_default": false,
+    "requires_review_for_filesystem_changes": true,
+    "preserve_provenance_when_applicable": true
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://provenance.dev/upc/1.1.0/schemas/extraction-set.schema.json",
+  "title": "UPC Extraction Set Manifest",
+  "description": "manifest.json for a query-driven extraction set spanning many sources (extractions/<set-id>/manifest.json). Points at items.jsonl, whose lines each validate against extraction.schema.json.",
+  "type": "object",
+  "required": ["set_id", "items_path"],
+  "properties": {
+    "set_id": { "type": "string", "description": "Set identifier (e.g. set-<slug> or a content id)." },
+    "aliases": { "type": "object", "additionalProperties": { "type": "string" } },
+    "title": { "type": "string" },
+    "query": { "type": "string", "description": "The question/task that defines this extraction set." },
+    "items_path": { "type": "string", "description": "Corpus-relative path to items.jsonl for this set." },
+    "source_ids": { "type": "array", "items": { "type": "string" }, "description": "Sources this set draws from (advisory index)." },
+    "provenance": { "$ref": "provenance-stamp.schema.json" },
+    "ext": { "type": "object", "additionalProperties": true }
+  },
+  "additionalProperties": true
+}

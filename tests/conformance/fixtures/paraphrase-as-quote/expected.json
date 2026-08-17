@@ -1,0 +1,6 @@
+{
+  "fixture": "paraphrase-as-quote",
+  "expect": [
+    "cited_extraction_not_quotable"
+  ]
+}

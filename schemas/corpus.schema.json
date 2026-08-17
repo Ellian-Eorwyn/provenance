@@ -1,0 +1,108 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://provenance.dev/upc/1.1.0/schemas/corpus.schema.json",
+  "title": "UPC Corpus Manifest (corpus.json)",
+  "description": "The root manifest. Self-describing (readme/rules_note so a tool that has never heard of UPC learns the rule from the folder alone). Machine-owned and regenerable. `sections` declares where each object class physically lives, so tools resolve by id through the manifest, never by hard-coded paths. `counts` and the index arrays are advisory projections; the objects are truth.",
+  "type": "object",
+  "required": ["upc_spec_version", "corpus_id", "sections"],
+  "properties": {
+    "upc_spec_version": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$" },
+    "corpus_id": { "type": "string", "description": "cor-<12hex>." },
+    "title": { "type": "string" },
+    "description": { "type": "string" },
+    "readme": { "type": "string", "description": "Human/agent-facing note: what this folder is and the one rule (work only from ids resolved through the manifests)." },
+    "rules_note": { "type": "string", "description": "Path to a fuller rules doc, if present." },
+    "created": { "type": "string", "format": "date-time" },
+    "modified": { "type": "string", "format": "date-time" },
+    "generated_by": {
+      "type": "object",
+      "properties": {
+        "tool": { "type": "string" },
+        "tool_version": { "type": "string" }
+      },
+      "additionalProperties": true
+    },
+    "sections": {
+      "type": "object",
+      "description": "Object class -> corpus-relative path/dir. Authoritative over the default layout. A value ending in / is a directory. `generations` is present when generations are grouped centrally rather than under each source.",
+      "properties": {
+        "sources": { "type": "string" },
+        "extractions": { "type": "string" },
+        "generations": { "type": "string" },
+        "syntheses": { "type": "string" },
+        "provenance": { "type": "string" },
+        "sources_csv": { "type": "string" },
+        "extractions_csv": { "type": "string" },
+        "index_html": { "type": "string" }
+      },
+      "additionalProperties": { "type": "string" }
+    },
+    "counts": {
+      "type": "object",
+      "description": "Advisory denormalized counts; a validator that finds a mismatch reports counts_mismatch (warning) and trusts the objects.",
+      "properties": {
+        "sources": { "type": "integer", "minimum": 0 },
+        "representations": { "type": "integer", "minimum": 0 },
+        "extractions": { "type": "integer", "minimum": 0 },
+        "generations": { "type": "integer", "minimum": 0 },
+        "syntheses": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": true
+    },
+    "sources": {
+      "type": "array",
+      "description": "Advisory source index. Each entry's `path` MAY point at a source directory (canonical) or a source.json file (alternate layouts).",
+      "items": {
+        "type": "object",
+        "required": ["source_id", "path"],
+        "properties": {
+          "source_id": { "type": "string" },
+          "path": { "type": "string" },
+          "title": { "type": "string" },
+          "primary_url": { "type": "string" },
+          "sha256": { "type": "string" }
+        },
+        "additionalProperties": true
+      }
+    },
+    "extraction_sets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "path"],
+        "properties": {
+          "id": { "type": "string" },
+          "path": { "type": "string" },
+          "query": { "type": "string" }
+        },
+        "additionalProperties": true
+      }
+    },
+    "syntheses": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["synthesis_id", "path"],
+        "properties": {
+          "synthesis_id": { "type": "string" },
+          "path": { "type": "string" },
+          "title": { "type": "string" }
+        },
+        "additionalProperties": true
+      }
+    },
+    "integrity": {
+      "type": "object",
+      "properties": {
+        "schema_hash": { "type": "string", "description": "sha256: + sha256(JCS({filename: sha256-hex, ...})) over schemas/*.json + vocab/vocab.json (§01)." }
+      },
+      "additionalProperties": true
+    },
+    "aliases": {
+      "type": "object",
+      "additionalProperties": { "type": "string" }
+    },
+    "ext": { "type": "object", "additionalProperties": true }
+  },
+  "additionalProperties": true
+}

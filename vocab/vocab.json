@@ -1,0 +1,118 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://provenance.dev/upc/1.1.0/vocab/vocab.json",
+  "title": "UPC Controlled Vocabularies",
+  "description": "Single source of truth for every closed enum in the Universal Provenance Corpus standard. Object schemas $ref these definitions (e.g. \"vocab.json#/$defs/confidence\") so terminology is defined in exactly one place. Extensible fields anyOf a closed enum with an \"x-\" prefixed escape hatch.",
+  "upc_spec_version": "1.1.0",
+  "$defs": {
+    "interpretation": {
+      "description": "How directly the source supports an extracted statement.",
+      "enum": ["explicit", "inferred", "unclear"]
+    },
+    "confidence": {
+      "description": "Qualitative confidence. pi-forge stores this enum; RA stores a float. Use this field for the enum and confidence_score for the float; either or both may be present.",
+      "enum": ["high", "medium", "low"]
+    },
+    "confidence_score": {
+      "description": "Optional numeric confidence in [0,1]. Present when a tool computes a numeric score.",
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "status": {
+      "description": "Terminal outcome of an activity or object stage.",
+      "enum": ["success", "needs_review", "failed", "skipped"]
+    },
+    "extraction_status": {
+      "description": "Lifecycle state of an extraction. Only `active` extractions are gated (§03) and exported; the others are retained and surfaced so nothing is lost. Defaults to active when absent.",
+      "enum": ["active", "needs_review", "superseded", "retracted"]
+    },
+    "fetch_status": {
+      "description": "Richer acquisition outcome for a source representation.",
+      "enum": ["queued", "success", "partial", "blocked", "paywall", "login_required", "failed", "not_applicable"]
+    },
+    "source_kind": {
+      "description": "The primary nature of a source, independent of its representations.",
+      "enum": ["url", "document", "image", "audio", "video", "dataset"]
+    },
+    "representation_role": {
+      "description": "What a representation IS relative to its source. A source may have many representations; role classifies each. Native PDFs are document_pdf (preserved as PDF); a print-to-PDF of a web page is rendered_pdf.",
+      "enum": [
+        "original", "raw_html", "rendered_html", "rendered_pdf", "document_pdf",
+        "ocr_pdf", "markdown", "clean_markdown", "text", "image", "audio",
+        "video", "transcript", "metadata", "thumbnail"
+      ]
+    },
+    "extraction_type": {
+      "description": "The kind of evidence an extraction represents. Closed base vocabulary (pi-forge literature vocab + RA in-text citation) plus an x- escape hatch for tool-specific types.",
+      "anyOf": [
+        {
+          "enum": [
+            "quote", "passage", "evidence", "in_text_citation", "entity",
+            "claim", "finding", "method", "limitation", "definition",
+            "data_point", "image_region", "timestamp_range"
+          ]
+        },
+        { "type": "string", "pattern": "^x-[a-z0-9-]+$" }
+      ]
+    },
+    "locator_type": {
+      "description": "How a locator points into a representation. The value shape depends on the type (see locator.schema.json).",
+      "enum": [
+        "char_range", "line_range", "page", "heading", "section",
+        "css_selector", "xpath", "url", "timestamp_range", "bbox"
+      ]
+    },
+    "generation_type": {
+      "description": "Single-source derived material.",
+      "anyOf": [
+        {
+          "enum": [
+            "summary", "rating", "classification", "translation",
+            "catalog", "description", "note", "transcription"
+          ]
+        },
+        { "type": "string", "pattern": "^x-[a-z0-9-]+$" }
+      ]
+    },
+    "synthesis_type": {
+      "description": "Multi-source derived material.",
+      "anyOf": [
+        {
+          "enum": [
+            "literature_review", "comparative", "thematic",
+            "memo", "answer", "evidence_matrix"
+          ]
+        },
+        { "type": "string", "pattern": "^x-[a-z0-9-]+$" }
+      ]
+    },
+    "activity_type": {
+      "description": "A recorded step in the provenance/events.jsonl journal. Production steps plus the correction/removal steps (modify, reanchor, retract, remove, redact) that make the journal an audit and removal log (§07, §10).",
+      "enum": [
+        "search", "fetch", "render", "extract", "embed",
+        "generate", "synthesize", "validate", "import", "export",
+        "modify", "reanchor", "retract", "remove", "redact"
+      ]
+    },
+    "field_origin": {
+      "description": "Where a bibliographic field value came from (field-level provenance). Generalizes RA CitationFieldEvidence.source_type and pi-forge document-ingest field origin.",
+      "enum": [
+        "embedded_metadata", "document_text", "filename",
+        "user_provided", "model_inferred", "provider_api"
+      ]
+    },
+    "produced_by_method": {
+      "description": "The deterministic or model method that produced a representation or derived object. Closed base vocabulary plus an x- escape hatch for tool-specific methods (e.g. x-yt-dlp).",
+      "anyOf": [
+        {
+          "enum": [
+            "http", "playwright", "readability", "structured_data", "ocr",
+            "conversion", "vision", "model", "manual", "import"
+          ]
+        },
+        { "type": "string", "pattern": "^x-[a-z0-9-]+$" }
+      ]
+    }
+  }
+}

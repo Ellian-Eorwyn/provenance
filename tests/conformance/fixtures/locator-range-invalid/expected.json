@@ -1,0 +1,6 @@
+{
+  "fixture": "locator-range-invalid",
+  "expect": [
+    "locator_range_invalid"
+  ]
+}

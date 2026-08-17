@@ -1,0 +1,64 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://provenance.dev/upc/1.1.0/schemas/source.schema.json",
+  "title": "UPC Source",
+  "description": "The primary conceptual object. Everything else references its source_id. A source is a root: it carries `retrieval` provenance rather than `derived_from`. Per-field provenance lives in the source-level `field_evidence` (a sibling of `bibliographic`, so a CSL export is `bibliographic` verbatim).",
+  "type": "object",
+  "required": ["source_id", "source_kind", "representations"],
+  "properties": {
+    "source_id": { "type": "string", "description": "src-<12hex> (§06)." },
+    "aliases": {
+      "type": "object",
+      "additionalProperties": { "type": "string" },
+      "description": "tool-namespace -> that tool's local id (e.g. researchassistant: \"000123\"). Non-canonical; preserve foreign namespaces on rewrite."
+    },
+    "source_kind": { "$ref": "../vocab/vocab.json#/$defs/source_kind" },
+    "title": { "type": "string" },
+    "bibliographic": { "$ref": "bibliographic.schema.json" },
+    "field_evidence": { "$ref": "field-evidence.schema.json", "description": "Per-field provenance for bibliographic (and other) fields; sibling of bibliographic so CSL export round-trips." },
+    "retrieval": {
+      "type": "object",
+      "properties": {
+        "original_url": { "type": "string" },
+        "final_url": { "type": "string" },
+        "canonical_url": { "type": "string", "description": "Metadata only (what the page declared); does NOT feed identity (§06)." },
+        "fetch_status": { "$ref": "../vocab/vocab.json#/$defs/fetch_status" },
+        "fetch_verification": { "type": "string" },
+        "http_status": { "type": ["integer", "null"] },
+        "content_type": { "type": "string" },
+        "fetch_method": { "$ref": "../vocab/vocab.json#/$defs/produced_by_method" },
+        "fetched_at": { "type": "string", "format": "date-time" },
+        "sha256": { "type": "string" },
+        "extraction_method": { "type": "string" }
+      },
+      "additionalProperties": true
+    },
+    "representations": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "representation.schema.json" }
+    },
+    "discovery": {
+      "type": "object",
+      "properties": {
+        "discovered_from": { "type": "string" },
+        "discovered_source_ids": { "type": "array", "items": { "type": "string" } },
+        "discovery_depth": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": true
+    },
+    "tags": { "type": "array", "items": { "type": "string" } },
+    "notes": { "type": "string" },
+    "supersedes": { "type": "string" },
+    "superseded_by": { "type": "string" },
+    "extractions_path": { "type": "string", "description": "Corpus-relative path to this source's extractions.jsonl, if extractions are stored per-source." },
+    "generations": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "generation_ids produced from this source (advisory index; generation records live under generated/ or the generations section)."
+    },
+    "provenance": { "$ref": "provenance-stamp.schema.json" },
+    "ext": { "type": "object", "additionalProperties": true }
+  },
+  "additionalProperties": true
+}

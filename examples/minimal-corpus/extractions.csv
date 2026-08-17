@@ -1,0 +1,2 @@
+extraction_id,source_id,representation_ref,type,status,direct_quote,text,locator,query,interpretation,confidence,confidence_score,created_at
+ext-d9364c4a62ab,src-bdfe98b6a2a2,rep-cc693f89d386,evidence,active,every claim can be traced back to its evidence,Every claim in a provenance corpus is traceable to its evidence.,"{""representation_ref"":""rep-cc693f89d386"",""type"":""char_range"",""value"":{""end"":158,""start"":112}}",What is the point of a provenance corpus?,explicit,high,0.95,2026-08-17T12:00:00Z

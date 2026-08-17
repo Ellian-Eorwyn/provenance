@@ -1,0 +1,40 @@
+{
+  "upc_spec_version": "1.1.0",
+  "corpus_id": "cor-bb1e337e082b",
+  "title": "Minimal UPC corpus",
+  "readme": "Universal Provenance Corpus. Work only from ids resolved through the manifests. Quotations are verified byte-for-byte (spec/03).",
+  "rules_note": "spec/00-overview.md",
+  "created": "2026-08-17T12:00:00Z",
+  "modified": "2026-08-17T12:00:00Z",
+  "generated_by": {
+    "tool": "pi-forge",
+    "tool_version": "0.2.0"
+  },
+  "sections": {
+    "sources": "sources/",
+    "provenance": "provenance/events.jsonl",
+    "sources_csv": "sources.csv",
+    "extractions_csv": "extractions.csv",
+    "index_html": "index.html"
+  },
+  "counts": {
+    "sources": 1,
+    "representations": 1,
+    "extractions": 1,
+    "generations": 0,
+    "syntheses": 0
+  },
+  "sources": [
+    {
+      "source_id": "src-bdfe98b6a2a2",
+      "path": "sources/note-2026-hello-provenance/",
+      "title": "Hello, Provenance",
+      "primary_url": "",
+      "sha256": "sha256:cc693f89d386069e4ad7d3c2541422f7be596dad30f84d00ed46e53b3ac11238"
+    }
+  ],
+  "syntheses": [],
+  "integrity": {
+    "schema_hash": "sha256:683f31b5b5e48f9ca2e924dba3d75dbc8f425b0a7115a06618b07a1795b8c86e"
+  }
+}

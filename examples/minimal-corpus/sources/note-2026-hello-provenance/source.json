@@ -1,0 +1,49 @@
+{
+  "source_id": "src-bdfe98b6a2a2",
+  "source_kind": "document",
+  "title": "Hello, Provenance",
+  "bibliographic": {
+    "item_type": "document",
+    "title": "Hello, Provenance",
+    "authors": [
+      {
+        "literal": "UPC"
+      }
+    ],
+    "issued": {
+      "date_parts": [
+        [
+          2026
+        ]
+      ]
+    }
+  },
+  "representations": [
+    {
+      "representation_id": "rep-cc693f89d386",
+      "role": "clean_markdown",
+      "media_type": "text/markdown",
+      "path": "sources/note-2026-hello-provenance/representations/clean.md",
+      "sha256": "sha256:cc693f89d386069e4ad7d3c2541422f7be596dad30f84d00ed46e53b3ac11238",
+      "char_count": 239,
+      "produced_by": "manual",
+      "provenance": {
+        "produced_by": {
+          "tool": "pi-forge",
+          "tool_version": "0.2.0",
+          "method": "manual"
+        },
+        "created_at": "2026-08-17T12:00:00Z"
+      }
+    }
+  ],
+  "extractions_path": "sources/note-2026-hello-provenance/extractions.jsonl",
+  "provenance": {
+    "produced_by": {
+      "tool": "pi-forge",
+      "tool_version": "0.2.0",
+      "method": "manual"
+    },
+    "created_at": "2026-08-17T12:00:00Z"
+  }
+}

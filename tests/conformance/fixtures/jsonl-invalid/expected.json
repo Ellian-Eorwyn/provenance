@@ -1,0 +1,6 @@
+{
+  "fixture": "jsonl-invalid",
+  "expect": [
+    "jsonl_invalid"
+  ]
+}

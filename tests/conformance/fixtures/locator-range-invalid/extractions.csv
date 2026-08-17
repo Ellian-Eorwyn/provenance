@@ -1,0 +1,2 @@
+extraction_id,source_id,representation_ref,type,status,direct_quote,text,locator,query,interpretation,confidence,confidence_score,created_at
+ext-0a3ebe03791e,src-c76847068a0a,rep-8389412e9ea7,evidence,active,cut over DNS only after the staging copy is fully validated,Cut over DNS after staging validation.,"{""representation_ref"":""rep-8389412e9ea7"",""type"":""char_range"",""value"":{""end"":99999,""start"":0}}",migration?,explicit,high,0.9,2026-08-17T12:00:00Z

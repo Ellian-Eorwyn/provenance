@@ -1,0 +1,6 @@
+{
+  "fixture": "output-cites-unknown",
+  "expect": [
+    "output_cites_unknown_extraction"
+  ]
+}

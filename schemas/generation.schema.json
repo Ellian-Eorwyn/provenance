@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://provenance.dev/upc/1.1.0/schemas/generation.schema.json",
+  "title": "UPC Generation",
+  "description": "Single-source derived material (summary, rating, translation, classification, description). Inputs live in provenance.derived_from (the single source of truth for the graph edges); provenance.input_digest enables staleness. A rendered output is pinned by output.sha256; any quotation in it is gated by hop C (§04).",
+  "type": "object",
+  "required": ["generation_id", "type", "provenance"],
+  "properties": {
+    "generation_id": { "type": "string", "description": "gen-<12hex> (§06)." },
+    "aliases": { "type": "object", "additionalProperties": { "type": "string" } },
+    "type": { "$ref": "../vocab/vocab.json#/$defs/generation_type" },
+    "title": { "type": "string" },
+    "output": {
+      "type": "object",
+      "properties": {
+        "path": { "type": "string", "description": "Corpus-relative path to the rendered output (e.g. generated/summary.md)." },
+        "value": { "description": "Inline structured output (e.g. a rating object), when not a file." },
+        "media_type": { "type": "string" },
+        "sha256": { "type": "string", "description": "Hex sha256 of the output file's bytes; required at L2 for a path output (rule output_hash_mismatch)." }
+      },
+      "additionalProperties": true
+    },
+    "stale": { "type": "boolean" },
+    "provenance": { "$ref": "provenance-stamp.schema.json" },
+    "ext": { "type": "object", "additionalProperties": true }
+  },
+  "additionalProperties": true
+}

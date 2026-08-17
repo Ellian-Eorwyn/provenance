@@ -1,0 +1,78 @@
+{
+  "source_id": "src-604878cb9e3d",
+  "source_kind": "url",
+  "title": "Blue-green deployments explained",
+  "bibliographic": {
+    "item_type": "webpage",
+    "title": "Blue-green deployments explained",
+    "authors": [
+      {
+        "literal": "CloudLore"
+      }
+    ],
+    "issued": {
+      "date_parts": [
+        [
+          2023
+        ]
+      ]
+    },
+    "url": "https://cloudlore.example/blog/blue-green"
+  },
+  "retrieval": {
+    "original_url": "https://cloudlore.example/blog/blue-green",
+    "final_url": "https://cloudlore.example/blog/blue-green",
+    "fetch_status": "success",
+    "http_status": 200,
+    "content_type": "text/html; charset=UTF-8",
+    "fetch_method": "http",
+    "fetched_at": "2026-08-17T12:00:00Z",
+    "sha256": "sha256:43835cc18b3442cc7ba81a00d62a2ee5a95ac5512c17e4507b15c93e874b759d"
+  },
+  "representations": [
+    {
+      "representation_id": "rep-43835cc18b34",
+      "role": "raw_html",
+      "media_type": "text/html",
+      "path": "sources/cloudlore-2023-blue-green-deploys/representations/raw.html",
+      "sha256": "sha256:43835cc18b3442cc7ba81a00d62a2ee5a95ac5512c17e4507b15c93e874b759d",
+      "bytes": 227,
+      "produced_by": "http",
+      "provenance": {
+        "produced_by": {
+          "tool": "pi-forge",
+          "tool_version": "0.2.0",
+          "method": "http"
+        },
+        "created_at": "2026-08-17T12:00:00Z"
+      }
+    },
+    {
+      "representation_id": "rep-b2f4406de5cc",
+      "role": "clean_markdown",
+      "media_type": "text/markdown",
+      "path": "sources/cloudlore-2023-blue-green-deploys/representations/clean.md",
+      "sha256": "sha256:b2f4406de5ccebf1378d226f169dbbcffe93e46a9ae129a75bfb609ecb2a2f66",
+      "char_count": 306,
+      "parent_representation_ref": "rep-43835cc18b34",
+      "produced_by": "readability",
+      "provenance": {
+        "produced_by": {
+          "tool": "pi-forge",
+          "tool_version": "0.2.0",
+          "method": "readability"
+        },
+        "created_at": "2026-08-17T12:00:00Z"
+      }
+    }
+  ],
+  "extractions_path": "sources/cloudlore-2023-blue-green-deploys/extractions.jsonl",
+  "provenance": {
+    "produced_by": {
+      "tool": "pi-forge",
+      "tool_version": "0.2.0",
+      "method": "http"
+    },
+    "created_at": "2026-08-17T12:00:00Z"
+  }
+}

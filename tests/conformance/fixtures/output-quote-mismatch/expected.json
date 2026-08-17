@@ -1,0 +1,6 @@
+{
+  "fixture": "output-quote-mismatch",
+  "expect": [
+    "output_quote_mismatch"
+  ]
+}

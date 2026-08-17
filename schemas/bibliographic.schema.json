@@ -1,0 +1,94 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://provenance.dev/upc/1.1.0/schemas/bibliographic.schema.json",
+  "title": "UPC Bibliographic Metadata (CSL-aligned)",
+  "description": "CSL-JSON-aligned bibliographic record, snake_cased to match the rest of UPC. Dates use CSL date-parts (or a string / {raw} fallback). Contributors use {family, given} or {literal}, with CSL extras permitted. Per-field provenance lives OUTSIDE this object (source.field_evidence), so this object exports to CSL-JSON verbatim. RIS/BibTeX are export projections (§09), not the canonical form.",
+  "type": "object",
+  "properties": {
+    "item_type": {
+      "type": "string",
+      "description": "CSL type vocabulary, e.g. article-journal, book, chapter, report, webpage, dataset, paper-conference, thesis."
+    },
+    "title": { "type": "string" },
+    "authors": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "family": { "type": "string" },
+          "given": { "type": "string" },
+          "literal": { "type": "string" },
+          "suffix": { "type": "string" },
+          "non_dropping_particle": { "type": "string" },
+          "dropping_particle": { "type": "string" }
+        },
+        "additionalProperties": true
+      }
+    },
+    "editors": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "family": { "type": "string" },
+          "given": { "type": "string" },
+          "literal": { "type": "string" }
+        },
+        "additionalProperties": true
+      }
+    },
+    "translators": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "family": { "type": "string" },
+          "given": { "type": "string" },
+          "literal": { "type": "string" }
+        },
+        "additionalProperties": true
+      }
+    },
+    "issued": {
+      "anyOf": [
+        { "type": "string" },
+        {
+          "type": "object",
+          "properties": {
+            "date_parts": { "type": "array", "items": { "type": "array", "items": { "type": "integer" } } },
+            "raw": { "type": "string" },
+            "literal": { "type": "string" }
+          },
+          "additionalProperties": true
+        }
+      ],
+      "description": "CSL date: {date_parts: [[2024]]} or [[2024,7,9]], or {raw}, or a plain string/year."
+    },
+    "accessed": {
+      "anyOf": [
+        { "type": "string" },
+        {
+          "type": "object",
+          "properties": {
+            "date_parts": { "type": "array", "items": { "type": "array", "items": { "type": "integer" } } },
+            "raw": { "type": "string" }
+          },
+          "additionalProperties": true
+        }
+      ]
+    },
+    "container_title": { "type": "string" },
+    "publisher": { "type": "string" },
+    "volume": { "type": "string" },
+    "issue": { "type": "string" },
+    "pages": { "type": "string" },
+    "doi": { "type": "string" },
+    "url": { "type": "string" },
+    "isbn": { "type": "string" },
+    "issn": { "type": "string" },
+    "report_number": { "type": "string" },
+    "language": { "type": "string" },
+    "abstract": { "type": "string" }
+  },
+  "additionalProperties": true
+}

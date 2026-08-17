@@ -1,0 +1,6 @@
+{
+  "fixture": "rep-hash-mismatch",
+  "expect": [
+    "rep_hash_mismatch"
+  ]
+}

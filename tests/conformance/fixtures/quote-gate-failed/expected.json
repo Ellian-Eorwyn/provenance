@@ -1,0 +1,6 @@
+{
+  "fixture": "quote-gate-failed",
+  "expect": [
+    "quote_gate_failed"
+  ]
+}

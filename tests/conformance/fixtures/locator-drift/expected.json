@@ -1,0 +1,6 @@
+{
+  "fixture": "locator-drift",
+  "expect": [
+    "quote_gate_failed"
+  ]
+}

@@ -1,0 +1,6 @@
+{
+  "fixture": "path-escape",
+  "expect": [
+    "path_escape"
+  ]
+}

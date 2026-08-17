@@ -1,0 +1,6 @@
+{
+  "fixture": "torn-jsonl",
+  "expect": [
+    "jsonl_torn_tail"
+  ]
+}

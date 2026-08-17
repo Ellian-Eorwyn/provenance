@@ -1,0 +1,16 @@
+# macOS / editor cruft
+.DS_Store
+*.swp
+
+# Node
+node_modules/
+
+# Atomic-write temp files (spec/10: .<name>.<pid>.<rand>.tmp) and generic temps
+*.tmp
+.*.tmp
+
+# Tool-private corpus scratch (never a corpus member; spec/10)
+.upc/
+
+# Local Claude Code tooling config
+.claude/

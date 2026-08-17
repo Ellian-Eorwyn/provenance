@@ -1,0 +1,17 @@
+{
+  "set_id": "set-blue-green-metaphors",
+  "title": "Blue-green metaphors",
+  "query": "How does blue-green keep a spare environment ready?",
+  "items_path": "extractions/set-blue-green-metaphors/items.jsonl",
+  "source_ids": [
+    "src-604878cb9e3d"
+  ],
+  "provenance": {
+    "produced_by": {
+      "tool": "pi-forge",
+      "tool_version": "0.2.0",
+      "method": "model"
+    },
+    "created_at": "2026-08-17T12:00:00Z"
+  }
+}

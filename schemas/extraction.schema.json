@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://provenance.dev/upc/1.1.0/schemas/extraction.schema.json",
+  "title": "UPC Extraction",
+  "description": "Structured evidence selected from a specific representation at an exact location. The central interoperability contract. A direct_quote is exact verbatim text, verified byte-for-byte against the representation at a char_range locator (the hop-B gate, §03); text is a faithful, possibly paraphrased statement that is never verified and never presented as a quotation. An extraction must never become an orphaned quotation.",
+  "type": "object",
+  "required": ["extraction_id", "source_id", "representation_ref", "type", "locator"],
+  "anyOf": [
+    { "required": ["text"] },
+    { "required": ["direct_quote"] }
+  ],
+  "properties": {
+    "extraction_id": { "type": "string", "description": "ext-<12hex> (§06), content-addressed over source_id + representation_ref + JCS(locator) + (direct_quote else text)." },
+    "aliases": { "type": "object", "additionalProperties": { "type": "string" } },
+    "source_id": { "type": "string", "minLength": 1 },
+    "representation_ref": { "type": "string", "minLength": 1, "description": "The representation this extraction was taken from; the primary locator indexes into it." },
+    "type": { "$ref": "../vocab/vocab.json#/$defs/extraction_type" },
+    "status": { "$ref": "../vocab/vocab.json#/$defs/extraction_status", "description": "Lifecycle state; defaults to active. Only active extractions are gated and exported." },
+    "text": { "type": "string", "description": "Faithful statement of the evidence. MAY be paraphrased/normalized. NEVER verified; MUST NOT be presented as a quotation." },
+    "direct_quote": { "type": ["string", "null"], "description": "Exact verbatim span. If present, MUST equal the representation's codepoints at the char_range locator, byte-for-byte, with no normalization (hop-B gate)." },
+    "context_before": { "type": "string", "description": "Advisory only; the authoritative context is the representation read at the locator." },
+    "context_after": { "type": "string", "description": "Advisory only." },
+    "locator": { "$ref": "locator.schema.json", "description": "Primary locator. A direct_quote requires a char_range locator into a textual representation." },
+    "secondary_locators": {
+      "type": "array",
+      "description": "Additional coarse locators (page, section, heading, …) for human context. Advisory: never gate-bearing, excluded from identity.",
+      "items": { "$ref": "locator.schema.json" }
+    },
+    "query": { "type": "string", "description": "The question/task/purpose that prompted this extraction." },
+    "interpretation": { "$ref": "../vocab/vocab.json#/$defs/interpretation" },
+    "confidence": { "$ref": "../vocab/vocab.json#/$defs/confidence" },
+    "confidence_score": { "$ref": "../vocab/vocab.json#/$defs/confidence_score" },
+    "rationale": { "type": "string", "description": "Why this is relevant / how it supports the query." },
+    "resolves_to": {
+      "$ref": "bibliographic.schema.json",
+      "description": "For in_text_citation extractions: the bibliographic target the marker resolves to."
+    },
+    "supersedes": { "type": "string", "description": "ext-id this extraction replaces (e.g. after reanchoring to a new representation)." },
+    "superseded_by": { "type": "string", "description": "ext-id that replaces this one." },
+    "provenance": { "$ref": "provenance-stamp.schema.json" },
+    "ext": { "type": "object", "description": "Tool-private extension data, namespaced by tool (e.g. {\"pi-forge\": {...}}).", "additionalProperties": true }
+  },
+  "additionalProperties": true
+}
