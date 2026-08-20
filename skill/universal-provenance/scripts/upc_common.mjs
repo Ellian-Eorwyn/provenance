@@ -1,4 +1,4 @@
-// UPC common helpers (spec 1.1.0): hashing & content-addressed id minting,
+// UPC common helpers (spec 1.2.0): hashing & content-addressed id minting,
 // canonical JSON (JCS / RFC 8785), codepoint-exact quote gates, marker parsing,
 // URL normalization, slugs, atomic writes, RFC 4180 CSV, a dependency-free JSON
 // Schema (2020-12 subset) validator, and a corpus loader that resolves manifests.

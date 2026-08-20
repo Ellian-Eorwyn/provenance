@@ -115,6 +115,20 @@ implementations:
 Constraints (validator rule `locator_range_invalid`): `0 ≤ start ≤ end ≤
 codepoint_length(text)`.
 
+### "byte-for-byte" means codepoint-exact over the hash-fixed bytes
+
+UPC's slogan for the gate is "byte-for-byte," and the normative comparison is
+**codepoint equality** (step 6 below). These denote the *same test*: both operands
+are compared without any normalization, and both are — directly or transitively —
+the strict-UTF-8 decoding of the **same hash-fixed stored bytes** (the
+representation's bytes are pinned by hop A, and a `direct_quote` that passes is by
+construction a codepoint slice of that same decoded text). Because UTF-8 is a
+bijection between a valid byte sequence and its codepoint sequence, codepoint
+equality over the decoded text and byte equality over the encoded bytes coincide.
+The slogan is the intuition; codepoint-exact equality over a byte-hash-fixed UTF-8
+representation is the precise statement (see §11). Offsets count **Unicode
+codepoints** — never bytes, UTF-16 code units, or grapheme clusters.
+
 ## The hop-B gate (extraction ↔ representation)
 
 This is the first verified hop of the chain `output → extraction → source`. For an

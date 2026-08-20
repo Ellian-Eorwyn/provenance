@@ -3,6 +3,54 @@
 All notable changes to the Universal Provenance Corpus (UPC) standard.
 Versioning is semantic (§00 Versioning policy).
 
+## 1.2.0 — 2026-08-18
+
+**Backward-compatible (additive) minor release: interoperability + epistemic
+precision.** Every 1.1.0 corpus remains valid, and a 1.2.0 validator accepts a
+1.1.0 corpus. No object field, id recipe, or quotation gate changed; the schema
+`$id`s bump to `1.2.0` (which changes `integrity.schema_hash` — regenerate
+projections with `upc regen`).
+
+### Added — epistemic framing
+
+- **§11 Guarantees & Non-Guarantees** — a normative guarantee/non-guarantee
+  matrix stating exactly what a passing corpus mechanically proves (fixity,
+  codepoint-exact quotation at each hop, content-addressed identity, referential
+  integrity) and what it deliberately does **not** (source truth/authority, OCR/
+  transcript fidelity, paraphrase faithfulness, synthesis soundness).
+- **Rule classes** in §08 — a `Class` column tags every rule **mechanical
+  invariant** / **producer obligation** / **advisory semantic**, so "the validator
+  passed" is never over-read. No rule number, code, severity, or hop changed.
+- **"byte-for-byte" reconciled** with the normative algorithm in §03: the slogan
+  denotes codepoint-exact equality over the hash-fixed UTF-8 bytes (the two
+  coincide for valid UTF-8). The slogan is retained.
+
+### Added — RO-Crate interoperability (export projection)
+
+- **`upc export … --format ro-crate`** — a deterministic, zero-dependency
+  [RO-Crate 1.3](crosswalks/ro-crate.md) flattened-JSON-LD projection. Zero-copy
+  by default (writes `ro-crate-metadata.json` into the corpus root); `--copy -o
+  <dir>` emits a detached, self-contained crate. Like `index.html`/CSV, it is a
+  regenerable view — the UPC objects stay canonical.
+- **UPC RO-Crate profile** (`profiles/ro-crate/`, id
+  `https://provenance.dev/upc/1.2.0/profiles/ro-crate`), declared in exported
+  crates via `conformsTo`. Content-addressed ids are preserved in `identifier` /
+  `upc:*Id` and never overloaded onto `@id`.
+- Gated extractions carry a companion **W3C Web Annotation** (`TextPositionSelector`
+  + `TextQuoteSelector`) flagged `upc:interopOnly: true`; the UPC `char_range`
+  stays `upc:gateAuthoritative: true`. The codepoint-vs-UTF-16 / normalization
+  divergence is documented in [crosswalks/web-annotation.md](crosswalks/web-annotation.md).
+- **Crosswalk documents** — RO-Crate, Web Annotation, and W3C PROV (each row
+  tagged exact/partial/incompatible/UPC-only), plus deferral notes for
+  nanopublications, BagIt, and WARC/Memento.
+
+### Notes
+
+- Deferred to a later release: source `identifiers[]`/`relations[]` enrichment, a
+  PROV-O export, an RO-Crate importer / round-trip, and the packaging/capture
+  standards above. The quote gate is unchanged and remains the authority on any
+  cross-standard conflict.
+
 ## 1.1.0 — 2026-08-17
 
 **Supersedes 1.0.0 wholesale.** UPC 1.0.0 was a draft with no adopters, so this

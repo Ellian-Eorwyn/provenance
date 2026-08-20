@@ -82,12 +82,13 @@ function buildMinimal() {
   writeJSONL(path.join(srcDir, "extractions.jsonl"), [ext]);
 
   writeJSON(path.join(root, "corpus.json"), {
-    upc_spec_version: "1.1.0", corpus_id: "cor-" + sha256Hex(Buffer.from("corpus\nminimal", "utf8")).slice(0, 12),
+    upc_spec_version: "1.2.0", corpus_id: "cor-" + sha256Hex(Buffer.from("corpus\nminimal", "utf8")).slice(0, 12),
     title: "Minimal UPC corpus", readme: "Universal Provenance Corpus. Work only from ids resolved through the manifests. Quotations are verified byte-for-byte (spec/03).",
     rules_note: "spec/00-overview.md", created: TS, modified: TS, generated_by: { tool: "pi-forge", tool_version: "0.2.0" },
     sections: { sources: "sources/", provenance: "provenance/events.jsonl", sources_csv: "sources.csv", extractions_csv: "extractions.csv", index_html: "index.html" },
   });
   execFileSync(process.execPath, [UPC, "regen", root], { stdio: "ignore" });
+  execFileSync(process.execPath, [UPC, "export", root, "--format", "ro-crate"], { stdio: "ignore" });
   return root;
 }
 
@@ -261,12 +262,13 @@ function buildWebResearch() {
   ]);
 
   writeJSON(path.join(root, "corpus.json"), {
-    upc_spec_version: "1.1.0", corpus_id: "cor-" + sha256Hex(Buffer.from("corpus\nweb-research", "utf8")).slice(0, 12),
+    upc_spec_version: "1.2.0", corpus_id: "cor-" + sha256Hex(Buffer.from("corpus\nweb-research", "utf8")).slice(0, 12),
     title: "Migration downtime research", readme: "Universal Provenance Corpus. Work only from ids resolved through the manifests; sources are immutable; derived objects link back via provenance.derived_from. Quotations are verified byte-for-byte (spec/03).",
     rules_note: "spec/00-overview.md", created: TS, modified: TS, generated_by: { tool: "pi-forge", tool_version: "0.2.0" },
     sections: { sources: "sources/", extractions: "extractions/", syntheses: "syntheses/", provenance: "provenance/events.jsonl", sources_csv: "sources.csv", extractions_csv: "extractions.csv", index_html: "index.html" },
   });
   execFileSync(process.execPath, [UPC, "regen", root], { stdio: "ignore" });
+  execFileSync(process.execPath, [UPC, "export", root, "--format", "ro-crate"], { stdio: "ignore" });
   return root;
 }
 

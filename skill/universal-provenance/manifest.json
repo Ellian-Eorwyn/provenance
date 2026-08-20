@@ -1,8 +1,8 @@
 {
   "name": "universal-provenance",
   "type": "provenance-skill",
-  "version": "1.1.0",
-  "upc_spec_version": "1.1.0",
+  "version": "1.2.0",
+  "upc_spec_version": "1.2.0",
   "description": "Read, write, validate, verify, browse, and export a Universal Provenance Corpus (UPC) with byte-exact quotation gates.",
   "skill_file": "SKILL.md",
   "scripts_dir": "scripts",
@@ -47,8 +47,8 @@
     {
       "name": "upc_export",
       "command": "node scripts/upc.mjs export",
-      "args_hint": "<corpus-dir> --format bibtex|ris|csl-json|jsonl|markdown [-o <file>]",
-      "description": "Export bibliographic and object projections: CSL-JSON (authoritative), BibTeX, RIS, JSONL (raw objects), or a Markdown bibliography.",
+      "args_hint": "<corpus-dir> --format bibtex|ris|csl-json|jsonl|markdown|ro-crate [-o <file>] [--copy]",
+      "description": "Export bibliographic and object projections: CSL-JSON (authoritative), BibTeX, RIS, JSONL (raw objects), a Markdown bibliography, or a deterministic RO-Crate 1.3 metadata graph (--format ro-crate writes ro-crate-metadata.json into the corpus root; --copy -o <dir> emits a detached self-contained crate). RO-Crate export is a read-only projection; the UPC objects stay canonical.",
       "destructive": false
     },
     {

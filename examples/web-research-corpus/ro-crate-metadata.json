@@ -1,0 +1,626 @@
+{
+  "@context": [
+    "https://w3id.org/ro/crate/1.3/context",
+    {
+      "upc": "https://provenance.dev/upc/terms#"
+    }
+  ],
+  "@graph": [
+    {
+      "@id": "ro-crate-metadata.json",
+      "@type": "CreativeWork",
+      "conformsTo": {
+        "@id": "https://w3id.org/ro/crate/1.3"
+      },
+      "about": {
+        "@id": "./"
+      }
+    },
+    {
+      "@id": "./",
+      "@type": "Dataset",
+      "identifier": "cor-bd9a8eb07fb8",
+      "name": "Migration downtime research",
+      "conformsTo": [
+        {
+          "@id": "https://w3id.org/ro/crate/1.3"
+        },
+        {
+          "@id": "https://provenance.dev/upc/1.2.0/profiles/ro-crate"
+        }
+      ],
+      "upc:specVersion": "1.2.0",
+      "description": "Universal Provenance Corpus. Work only from ids resolved through the manifests; sources are immutable; derived objects link back via provenance.derived_from. Quotations are verified byte-for-byte (spec/03).",
+      "datePublished": "2026-08-17T12:00:00Z",
+      "hasPart": [
+        {
+          "@id": "sources/cloudlore-2023-blue-green-deploys/representations/clean.md"
+        },
+        {
+          "@id": "sources/cloudlore-2023-blue-green-deploys/representations/raw.html"
+        },
+        {
+          "@id": "sources/watchdog-2024-migrate-with-no-downtime/generated/gen-9a03fbd7e3ff.md"
+        },
+        {
+          "@id": "sources/watchdog-2024-migrate-with-no-downtime/representations/clean.md"
+        },
+        {
+          "@id": "sources/watchdog-2024-migrate-with-no-downtime/representations/images/figure.svg"
+        },
+        {
+          "@id": "sources/watchdog-2024-migrate-with-no-downtime/representations/raw.html"
+        },
+        {
+          "@id": "syntheses/syn-78fa307f3a32/synthesis.md"
+        }
+      ],
+      "mentions": [
+        {
+          "@id": "#src-604878cb9e3d"
+        },
+        {
+          "@id": "#src-b95bb22d8232"
+        },
+        {
+          "@id": "#syn-78fa307f3a32"
+        }
+      ]
+    },
+    {
+      "@id": "#evt-000001",
+      "@type": "CreateAction",
+      "identifier": "evt-000001",
+      "upc:eventId": "evt-000001",
+      "upc:activityType": "fetch",
+      "startTime": "2026-08-17T12:00:00Z",
+      "endTime": "2026-08-17T12:00:00Z",
+      "agent": {
+        "@id": "#tool-pi-forge"
+      },
+      "result": [
+        {
+          "@id": "#src-b95bb22d8232"
+        },
+        {
+          "@id": "sources/watchdog-2024-migrate-with-no-downtime/representations/raw.html"
+        }
+      ],
+      "upc:status": "success"
+    },
+    {
+      "@id": "#evt-000002",
+      "@type": "CreateAction",
+      "identifier": "evt-000002",
+      "upc:eventId": "evt-000002",
+      "upc:activityType": "fetch",
+      "startTime": "2026-08-17T12:00:00Z",
+      "endTime": "2026-08-17T12:00:00Z",
+      "agent": {
+        "@id": "#tool-pi-forge"
+      },
+      "result": [
+        {
+          "@id": "#src-604878cb9e3d"
+        },
+        {
+          "@id": "sources/cloudlore-2023-blue-green-deploys/representations/raw.html"
+        }
+      ],
+      "upc:status": "success"
+    },
+    {
+      "@id": "#evt-000003",
+      "@type": "CreateAction",
+      "identifier": "evt-000003",
+      "upc:eventId": "evt-000003",
+      "upc:activityType": "extract",
+      "startTime": "2026-08-17T12:00:00Z",
+      "endTime": "2026-08-17T12:00:00Z",
+      "agent": {
+        "@id": "#tool-pi-forge"
+      },
+      "upc:model": "local-llm",
+      "object": [
+        {
+          "@id": "sources/cloudlore-2023-blue-green-deploys/representations/clean.md"
+        },
+        {
+          "@id": "sources/watchdog-2024-migrate-with-no-downtime/representations/clean.md"
+        }
+      ],
+      "result": [
+        {
+          "@id": "#ext-77004eca0a27"
+        },
+        {
+          "@id": "#ext-d8129f9b7114"
+        },
+        {
+          "@id": "#ext-e6c4c782bd3b"
+        }
+      ],
+      "upc:status": "success"
+    },
+    {
+      "@id": "#evt-000004",
+      "@type": "CreateAction",
+      "identifier": "evt-000004",
+      "upc:eventId": "evt-000004",
+      "upc:activityType": "generate",
+      "startTime": "2026-08-17T12:00:00Z",
+      "endTime": "2026-08-17T12:00:00Z",
+      "agent": {
+        "@id": "#tool-researchassistant"
+      },
+      "upc:model": "some-model",
+      "object": [
+        {
+          "@id": "#ext-d8129f9b7114"
+        },
+        {
+          "@id": "sources/watchdog-2024-migrate-with-no-downtime/representations/clean.md"
+        }
+      ],
+      "result": [
+        {
+          "@id": "#gen-9a03fbd7e3ff"
+        }
+      ],
+      "upc:status": "success"
+    },
+    {
+      "@id": "#evt-000005",
+      "@type": "CreateAction",
+      "identifier": "evt-000005",
+      "upc:eventId": "evt-000005",
+      "upc:activityType": "synthesize",
+      "startTime": "2026-08-17T12:00:00Z",
+      "endTime": "2026-08-17T12:00:00Z",
+      "agent": {
+        "@id": "#tool-pi-forge"
+      },
+      "upc:model": "local-llm",
+      "object": [
+        {
+          "@id": "#ext-77004eca0a27"
+        },
+        {
+          "@id": "#ext-d8129f9b7114"
+        }
+      ],
+      "result": [
+        {
+          "@id": "#syn-78fa307f3a32"
+        }
+      ],
+      "upc:status": "success"
+    },
+    {
+      "@id": "#ext-77004eca0a27",
+      "@type": "upc:Extraction",
+      "identifier": "ext-77004eca0a27",
+      "upc:extractionId": "ext-77004eca0a27",
+      "upc:sourceId": "src-604878cb9e3d",
+      "upc:type": "evidence",
+      "upc:status": "active",
+      "upc:representation": {
+        "@id": "sources/cloudlore-2023-blue-green-deploys/representations/clean.md"
+      },
+      "text": "Blue-green switching is instant because it only redirects the router.",
+      "upc:query": "How do you migrate a WordPress site without downtime?",
+      "upc:directQuote": "switching is instant because it only redirects the router",
+      "upc:charRange": {
+        "start": 126,
+        "end": 183
+      },
+      "upc:gateAuthoritative": true,
+      "upc:annotation": {
+        "@id": "#ext-77004eca0a27-anno"
+      }
+    },
+    {
+      "@id": "#ext-77004eca0a27-anno",
+      "@type": "Annotation",
+      "upc:interopOnly": true,
+      "target": {
+        "source": {
+          "@id": "sources/cloudlore-2023-blue-green-deploys/representations/clean.md"
+        },
+        "selector": [
+          {
+            "@type": "TextPositionSelector",
+            "start": 126,
+            "end": 183,
+            "upc:unit": "codepoint"
+          },
+          {
+            "@type": "TextQuoteSelector",
+            "exact": "switching is instant because it only redirects the router",
+            "prefix": "keeping a second pot ready — so ",
+            "suffix": " between two identical environme"
+          }
+        ]
+      },
+      "body": {
+        "@type": "TextualBody",
+        "value": "switching is instant because it only redirects the router"
+      }
+    },
+    {
+      "@id": "#ext-d8129f9b7114",
+      "@type": "upc:Extraction",
+      "identifier": "ext-d8129f9b7114",
+      "upc:extractionId": "ext-d8129f9b7114",
+      "upc:sourceId": "src-b95bb22d8232",
+      "upc:type": "evidence",
+      "upc:status": "active",
+      "upc:representation": {
+        "@id": "sources/watchdog-2024-migrate-with-no-downtime/representations/clean.md"
+      },
+      "text": "Cut over DNS only after the staging copy is validated.",
+      "upc:query": "How do you migrate a WordPress site without downtime?",
+      "upc:directQuote": "cut over DNS only after the staging copy is fully validated",
+      "upc:charRange": {
+        "start": 162,
+        "end": 221
+      },
+      "upc:gateAuthoritative": true,
+      "upc:annotation": {
+        "@id": "#ext-d8129f9b7114-anno"
+      }
+    },
+    {
+      "@id": "#ext-d8129f9b7114-anno",
+      "@type": "Annotation",
+      "upc:interopOnly": true,
+      "target": {
+        "source": {
+          "@id": "sources/watchdog-2024-migrate-with-no-downtime/representations/clean.md"
+        },
+        "selector": [
+          {
+            "@type": "TextPositionSelector",
+            "start": 162,
+            "end": 221,
+            "upc:unit": "codepoint"
+          },
+          {
+            "@type": "TextQuoteSelector",
+            "exact": "cut over DNS only after the staging copy is fully validated",
+            "prefix": "ronment on a staging host, then ",
+            "suffix": ", so no visitor ever hits a brok"
+          }
+        ]
+      },
+      "body": {
+        "@type": "TextualBody",
+        "value": "cut over DNS only after the staging copy is fully validated"
+      }
+    },
+    {
+      "@id": "#ext-e6c4c782bd3b",
+      "@type": "upc:Extraction",
+      "identifier": "ext-e6c4c782bd3b",
+      "upc:extractionId": "ext-e6c4c782bd3b",
+      "upc:sourceId": "src-604878cb9e3d",
+      "upc:type": "passage",
+      "upc:status": "active",
+      "upc:representation": {
+        "@id": "sources/cloudlore-2023-blue-green-deploys/representations/clean.md"
+      },
+      "text": "Blue-green keeps a spare environment ready.",
+      "upc:query": "How does blue-green keep a spare environment ready?",
+      "upc:directQuote": "a spare environment warm — like a café keeping a second pot ready",
+      "upc:charRange": {
+        "start": 55,
+        "end": 120
+      },
+      "upc:gateAuthoritative": true,
+      "upc:annotation": {
+        "@id": "#ext-e6c4c782bd3b-anno"
+      }
+    },
+    {
+      "@id": "#ext-e6c4c782bd3b-anno",
+      "@type": "Annotation",
+      "upc:interopOnly": true,
+      "target": {
+        "source": {
+          "@id": "sources/cloudlore-2023-blue-green-deploys/representations/clean.md"
+        },
+        "selector": [
+          {
+            "@type": "TextPositionSelector",
+            "start": 55,
+            "end": 120,
+            "upc:unit": "codepoint"
+          },
+          {
+            "@type": "TextQuoteSelector",
+            "exact": "a spare environment warm — like a café keeping a second pot ready",
+            "prefix": "nts explained\n\nBlue-green keeps ",
+            "suffix": " — so switching is instant becau"
+          }
+        ]
+      },
+      "body": {
+        "@type": "TextualBody",
+        "value": "a spare environment warm — like a café keeping a second pot ready"
+      }
+    },
+    {
+      "@id": "#gen-9a03fbd7e3ff",
+      "@type": [
+        "CreativeWork",
+        "upc:Generation"
+      ],
+      "identifier": "gen-9a03fbd7e3ff",
+      "upc:generationId": "gen-9a03fbd7e3ff",
+      "upc:type": "summary",
+      "name": "Summary",
+      "upc:output": {
+        "@id": "sources/watchdog-2024-migrate-with-no-downtime/generated/gen-9a03fbd7e3ff.md"
+      },
+      "upc:derivedFrom": [
+        {
+          "@id": "#ext-d8129f9b7114"
+        },
+        {
+          "@id": "#src-b95bb22d8232"
+        },
+        {
+          "@id": "sources/watchdog-2024-migrate-with-no-downtime/representations/clean.md"
+        }
+      ],
+      "upc:inputDigest": "sha256:53de3cc48d826dab705aa4f8af91145a1388ecd93f630726fe6fc136e0cc0c9c",
+      "upc:stale": false,
+      "upc:producedBy": {
+        "@id": "#tool-researchassistant-1-0-0"
+      },
+      "upc:model": "some-model",
+      "upc:activity": {
+        "@id": "#evt-000004"
+      }
+    },
+    {
+      "@id": "#src-604878cb9e3d",
+      "@type": [
+        "WebPage",
+        "upc:Source"
+      ],
+      "identifier": "src-604878cb9e3d",
+      "upc:sourceId": "src-604878cb9e3d",
+      "name": "Blue-green deployments explained",
+      "url": "https://cloudlore.example/blog/blue-green",
+      "author": [
+        "CloudLore"
+      ],
+      "datePublished": "2023",
+      "upc:sourceKind": "url",
+      "hasPart": [
+        {
+          "@id": "sources/cloudlore-2023-blue-green-deploys/representations/clean.md"
+        },
+        {
+          "@id": "sources/cloudlore-2023-blue-green-deploys/representations/raw.html"
+        }
+      ],
+      "upc:retrieval": {
+        "upc:originalUrl": "https://cloudlore.example/blog/blue-green",
+        "upc:fetchStatus": "success",
+        "upc:fetchedAt": "2026-08-17T12:00:00Z",
+        "upc:sha256": "43835cc18b3442cc7ba81a00d62a2ee5a95ac5512c17e4507b15c93e874b759d"
+      }
+    },
+    {
+      "@id": "#src-b95bb22d8232",
+      "@type": [
+        "WebPage",
+        "upc:Source"
+      ],
+      "identifier": "src-b95bb22d8232",
+      "upc:sourceId": "src-b95bb22d8232",
+      "name": "How to migrate a WordPress site with no downtime",
+      "url": "https://watchdogstudio.example/blog/migrate-with-no-downtime",
+      "author": [
+        "Watchdog Studio"
+      ],
+      "datePublished": "2024",
+      "upc:sourceKind": "url",
+      "hasPart": [
+        {
+          "@id": "sources/watchdog-2024-migrate-with-no-downtime/representations/clean.md"
+        },
+        {
+          "@id": "sources/watchdog-2024-migrate-with-no-downtime/representations/images/figure.svg"
+        },
+        {
+          "@id": "sources/watchdog-2024-migrate-with-no-downtime/representations/raw.html"
+        }
+      ],
+      "upc:aliases": {
+        "researchassistant": "000123"
+      },
+      "upc:retrieval": {
+        "upc:originalUrl": "https://watchdogstudio.example/blog/migrate-with-no-downtime",
+        "upc:fetchStatus": "success",
+        "upc:fetchedAt": "2026-08-17T12:00:00Z",
+        "upc:sha256": "411adf136fbbba9fc09390fc34428469ea62f7cb28970452f41deb8c7a84fb07"
+      }
+    },
+    {
+      "@id": "#syn-78fa307f3a32",
+      "@type": [
+        "CreativeWork",
+        "upc:Synthesis"
+      ],
+      "identifier": "syn-78fa307f3a32",
+      "upc:synthesisId": "syn-78fa307f3a32",
+      "upc:type": "answer",
+      "name": "Zero-downtime migration approaches",
+      "upc:question": "How do you migrate a WordPress site without downtime?",
+      "upc:claims": [
+        {
+          "upc:claimId": "cl-0001",
+          "text": "Cutting over DNS only after validating a staging copy avoids visitor-facing downtime.",
+          "upc:evidence": [
+            {
+              "@id": "#ext-d8129f9b7114"
+            }
+          ],
+          "upc:source": [
+            {
+              "@id": "#src-b95bb22d8232"
+            }
+          ],
+          "upc:confidence": "high"
+        },
+        {
+          "upc:claimId": "cl-0002",
+          "text": "Blue-green routing makes switchover and rollback instant.",
+          "upc:evidence": [
+            {
+              "@id": "#ext-77004eca0a27"
+            }
+          ],
+          "upc:source": [
+            {
+              "@id": "#src-604878cb9e3d"
+            }
+          ],
+          "upc:confidence": "medium"
+        }
+      ],
+      "upc:output": {
+        "@id": "syntheses/syn-78fa307f3a32/synthesis.md"
+      },
+      "upc:derivedFrom": [
+        {
+          "@id": "#ext-77004eca0a27"
+        },
+        {
+          "@id": "#ext-d8129f9b7114"
+        },
+        {
+          "@id": "#src-604878cb9e3d"
+        },
+        {
+          "@id": "#src-b95bb22d8232"
+        }
+      ],
+      "upc:inputDigest": "sha256:69bcfb26fce3d42b6a8ad1803fa712889674f6b2bb2293fc796ebfd5bee10d89",
+      "upc:stale": false,
+      "upc:producedBy": {
+        "@id": "#tool-pi-forge-0-2-0"
+      },
+      "upc:model": "local-llm",
+      "upc:activity": {
+        "@id": "#evt-000005"
+      }
+    },
+    {
+      "@id": "#tool-pi-forge",
+      "@type": "SoftwareApplication",
+      "name": "pi-forge"
+    },
+    {
+      "@id": "#tool-pi-forge-0-2-0",
+      "@type": "SoftwareApplication",
+      "name": "pi-forge",
+      "softwareVersion": "0.2.0"
+    },
+    {
+      "@id": "#tool-researchassistant",
+      "@type": "SoftwareApplication",
+      "name": "researchassistant"
+    },
+    {
+      "@id": "#tool-researchassistant-1-0-0",
+      "@type": "SoftwareApplication",
+      "name": "researchassistant",
+      "softwareVersion": "1.0.0"
+    },
+    {
+      "@id": "sources/cloudlore-2023-blue-green-deploys/representations/clean.md",
+      "@type": "File",
+      "name": "clean.md",
+      "identifier": "rep-b2f4406de5cc",
+      "encodingFormat": "text/markdown",
+      "upc:sha256": "b2f4406de5ccebf1378d226f169dbbcffe93e46a9ae129a75bfb609ecb2a2f66",
+      "upc:role": "clean_markdown",
+      "upc:representationId": "rep-b2f4406de5cc",
+      "upc:derivedFrom": {
+        "@id": "sources/cloudlore-2023-blue-green-deploys/representations/raw.html"
+      }
+    },
+    {
+      "@id": "sources/cloudlore-2023-blue-green-deploys/representations/raw.html",
+      "@type": "File",
+      "name": "raw.html",
+      "identifier": "rep-43835cc18b34",
+      "encodingFormat": "text/html",
+      "contentSize": 227,
+      "upc:sha256": "43835cc18b3442cc7ba81a00d62a2ee5a95ac5512c17e4507b15c93e874b759d",
+      "upc:role": "raw_html",
+      "upc:representationId": "rep-43835cc18b34"
+    },
+    {
+      "@id": "sources/watchdog-2024-migrate-with-no-downtime/generated/gen-9a03fbd7e3ff.md",
+      "@type": "File",
+      "name": "gen-9a03fbd7e3ff.md",
+      "encodingFormat": "text/markdown",
+      "upc:sha256": "0a47acc34d747592e28222532ff7c4681aabebe8d3bc24dae7c2f4c71f84674f",
+      "upc:outputOf": {
+        "@id": "#gen-9a03fbd7e3ff"
+      }
+    },
+    {
+      "@id": "sources/watchdog-2024-migrate-with-no-downtime/representations/clean.md",
+      "@type": "File",
+      "name": "clean.md",
+      "identifier": "rep-53de3cc48d82",
+      "encodingFormat": "text/markdown",
+      "upc:sha256": "53de3cc48d826dab705aa4f8af91145a1388ecd93f630726fe6fc136e0cc0c9c",
+      "upc:role": "clean_markdown",
+      "upc:representationId": "rep-53de3cc48d82",
+      "upc:derivedFrom": {
+        "@id": "sources/watchdog-2024-migrate-with-no-downtime/representations/raw.html"
+      }
+    },
+    {
+      "@id": "sources/watchdog-2024-migrate-with-no-downtime/representations/images/figure.svg",
+      "@type": "File",
+      "name": "figure.svg",
+      "identifier": "img-b26e480807a2",
+      "encodingFormat": "image/svg+xml",
+      "upc:sha256": "b26e480807a2175e25323e9e058f4733097a7111e90ac73e8ad66579e6e7e3bd",
+      "upc:role": "image",
+      "upc:representationId": "img-b26e480807a2",
+      "upc:derivedFrom": {
+        "@id": "sources/watchdog-2024-migrate-with-no-downtime/representations/clean.md"
+      }
+    },
+    {
+      "@id": "sources/watchdog-2024-migrate-with-no-downtime/representations/raw.html",
+      "@type": "File",
+      "name": "raw.html",
+      "identifier": "rep-411adf136fbb",
+      "encodingFormat": "text/html",
+      "contentSize": 311,
+      "upc:sha256": "411adf136fbbba9fc09390fc34428469ea62f7cb28970452f41deb8c7a84fb07",
+      "upc:role": "raw_html",
+      "upc:representationId": "rep-411adf136fbb"
+    },
+    {
+      "@id": "syntheses/syn-78fa307f3a32/synthesis.md",
+      "@type": "File",
+      "name": "synthesis.md",
+      "encodingFormat": "text/markdown",
+      "upc:sha256": "a126ff1f9ebc5727cfb47d350bb9ddcf34ce1f890664deb49af8100c1c321936",
+      "upc:outputOf": {
+        "@id": "#syn-78fa307f3a32"
+      }
+    }
+  ]
+}

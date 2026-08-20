@@ -30,7 +30,7 @@ folder alone:
 
 ```json
 {
-  "upc_spec_version": "1.1.0",
+  "upc_spec_version": "1.2.0",
   "corpus_id": "cor-3f9a1c2e7b40",
   "title": "Migration downtime research",
   "readme": "Universal Provenance Corpus. Work ONLY from ids resolved through the manifests; do not infer meaning from paths. Sources are immutable; derived objects link back via provenance.derived_from. Quotations are verified byte-for-byte — see spec/03.",

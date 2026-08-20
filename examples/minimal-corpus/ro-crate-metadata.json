@@ -1,0 +1,128 @@
+{
+  "@context": [
+    "https://w3id.org/ro/crate/1.3/context",
+    {
+      "upc": "https://provenance.dev/upc/terms#"
+    }
+  ],
+  "@graph": [
+    {
+      "@id": "ro-crate-metadata.json",
+      "@type": "CreativeWork",
+      "conformsTo": {
+        "@id": "https://w3id.org/ro/crate/1.3"
+      },
+      "about": {
+        "@id": "./"
+      }
+    },
+    {
+      "@id": "./",
+      "@type": "Dataset",
+      "identifier": "cor-bb1e337e082b",
+      "name": "Minimal UPC corpus",
+      "conformsTo": [
+        {
+          "@id": "https://w3id.org/ro/crate/1.3"
+        },
+        {
+          "@id": "https://provenance.dev/upc/1.2.0/profiles/ro-crate"
+        }
+      ],
+      "upc:specVersion": "1.2.0",
+      "description": "Universal Provenance Corpus. Work only from ids resolved through the manifests. Quotations are verified byte-for-byte (spec/03).",
+      "datePublished": "2026-08-17T12:00:00Z",
+      "hasPart": [
+        {
+          "@id": "sources/note-2026-hello-provenance/representations/clean.md"
+        }
+      ],
+      "mentions": [
+        {
+          "@id": "#src-bdfe98b6a2a2"
+        }
+      ]
+    },
+    {
+      "@id": "#ext-d9364c4a62ab",
+      "@type": "upc:Extraction",
+      "identifier": "ext-d9364c4a62ab",
+      "upc:extractionId": "ext-d9364c4a62ab",
+      "upc:sourceId": "src-bdfe98b6a2a2",
+      "upc:type": "evidence",
+      "upc:status": "active",
+      "upc:representation": {
+        "@id": "sources/note-2026-hello-provenance/representations/clean.md"
+      },
+      "text": "Every claim in a provenance corpus is traceable to its evidence.",
+      "upc:query": "What is the point of a provenance corpus?",
+      "upc:directQuote": "every claim can be traced back to its evidence",
+      "upc:charRange": {
+        "start": 112,
+        "end": 158
+      },
+      "upc:gateAuthoritative": true,
+      "upc:annotation": {
+        "@id": "#ext-d9364c4a62ab-anno"
+      }
+    },
+    {
+      "@id": "#ext-d9364c4a62ab-anno",
+      "@type": "Annotation",
+      "upc:interopOnly": true,
+      "target": {
+        "source": {
+          "@id": "sources/note-2026-hello-provenance/representations/clean.md"
+        },
+        "selector": [
+          {
+            "@type": "TextPositionSelector",
+            "start": 112,
+            "end": 158,
+            "upc:unit": "codepoint"
+          },
+          {
+            "@type": "TextQuoteSelector",
+            "exact": "every claim can be traced back to its evidence",
+            "prefix": " a provenance corpus is simple: ",
+            "suffix": ", and every quotation is verifie"
+          }
+        ]
+      },
+      "body": {
+        "@type": "TextualBody",
+        "value": "every claim can be traced back to its evidence"
+      }
+    },
+    {
+      "@id": "#src-bdfe98b6a2a2",
+      "@type": [
+        "CreativeWork",
+        "upc:Source"
+      ],
+      "identifier": "src-bdfe98b6a2a2",
+      "upc:sourceId": "src-bdfe98b6a2a2",
+      "name": "Hello, Provenance",
+      "author": [
+        "UPC"
+      ],
+      "datePublished": "2026",
+      "upc:sourceKind": "document",
+      "hasPart": [
+        {
+          "@id": "sources/note-2026-hello-provenance/representations/clean.md"
+        }
+      ]
+    },
+    {
+      "@id": "sources/note-2026-hello-provenance/representations/clean.md",
+      "@type": "File",
+      "name": "clean.md",
+      "identifier": "rep-cc693f89d386",
+      "encodingFormat": "text/markdown",
+      "upc:sha256": "cc693f89d386069e4ad7d3c2541422f7be596dad30f84d00ed46e53b3ac11238",
+      "upc:role": "clean_markdown",
+      "upc:representationId": "rep-cc693f89d386"
+    }
+  ]
+}

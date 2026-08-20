@@ -1,4 +1,4 @@
-# UPC Output Contract (skill-local, 1.1.0)
+# UPC Output Contract (skill-local, 1.2.0)
 
 The condensed, self-sufficient contract for producing a conformant Universal
 Provenance Corpus. The full normative spec is in `spec/` at the standard's root;

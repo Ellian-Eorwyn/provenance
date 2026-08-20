@@ -122,5 +122,15 @@ or set `UPC_SCHEMA_DIR` / `UPC_VOCAB_DIR`.
 
 To map an existing tool's schema onto UPC, see the crosswalks at
 `crosswalks/pi-forge.md` and `crosswalks/research-assistant.md`. Each is a
-field-by-field bridge plus the import/export direction and the 1.1.0
-breaking-change notes for that tool.
+field-by-field bridge plus the import/export direction and the migration notes
+for that tool.
+
+## Interoperability & guarantees
+
+Any conformant corpus projects into the research-object ecosystem:
+`upc export <corpus> --format ro-crate` writes a deterministic RO-Crate 1.3
+metadata graph conforming to `profiles/ro-crate/` (crosswalks: `ro-crate.md`,
+`web-annotation.md`, `prov.md`). The Web-Annotation selectors are
+interoperability-only; the UPC `char_range` stays gate-authoritative. What each
+conformance level mechanically guarantees — and, deliberately, what it does not —
+is stated normatively in `spec/11-guarantees.md`.

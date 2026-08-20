@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://provenance.dev/upc/1.1.0/schemas/event.schema.json",
+  "$id": "https://provenance.dev/upc/1.2.0/schemas/event.schema.json",
   "title": "UPC Activity Event",
   "description": "One line of provenance/events.jsonl: a recorded step in how the corpus was built or corrected. Append-only; a correction or removal is a new event, never a rewrite (§07, §10).",
   "type": "object",

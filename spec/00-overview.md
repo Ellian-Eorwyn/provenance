@@ -1,6 +1,6 @@
 # UPC 00 — Overview
 
-**Universal Provenance Corpus (UPC), version 1.1.0**
+**Universal Provenance Corpus (UPC), version 1.2.0**
 
 A UPC corpus is a portable, tool-independent collection of research materials in
 which both humans and software can always answer: *What is this object? Where did
@@ -144,6 +144,7 @@ These are normative; each later spec section elaborates one or more.
 | Conformance & validation | — | §08 |
 | Human interface & projections | `index.html` and views | §09 |
 | Storage & durability | atomic writes, JSONL/CSV rules, removal | §10 |
+| Guarantees & non-guarantees | — | §11 |
 | Layout decision record | per-source vs per-media-type | Appendix A |
 
 ## Conformance in one line
@@ -179,12 +180,12 @@ Two rules make additive minor versions actually compatible:
   tools room to extend.
 
 Each schema's `$id` embeds the minor version
-(`https://provenance.dev/upc/1.1.0/schemas/...`). The corpus records
+(`https://provenance.dev/upc/1.2.0/schemas/...`). The corpus records
 `integrity.schema_hash` (§01) so a reader can detect a schema skew even within a
 minor version. This document supersedes UPC 1.0.0 wholesale; see `CHANGELOG.md`.
 
 ## Status of this document
 
-Version 1.1.0. Reference implementation: the zero-dependency Node ≥18 skill under
+Version 1.2.0. Reference implementation: the zero-dependency Node ≥18 skill under
 `skill/universal-provenance/`. The spec is normative; where the reference code
 and this document disagree, the document governs and the code is the bug.

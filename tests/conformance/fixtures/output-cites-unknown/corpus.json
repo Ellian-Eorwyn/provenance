@@ -1,5 +1,5 @@
 {
-  "upc_spec_version": "1.1.0",
+  "upc_spec_version": "1.2.0",
   "corpus_id": "cor-6fd77f10ed54",
   "title": "Fixture",
   "readme": "fixture",
@@ -38,6 +38,6 @@
     }
   ],
   "integrity": {
-    "schema_hash": "sha256:683f31b5b5e48f9ca2e924dba3d75dbc8f425b0a7115a06618b07a1795b8c86e"
+    "schema_hash": "sha256:444dd974e1f9e34a937236bd8d3af245f660761b87a62f05a5fd272bd9000f85"
   }
 }

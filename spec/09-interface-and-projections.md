@@ -18,6 +18,8 @@ Projections include:
 - the static HTML browser `index.html` (below);
 - generated Markdown deliverables (`summary.md`, `synthesis.md`, §04);
 - bibliographic exports — CSL-JSON, BibTeX, RIS (below);
+- an RO-Crate 1.3 metadata graph (`ro-crate-metadata.json`) conforming to the UPC
+  RO-Crate profile (`profiles/ro-crate/`; `crosswalks/ro-crate.md`);
 - **any format produced on demand by an LLM** — a literature review, a comparison
   table, a slide outline, a prose answer.
 
@@ -147,6 +149,14 @@ bibliography). The bibliographic mappings:
 | `publisher` | `publisher` | `PB` |
 | `abstract` | `abstract` | `AB` |
 | (anything unmapped) | `note` | `N1` |
+
+`upc export … --format ro-crate` emits a research-object projection instead of a
+bibliographic one: a deterministic **RO-Crate 1.3** metadata graph
+(`ro-crate-metadata.json`) conforming to the UPC RO-Crate profile
+(`profiles/ro-crate/`). It carries the object graph, derivation edges, and — for
+each gated extraction — a companion Web Annotation, with the UPC content-addressed
+ids preserved in `identifier`/`upc:*Id` and the `char_range` kept
+gate-authoritative (`crosswalks/ro-crate.md`, `crosswalks/web-annotation.md`, §11).
 
 Because exports are projections, they are regenerated on demand and never held as
 a second source of truth.

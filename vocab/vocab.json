@@ -1,9 +1,9 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://provenance.dev/upc/1.1.0/vocab/vocab.json",
+  "$id": "https://provenance.dev/upc/1.2.0/vocab/vocab.json",
   "title": "UPC Controlled Vocabularies",
   "description": "Single source of truth for every closed enum in the Universal Provenance Corpus standard. Object schemas $ref these definitions (e.g. \"vocab.json#/$defs/confidence\") so terminology is defined in exactly one place. Extensible fields anyOf a closed enum with an \"x-\" prefixed escape hatch.",
-  "upc_spec_version": "1.1.0",
+  "upc_spec_version": "1.2.0",
   "$defs": {
     "interpretation": {
       "description": "How directly the source supports an extracted statement.",

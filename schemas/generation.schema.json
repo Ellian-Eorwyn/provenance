@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://provenance.dev/upc/1.1.0/schemas/generation.schema.json",
+  "$id": "https://provenance.dev/upc/1.2.0/schemas/generation.schema.json",
   "title": "UPC Generation",
   "description": "Single-source derived material (summary, rating, translation, classification, description). Inputs live in provenance.derived_from (the single source of truth for the graph edges); provenance.input_digest enables staleness. A rendered output is pinned by output.sha256; any quotation in it is gated by hop C (§04).",
   "type": "object",
