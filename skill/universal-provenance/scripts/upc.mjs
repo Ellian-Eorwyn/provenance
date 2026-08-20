@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// UPC 1.2.0 command-line tool. Zero deps, Node >= 18.
+// UPC 1.3.0 command-line tool. Zero deps, Node >= 18.
 //
 //   upc validate <dir> [--strict]
 //   upc verify-quotes <file> --corpus <dir> [--strict]
@@ -60,6 +60,21 @@ function schemaTopProps(schemaDir, file) {
   try {
     const s = U.readJSON(path.join(schemaDir, file));
     return new Set(Object.keys(s.properties || {}));
+  } catch {
+    return new Set();
+  }
+}
+
+// The closed enum of a vocab.json definition (bare `enum` or the enum branch of
+// an `anyOf` closed-with-x-escape def). Single source of truth for advisory
+// checks so a code-side list never drifts from vocab/vocab.json.
+function vocabEnum(vocabDir, name) {
+  try {
+    const v = U.readJSON(path.join(vocabDir, "vocab.json"));
+    const def = (v.$defs && v.$defs[name]) || {};
+    if (Array.isArray(def.enum)) return new Set(def.enum);
+    const branch = Array.isArray(def.anyOf) && def.anyOf.find((b) => Array.isArray(b.enum));
+    return new Set(branch ? branch.enum : []);
   } catch {
     return new Set();
   }
@@ -548,6 +563,33 @@ export function validateCorpus(root, opts = {}) {
   for (const s of loaded.sources) if (s.obj) scanAlias(s.obj, s.obj.source_id);
   for (const e of loaded.extractions) scanAlias(e.obj, e.obj.extraction_id);
 
+  // source identity enrichment advisories (identifiers[]/relations[], §02/§06/§08).
+  // Both are warnings only: an unlisted identifier scheme is never a hard error,
+  // and UPC never resolves an external identifier. relation_dangling checks only
+  // intra-corpus, id-shaped targets; external strings/URLs are left untouched.
+  {
+    const knownSchemes = vocabDir ? vocabEnum(vocabDir, "identifier_scheme") : new Set();
+    const X_PREFIX = /^x-[a-z0-9-]+$/;
+    const RESOLVABLE = new Set(["src-", "rep-", "img-", "ext-", "gen-", "syn-"]);
+    const idShaped = (t) => typeof t === "string" && RESOLVABLE.has(t.slice(0, 4));
+    const resolves = (t) =>
+      model.sourceById.has(t) || model.repById.has(t) || model.extById.has(t) || model.genById.has(t) || model.synById.has(t);
+    for (const s of loaded.sources) {
+      if (!s.obj) continue;
+      const o = s.obj;
+      for (const it of o.identifiers || []) {
+        const sch = it && it.scheme;
+        if (typeof sch === "string" && sch !== "" && !knownSchemes.has(sch) && !X_PREFIX.test(sch)) {
+          warn("identifier_scheme_unknown", o.source_id, `unrecognized identifier scheme "${sch}"`);
+        }
+      }
+      for (const rel of o.relations || []) {
+        const t = rel && rel.target;
+        if (idShaped(t) && !resolves(t)) warn("relation_dangling", o.source_id, `relation target ${t} does not resolve`);
+      }
+    }
+  }
+
   // --- level from rules passed (capped by content) ---
   const errLevels = new Set(errors.map((e) => e.level));
   const ceiling = hasL2 ? 2 : loaded.extractions.length ? 1 : 0;
@@ -965,7 +1007,7 @@ async function main() {
         break;
       }
       default:
-        process.stderr.write("UPC 1.2.0 — commands: validate, verify-quotes, verify, quote, regen, build-index, export, mint, reanchor\n");
+        process.stderr.write("UPC 1.3.0 — commands: validate, verify-quotes, verify, quote, regen, build-index, export, mint, reanchor\n");
         process.exit(cmd ? 2 : 0);
     }
   } catch (e) {

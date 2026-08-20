@@ -7,7 +7,7 @@ exact quotation gates, selector semantics, and derivation constraints. UPC does
 **not** replace its own object store with RO-Crate; instead it emits a **lossless
 RO-Crate projection** so any UPC corpus can be consumed by the RO-Crate ecosystem.
 
-- **Direction (1.2.0): export only.** `upc export <corpus> --format ro-crate`
+- **Direction (1.3.0): export only.** `upc export <corpus> --format ro-crate`
   writes `ro-crate-metadata.json` (see §09 projections). Like `index.html` and the
   CSV mirrors, it is a **regenerable, non-canonical** view; the UPC objects remain
   the single source of truth. RO-Crate *import* (round-trip) is deferred — reading
@@ -15,7 +15,7 @@ RO-Crate projection** so any UPC corpus can be consumed by the RO-Crate ecosyste
   zero-dependency implementation and a later decision (see §00 versioning).
 - **Profile.** The projection declares conformance to the **UPC RO-Crate profile**
   (`profiles/ro-crate/`), whose canonical id is
-  `https://provenance.dev/upc/1.2.0/profiles/ro-crate`.
+  `https://provenance.dev/upc/1.3.0/profiles/ro-crate`.
 
 Legend: **exact** (semantics coincide) · **partial** (maps, but with a stated
 divergence) · **incompatible** (do not equate) · **UPC-only** (no RO-Crate
@@ -28,6 +28,8 @@ counterpart; carried as a `upc:` term).
 | Corpus (`corpus.json`) | root `Dataset` (`@id: "./"`) | exact | `identifier: cor-…`; `conformsTo` names RO-Crate 1.3 + the UPC profile |
 | Stored representation (bytes) | `File` data entity (`@id` = crate-relative **path**) | exact | UPC id in `identifier: rep-…`; role in `upc:role` |
 | Source (conceptual) | `["CreativeWork","upc:Source"]` (or `ScholarlyArticle`/`Dataset` per `bibliographic.item_type`) | partial | a bibliographic *work*, distinct from its representation `File`s |
+| Source `identifiers[]` (`{scheme,value,url?}`) | schema.org `identifier` / `sameAs` | partial | carried verbatim as `upc:identifiers` (`upc:identifierScheme` + `value` + `url`); UPC records, never resolves |
+| Source `relations[]` (`{type,target}`) | schema.org relation props (`isPartOf`, `sameAs`, …) | **UPC-only** | carried as `upc:relations` (`upc:relationType` + `upc:relationTarget`); the typed UPC relation semantics have no exact schema.org equivalent |
 | Extraction | `["upc:Extraction"]` entity + companion `Annotation` for gated ones | partial | see [web-annotation.md](web-annotation.md) |
 | Generation | `["CreativeWork","upc:Generation"]` | exact | `output` → `File`/inline; `derived_from` → `hasPart`/PROV |
 | Synthesis | `["CreativeWork","upc:Synthesis"]` (or `Dataset`) | exact | claim register carried as `upc:` terms |

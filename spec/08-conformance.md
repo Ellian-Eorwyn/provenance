@@ -88,6 +88,8 @@ or informational).
 | An alias namespace maps to a different canonical id elsewhere | `alias_collision` | Advis | — |
 | An `x-` extension enum value is used | `x_extension` | Advis | reported so reviewers see non-standard vocabulary |
 | `confidence` enum and `confidence_score` are inconsistent | `confidence_inconsistent` | Advis | e.g. `low` + `0.99` |
+| A source `identifiers[].scheme` is unrecognized | `identifier_scheme_unknown` | Advis | non-`x-` value outside `vocab/identifier_scheme`; UPC never resolves external identifiers (§02, §06) |
+| A source `relations[].target` is id-shaped but does not resolve | `relation_dangling` | Advis | only intra-corpus `src-`/`rep-`/… targets are checked; external identifiers / URLs are never checked (§02) |
 
 ## Rule classes
 
@@ -131,7 +133,7 @@ error-severity finding:
 {
   "status": "failed",
   "corpus": "/path/to/corpus",
-  "upc_spec_version": "1.2.0",
+  "upc_spec_version": "1.3.0",
   "level": "L1",
   "counts": { "sources": 12, "representations": 34, "extractions": 88, "generations": 12, "syntheses": 1 },
   "errors": [

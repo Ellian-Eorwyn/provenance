@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://provenance.dev/upc/1.2.0/schemas/source.schema.json",
+  "$id": "https://provenance.dev/upc/1.3.0/schemas/source.schema.json",
   "title": "UPC Source",
   "description": "The primary conceptual object. Everything else references its source_id. A source is a root: it carries `retrieval` provenance rather than `derived_from`. Per-field provenance lives in the source-level `field_evidence` (a sibling of `bibliographic`, so a CSL export is `bibliographic` verbatim).",
   "type": "object",
@@ -56,6 +56,33 @@
       "type": "array",
       "items": { "type": "string" },
       "description": "generation_ids produced from this source (advisory index; generation records live under generated/ or the generations section)."
+    },
+    "identifiers": {
+      "type": "array",
+      "description": "Optional external identifiers for the conceptual source (advisory, non-identity). Each is { scheme, value, url? }. `scheme` is a free string SHOULD-drawn from vocab.json#/$defs/identifier_scheme; an unrecognized non-x- scheme raises the advisory identifier_scheme_unknown, never a hard error. These NEVER feed the src- id recipe (§06) and UPC never resolves them against an external registry.",
+      "items": {
+        "type": "object",
+        "required": ["scheme", "value"],
+        "properties": {
+          "scheme": { "type": "string", "description": "Recommended values in vocab.json#/$defs/identifier_scheme (doi, isbn, issn, …); free string so an unlisted scheme is advisory, not schema-invalid." },
+          "value": { "type": "string" },
+          "url": { "type": "string", "description": "Optional resolvable URL form of the identifier." }
+        },
+        "additionalProperties": true
+      }
+    },
+    "relations": {
+      "type": "array",
+      "description": "Optional typed relationships to other works (advisory, non-identity). Each is { type, target }. `target` is an intra-corpus src-/rep-/… id or an external identifier string/URL; only an id-shaped target that fails to resolve raises the advisory relation_dangling. For intra-corpus supersession use the top-level supersedes/superseded_by scalars (§02); these relations never feed the src- id recipe (§06).",
+      "items": {
+        "type": "object",
+        "required": ["type", "target"],
+        "properties": {
+          "type": { "$ref": "../vocab/vocab.json#/$defs/relation_type" },
+          "target": { "type": "string", "description": "An intra-corpus src-/rep-/img-/ext-/gen-/syn- id, or an external identifier string / URL." }
+        },
+        "additionalProperties": true
+      }
     },
     "provenance": { "$ref": "provenance-stamp.schema.json" },
     "ext": { "type": "object", "additionalProperties": true }

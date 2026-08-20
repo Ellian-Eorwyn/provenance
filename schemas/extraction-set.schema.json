@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://provenance.dev/upc/1.2.0/schemas/extraction-set.schema.json",
+  "$id": "https://provenance.dev/upc/1.3.0/schemas/extraction-set.schema.json",
   "title": "UPC Extraction Set Manifest",
   "description": "manifest.json for a query-driven extraction set spanning many sources (extractions/<set-id>/manifest.json). Points at items.jsonl, whose lines each validate against extraction.schema.json.",
   "type": "object",

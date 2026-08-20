@@ -3,6 +3,44 @@
 All notable changes to the Universal Provenance Corpus (UPC) standard.
 Versioning is semantic (§00 Versioning policy).
 
+## 1.3.0 — 2026-08-20
+
+**Backward-compatible (additive) minor release: optional source identity
+enrichment.** Every 1.2.0 corpus remains valid, and a 1.3.0 validator accepts a
+1.2.0 corpus. No object field was removed or renamed, and no id recipe or
+quotation gate changed; the schema `$id`s bump to `1.3.0` (which changes
+`integrity.schema_hash` — regenerate projections with `upc regen`).
+
+### Added — optional source identity
+
+- **`source.identifiers[]`** — optional external identifiers for the conceptual
+  work, each `{ scheme, value, url? }`. `scheme` is a free string; recommended
+  values live in the new `vocab/identifier_scheme` vocabulary (`doi`, `isbn`,
+  `issn`, `pmid`, `pmcid`, `arxiv`, `handle`, `ark`, `urn`, `oclc`, `wikidata`,
+  plus an `x-` escape). Never feeds the `src-` id recipe; UPC never resolves an
+  identifier against an external registry.
+- **`source.relations[]`** — optional typed links to other works, each
+  `{ type, target }`, with `type` from the new `vocab/relation_type` vocabulary
+  (`same_work_as`, `is_version_of`, `has_version`, `is_capture_of`, `is_part_of`,
+  `has_part`, `is_format_of`, `is_translation_of`, `supersedes`, `superseded_by`,
+  plus an `x-` escape). Intra-corpus supersession stays on the scalar
+  `supersedes`/`superseded_by` fields; these relations never substitute for them.
+- **Two advisory rules** (§08, Class `Advis`, warnings only):
+  `identifier_scheme_unknown` (a non-`x-` scheme outside the recommended
+  vocabulary) and `relation_dangling` (an intra-corpus, id-shaped relation target
+  that does not resolve). Neither is ever a hard error; external identifiers and
+  URLs are never checked.
+- **RO-Crate export** surfaces both fields as `upc:` terms (`upc:identifiers` /
+  `upc:relations`, with nested `upc:identifierScheme` / `upc:relationType` /
+  `upc:relationTarget`); the `profiles/ro-crate/` term set is extended to match.
+
+### Compatibility
+
+- `identifiers[]` / `relations[]` are additive optional fields and **recipe-inert**
+  (the `src-` recipe reads only URL/bytes). A 1.2.0 reader ignores them
+  (must-ignore-unknown); a **1.2.0 validator under `--strict`** will
+  `unknown_field`-flag them — expected minor-version forward-compat behavior.
+
 ## 1.2.0 — 2026-08-18
 
 **Backward-compatible (additive) minor release: interoperability + epistemic

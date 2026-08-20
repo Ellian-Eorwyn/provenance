@@ -70,7 +70,7 @@ const sortRefs = (arr) => arr.slice().sort((a, b) => (a["@id"] < b["@id"] ? -1 :
  */
 export function buildRoCrateGraph(loaded) {
   const corpus = loaded.corpus || {};
-  const upcVer = /^1\./.test(corpus.upc_spec_version || "") ? corpus.upc_spec_version : "1.2.0";
+  const upcVer = /^1\./.test(corpus.upc_spec_version || "") ? corpus.upc_spec_version : "1.3.0";
   const profileId = `https://provenance.dev/upc/${upcVer}/profiles/ro-crate`;
 
   // rep-id -> relative path (File @id) and the cached record for context reads.
@@ -174,6 +174,19 @@ export function buildRoCrateGraph(loaded) {
     const parts = sortRefs(repsBySource.get(o.source_id) || []);
     if (parts.length) e.hasPart = parts;
     if (o.aliases) e["upc:aliases"] = o.aliases;
+    if (Array.isArray(o.identifiers) && o.identifiers.length) {
+      e["upc:identifiers"] = o.identifiers.map((i) => ({
+        "upc:identifierScheme": i.scheme,
+        value: i.value,
+        ...(i.url ? { url: i.url } : {}),
+      }));
+    }
+    if (Array.isArray(o.relations) && o.relations.length) {
+      e["upc:relations"] = o.relations.map((r) => ({
+        "upc:relationType": r.type,
+        "upc:relationTarget": r.target,
+      }));
+    }
     if (ret.original_url || ret.fetch_status || ret.fetched_at || ret.sha256) {
       e["upc:retrieval"] = {
         ...(ret.original_url ? { "upc:originalUrl": ret.original_url } : {}),

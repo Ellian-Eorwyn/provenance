@@ -1,9 +1,9 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://provenance.dev/upc/1.2.0/vocab/vocab.json",
+  "$id": "https://provenance.dev/upc/1.3.0/vocab/vocab.json",
   "title": "UPC Controlled Vocabularies",
   "description": "Single source of truth for every closed enum in the Universal Provenance Corpus standard. Object schemas $ref these definitions (e.g. \"vocab.json#/$defs/confidence\") so terminology is defined in exactly one place. Extensible fields anyOf a closed enum with an \"x-\" prefixed escape hatch.",
-  "upc_spec_version": "1.2.0",
+  "upc_spec_version": "1.3.0",
   "$defs": {
     "interpretation": {
       "description": "How directly the source supports an extracted statement.",
@@ -109,6 +109,31 @@
           "enum": [
             "http", "playwright", "readability", "structured_data", "ocr",
             "conversion", "vision", "model", "manual", "import"
+          ]
+        },
+        { "type": "string", "pattern": "^x-[a-z0-9-]+$" }
+      ]
+    },
+    "identifier_scheme": {
+      "description": "Recommended scheme for a source-level external identifier (source.identifiers[].scheme). Advisory only: an unrecognized non-x- scheme raises the advisory identifier_scheme_unknown (§08), never a hard error, and UPC never resolves the identifier against any external registry (§06). Closed base list plus an x- escape hatch for tool- or domain-specific schemes. Note: source.identifiers[].scheme is a free string in the schema (so an unlisted scheme is advisory, not schema-invalid); this vocabulary is the registry the advisory consults.",
+      "anyOf": [
+        {
+          "enum": [
+            "doi", "isbn", "issn", "pmid", "pmcid", "arxiv",
+            "handle", "ark", "urn", "oclc", "wikidata"
+          ]
+        },
+        { "type": "string", "pattern": "^x-[a-z0-9-]+$" }
+      ]
+    },
+    "relation_type": {
+      "description": "Typed relationship from a source to another work (source.relations[].type). The intra-corpus supersession chain remains carried by the top-level scalar supersedes/superseded_by fields (which drive the cites_superseded conformance rule); relations[] of type supersedes/superseded_by are advisory metadata, typically to an external work, and never substitute for those scalar fields (§02). Closed base vocabulary plus an x- escape hatch.",
+      "anyOf": [
+        {
+          "enum": [
+            "same_work_as", "is_version_of", "has_version", "is_capture_of",
+            "is_part_of", "has_part", "is_format_of", "is_translation_of",
+            "supersedes", "superseded_by"
           ]
         },
         { "type": "string", "pattern": "^x-[a-z0-9-]+$" }

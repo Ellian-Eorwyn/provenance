@@ -9,11 +9,12 @@ import { fileURLToPath } from "node:url";
 import {
   jcs, codepointLength, codepointSlice, decodeUtf8Strict, verifyHopB,
   canonicalUrl, slugify, slugifyWithCollision, checkFilename,
-  parseQuoteMarkers, findUncitedQuotes, mintExtId, computeInputDigest,
+  parseQuoteMarkers, findUncitedQuotes, mintExtId, mintSrcId, computeInputDigest,
   writeCsv, parseCsv,
   loadCorpus, clearRepCache, sha256Hex, bareHash,
 } from "../skill/universal-provenance/scripts/upc_common.mjs";
 import { buildRoCrateGraph } from "../skill/universal-provenance/scripts/ro-crate.mjs";
+import { validateCorpus } from "../skill/universal-provenance/scripts/upc.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
@@ -100,6 +101,25 @@ ok("decodeUtf8Strict rejects invalid", decodeUtf8Strict(Buffer.from([0xff, 0xfe,
   const e2 = { ...e, context_before: "x", locator: { value: { end: 306, start: 247 }, type: "char_range", representation_ref: "rep-5e4a2d156536" } };
   eq("ext id stable under locator key order + context", mintExtId(e2), id1);
   ok("ext id shape", /^ext-[0-9a-f]{12}$/.test(id1));
+}
+
+// --- src- id invariance to new source fields (identifiers[]/relations[]) ---
+// The src- recipe reads only {canonicalUrl, primaryBytesSha256}; enrichment
+// fields have no channel to reach it. Assert that structurally.
+{
+  const urlId = mintSrcId({ canonicalUrl: canonicalUrl("https://x.example/a") });
+  const byteId = mintSrcId({ primaryBytesSha256: "sha256:" + "a".repeat(64) });
+  // A source object gaining identifiers[]/relations[] cannot change either id:
+  // the recipe never receives the source object, only the two named inputs.
+  const enrich = {
+    identifiers: [{ scheme: "doi", value: "10.1/x" }, { scheme: "x-foo", value: "y" }],
+    relations: [{ type: "same_work_as", target: "https://x.example/a" }, { type: "supersedes", target: "src-000000000000" }],
+  };
+  eq("src id (url) invariant to identifiers/relations",
+    mintSrcId({ canonicalUrl: canonicalUrl("https://x.example/a"), ...enrich }), urlId);
+  eq("src id (bytes) invariant to identifiers/relations",
+    mintSrcId({ primaryBytesSha256: "sha256:" + "a".repeat(64), ...enrich }), byteId);
+  ok("src id shape", /^src-[0-9a-f]{12}$/.test(urlId) && /^src-[0-9a-f]{12}$/.test(byteId));
 }
 
 // --- input_digest ---
@@ -219,6 +239,15 @@ ok("filename rejects reserved", !checkFilename("sources/con/x.md").ok);
   ok("position selector declares codepoint unit", posSel && posSel["upc:unit"] === "codepoint");
   const quoteSel = anno && anno.target.selector.find((s) => s["@type"] === "TextQuoteSelector");
   ok("quote selector exact == direct_quote", quoteSel && quoteSel.exact === ext["upc:directQuote"]);
+
+  // source identity enrichment surfaced as upc: terms (the cloudlore source carries a doi + same_work_as)
+  const enriched = graph.find((e) => [].concat(e["@type"]).includes("upc:Source") && e["upc:identifiers"]);
+  ok("ro-crate surfaces upc:identifiers on an enriched source", !!enriched);
+  ok("upc:identifiers carries upc:identifierScheme + value",
+    enriched && enriched["upc:identifiers"].some((i) => i["upc:identifierScheme"] === "doi" && typeof i.value === "string"));
+  ok("ro-crate surfaces upc:relations with typed scheme/target",
+    enriched && Array.isArray(enriched["upc:relations"]) &&
+    enriched["upc:relations"].every((r) => typeof r["upc:relationType"] === "string" && typeof r["upc:relationTarget"] === "string"));
 }
 
 // --- Web Annotation selector edge cases (synthetic corpora on a temp dir) ---
@@ -247,7 +276,7 @@ ok("filename rejects reserved", !checkFilename("sources/con/x.md").ok);
     };
     clearRepCache();
     const loaded = {
-      root: dir, corpus: { corpus_id: "cor-aaaaaaaaaaaa", upc_spec_version: "1.2.0", title: "t" },
+      root: dir, corpus: { corpus_id: "cor-aaaaaaaaaaaa", upc_spec_version: "1.3.0", title: "t" },
       sections: {}, sources: [{ obj: srcObj, dirRel: "sources/s" }],
       representations: [{ obj: repObj, sourceId: srcObj.source_id, abs, contained: true }],
       extractions: [{ obj: ext }], generations: [], syntheses: [], events: [], extractionSets: [], diagnostics: [],
@@ -297,6 +326,48 @@ ok("filename rejects reserved", !checkFilename("sources/con/x.md").ok);
   }
 
   fs.rmSync(tmpRoot, { recursive: true, force: true });
+}
+
+// --- source identity advisories: identifier_scheme_unknown + relation_dangling ---
+// End-to-end through validateCorpus on a copy of the real example: inject a bad
+// scheme and a dangling relation, and assert both fire as WARNINGS only, with no
+// new errors and no change in conformance level (enrichment is inert to gates).
+{
+  const EXAMPLE = path.join(HERE, "..", "examples", "web-research-corpus");
+  clearRepCache();
+  const base = validateCorpus(EXAMPLE);
+  ok("baseline example raises no identity advisories",
+    !base.warnings.some((w) => w.code === "identifier_scheme_unknown" || w.code === "relation_dangling"));
+
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "upc-enrich-"));
+  const dst = path.join(tmp, "corpus");
+  fs.cpSync(EXAMPLE, dst, { recursive: true });
+  const sfile = path.join(dst, "sources", "cloudlore-2023-blue-green-deploys", "source.json");
+  const sobj = JSON.parse(fs.readFileSync(sfile, "utf8"));
+  const srcId = sobj.source_id, repId = sobj.representations[0].representation_id;
+  sobj.identifiers = [
+    { scheme: "doi", value: "10.1/x" },        // known scheme -> no warning
+    { scheme: "x-internal", value: "42" },      // x- escape hatch -> no warning
+    { scheme: "frobnicate", value: "99" },      // unknown non-x -> identifier_scheme_unknown
+  ];
+  sobj.relations = [
+    { type: "same_work_as", target: "https://example.org/o" }, // external -> never checked
+    { type: "is_version_of", target: repId },                   // resolvable id -> no warning
+    { type: "is_version_of", target: srcId },                   // resolvable id (self) -> no warning
+    { type: "supersedes", target: "src-000000000000" },         // id-shaped, unresolved -> relation_dangling
+  ];
+  fs.writeFileSync(sfile, JSON.stringify(sobj, null, 2) + "\n");
+  clearRepCache();
+  const rep = validateCorpus(dst);
+  const wc = (code) => rep.warnings.filter((w) => w.code === code).length;
+  eq("enriched: exactly one identifier_scheme_unknown (only the non-x unknown scheme)", wc("identifier_scheme_unknown"), 1);
+  eq("enriched: exactly one relation_dangling (only the unresolved id-shaped target)", wc("relation_dangling"), 1);
+  eq("enriched: enrichment adds no errors",
+    JSON.stringify(rep.errors.map((e) => e.code).sort()), JSON.stringify(base.errors.map((e) => e.code).sort()));
+  ok("enriched: conformance level unchanged", rep.level === base.level);
+  ok("enriched: src- id unchanged by enrichment (recipe-inert on disk)",
+    JSON.parse(fs.readFileSync(sfile, "utf8")).source_id === srcId);
+  fs.rmSync(tmp, { recursive: true, force: true });
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

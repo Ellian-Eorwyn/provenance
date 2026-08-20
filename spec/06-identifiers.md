@@ -143,6 +143,17 @@ tool's local id:
   tool's per-run ids live here, so neither tool gives up its internal identity
   while the corpus identity stays the content hash.
 
+## Secondary identifiers & relations are not identity
+
+A source MAY also carry `identifiers[]` (external identifiers such as a DOI or
+ISBN) and `relations[]` (typed links to other works) — see §02. Like aliases,
+these are **non-canonical and never feed the `src-` recipe**: `src-` is computed
+only from a normalized URL, or from primary bytes when there is no URL (above), so
+adding, changing, or removing an identifier or relation cannot change a source's
+id. They are surfaced only as **advisories** (`identifier_scheme_unknown`,
+`relation_dangling`; §08), and UPC never resolves an external identifier against a
+registry.
+
 ## Directory names vs identity
 
 The on-disk source directory is named with a **human-readable slug** for

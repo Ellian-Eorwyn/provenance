@@ -1,6 +1,6 @@
 # UPC RO-Crate Profile
 
-- **Profile id:** `https://provenance.dev/upc/1.2.0/profiles/ro-crate`
+- **Profile id:** `https://provenance.dev/upc/1.3.0/profiles/ro-crate`
 - **Conforms to:** [RO-Crate 1.3](https://w3id.org/ro/crate/1.3)
 - **Adds:** the UPC evidence model, selector semantics, quotation-verification
   boundary, derivation constraints, and conformance levels.
@@ -51,7 +51,7 @@ content-addressed id (§06) answers *"which exact UPC object is this?"*. A consu
 | Corpus | `Dataset` (`@id: "./"`) | `identifier` (cor-), `upc:specVersion`, `conformsTo` |
 | Representation | `File` | `identifier` (rep-/img-), `upc:sha256`, `upc:role`, `upc:representationId` |
 | Rendered output | `File` | `upc:sha256`, `upc:outputOf` |
-| Source | `["<CreativeWork subtype>","upc:Source"]` | `identifier`, `upc:sourceId`, `name` |
+| Source | `["<CreativeWork subtype>","upc:Source"]` | `identifier`, `upc:sourceId`, `name` (optional: `upc:identifiers`, `upc:relations`) |
 | Extraction | `"upc:Extraction"` | `identifier`, `upc:extractionId`, `upc:sourceId`, `upc:type`, `upc:status`, `upc:representation` |
 | Extraction (gated) | + companion `Annotation` | `upc:gateAuthoritative`, `upc:charRange`, `upc:directQuote`, `upc:annotation` |
 | Generation | `["CreativeWork","upc:Generation"]` | `identifier`, `upc:generationId`, `upc:type`, `upc:derivedFrom`, `upc:inputDigest` |
@@ -72,7 +72,9 @@ Properties: `upc:sourceId`, `upc:extractionId`, `upc:generationId`,
 `upc:stale`, `upc:output`, `upc:outputOf`, `upc:outputValue`, `upc:producedBy`,
 `upc:producedByPerson`, `upc:model`, `upc:activity`, `upc:claims`, `upc:claimId`,
 `upc:evidence`, `upc:source`, `upc:confidence`, `upc:question`, `upc:aliases`,
-`upc:retrieval`, `upc:sha256`, `upc:specVersion`, `upc:corpusId`.
+`upc:retrieval`, `upc:sha256`, `upc:specVersion`, `upc:corpusId`,
+`upc:identifiers`, `upc:identifierScheme`, `upc:relations`, `upc:relationType`,
+`upc:relationTarget`.
 
 ## The quotation gate is UPC-authoritative; Web-Annotation selectors are advisory
 

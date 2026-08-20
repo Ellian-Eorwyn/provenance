@@ -29,6 +29,19 @@
     "fetched_at": "2026-08-17T12:00:00Z",
     "sha256": "sha256:43835cc18b3442cc7ba81a00d62a2ee5a95ac5512c17e4507b15c93e874b759d"
   },
+  "identifiers": [
+    {
+      "scheme": "doi",
+      "value": "10.5281/zenodo.7654321",
+      "url": "https://doi.org/10.5281/zenodo.7654321"
+    }
+  ],
+  "relations": [
+    {
+      "type": "same_work_as",
+      "target": "https://doi.org/10.5281/zenodo.7654321"
+    }
+  ],
   "representations": [
     {
       "representation_id": "rep-43835cc18b34",

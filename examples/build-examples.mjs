@@ -82,7 +82,7 @@ function buildMinimal() {
   writeJSONL(path.join(srcDir, "extractions.jsonl"), [ext]);
 
   writeJSON(path.join(root, "corpus.json"), {
-    upc_spec_version: "1.2.0", corpus_id: "cor-" + sha256Hex(Buffer.from("corpus\nminimal", "utf8")).slice(0, 12),
+    upc_spec_version: "1.3.0", corpus_id: "cor-" + sha256Hex(Buffer.from("corpus\nminimal", "utf8")).slice(0, 12),
     title: "Minimal UPC corpus", readme: "Universal Provenance Corpus. Work only from ids resolved through the manifests. Quotations are verified byte-for-byte (spec/03).",
     rules_note: "spec/00-overview.md", created: TS, modified: TS, generated_by: { tool: "pi-forge", tool_version: "0.2.0" },
     sections: { sources: "sources/", provenance: "provenance/events.jsonl", sources_csv: "sources.csv", extractions_csv: "extractions.csv", index_html: "index.html" },
@@ -240,6 +240,8 @@ function buildWebResearch() {
     source_id: cSrcId, source_kind: "url", title: "Blue-green deployments explained",
     bibliographic: { item_type: "webpage", title: "Blue-green deployments explained", authors: [{ literal: "CloudLore" }], issued: { date_parts: [[2023]] }, url: cUrl },
     retrieval: { original_url: cUrl, final_url: cUrl, fetch_status: "success", http_status: 200, content_type: "text/html; charset=UTF-8", fetch_method: "http", fetched_at: TS, sha256: sha(cRaw) },
+    identifiers: [{ scheme: "doi", value: "10.5281/zenodo.7654321", url: "https://doi.org/10.5281/zenodo.7654321" }],
+    relations: [{ type: "same_work_as", target: "https://doi.org/10.5281/zenodo.7654321" }],
     representations: cReps, extractions_path: `sources/${cSlug}/extractions.jsonl`,
     provenance: { produced_by: { tool: "pi-forge", tool_version: "0.2.0", method: "http" }, created_at: TS },
   });
@@ -262,7 +264,7 @@ function buildWebResearch() {
   ]);
 
   writeJSON(path.join(root, "corpus.json"), {
-    upc_spec_version: "1.2.0", corpus_id: "cor-" + sha256Hex(Buffer.from("corpus\nweb-research", "utf8")).slice(0, 12),
+    upc_spec_version: "1.3.0", corpus_id: "cor-" + sha256Hex(Buffer.from("corpus\nweb-research", "utf8")).slice(0, 12),
     title: "Migration downtime research", readme: "Universal Provenance Corpus. Work only from ids resolved through the manifests; sources are immutable; derived objects link back via provenance.derived_from. Quotations are verified byte-for-byte (spec/03).",
     rules_note: "spec/00-overview.md", created: TS, modified: TS, generated_by: { tool: "pi-forge", tool_version: "0.2.0" },
     sections: { sources: "sources/", extractions: "extractions/", syntheses: "syntheses/", provenance: "provenance/events.jsonl", sources_csv: "sources.csv", extractions_csv: "extractions.csv", index_html: "index.html" },

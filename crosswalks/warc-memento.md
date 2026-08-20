@@ -8,7 +8,7 @@ Two web-archiving standards that could strengthen UPC's historical-web capture:
   an *original resource*, its archived prior states (*Mementos*), archival
   datetimes, and TimeMaps/TimeGates.
 
-**Status: deferred (not in UPC 1.2.0).** UPC already preserves enough for many
+**Status: deferred (not in UPC 1.3.0).** UPC already preserves enough for many
 tasks — raw HTML, retrieval URL, HTTP status, content type, fetch timestamp, and a
 byte `sha256` (`source.retrieval`, §02) — and the **clean Markdown representation
 remains the preferred quotation substrate**. Neither is required; both are optional

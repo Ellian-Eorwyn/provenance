@@ -50,6 +50,46 @@ representation. It carries bibliographic metadata (CSL-aligned, §below),
 
 `source.json` is the per-source manifest and makes the folder self-contained.
 
+### Optional source identity (`identifiers`, `relations`)
+
+A source MAY carry two optional arrays that enrich its identity without affecting
+its canonical `src-` id. Both are **advisory** — they never gate, never change the
+id recipe (§06), and are never resolved against any external registry.
+
+- **`identifiers[]`** — external identifiers for the conceptual work, each
+  `{ scheme, value, url? }`. `scheme` SHOULD be drawn from
+  `vocab.json#/$defs/identifier_scheme` (`doi`, `isbn`, `issn`, `pmid`, `pmcid`,
+  `arxiv`, `handle`, `ark`, `urn`, `oclc`, `wikidata`), or an `x-`-prefixed
+  extension. It is a **free string** in the schema, so an unrecognized non-`x-`
+  scheme is surfaced as the advisory `identifier_scheme_unknown` (§08), not a hard
+  error. UPC records these; it does not verify that the identifier resolves or that
+  it names this work.
+- **`relations[]`** — typed relationships to other works, each `{ type, target }`.
+  `type` is drawn from `vocab.json#/$defs/relation_type` (`same_work_as`,
+  `is_version_of`, `has_version`, `is_capture_of`, `is_part_of`, `has_part`,
+  `is_format_of`, `is_translation_of`, `supersedes`, `superseded_by`), plus an
+  `x-` escape. `target` is either an intra-corpus id (`src-`/`rep-`/…) or an
+  external identifier string / URL. When `target` is id-shaped but resolves to
+  nothing in the corpus, the advisory `relation_dangling` is raised (§08);
+  external targets are never checked.
+
+```json
+{
+  "identifiers": [
+    { "scheme": "doi", "value": "10.5281/zenodo.7654321", "url": "https://doi.org/10.5281/zenodo.7654321" }
+  ],
+  "relations": [
+    { "type": "same_work_as", "target": "https://doi.org/10.5281/zenodo.7654321" }
+  ]
+}
+```
+
+**Supersession is separate.** Intra-corpus supersession stays on the top-level
+scalar `supersedes` / `superseded_by` fields, which drive the `cites_superseded`
+conformance rule (§08). A `relations[]` entry of type `supersedes` / `superseded_by`
+is advisory metadata (typically pointing at an *external* work) and is **never** a
+substitute for the scalar fields.
+
 ## Representations
 
 A representation classifies bytes by `role` and points at them by corpus-relative
