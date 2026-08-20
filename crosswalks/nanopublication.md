@@ -5,7 +5,7 @@ objects with three named graphs: an **assertion**, its **assertion provenance**,
 and **publication information** (often with a Trusty-URI integrity key for
 immutability).
 
-**Status: deferred (not in UPC 1.3.0).** UPC's synthesis **claim register**
+**Status: deferred (not in UPC 1.4.0).** UPC's synthesis **claim register**
 (`synthesis.claims[]`, §04) overlaps this model and is the natural export surface,
 but nanopublication export is a later, optional projection — it needs an RDF
 serialization and Trusty-URI machinery that would exceed the zero-dependency

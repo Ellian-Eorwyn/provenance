@@ -14,6 +14,7 @@ import {
   loadCorpus, clearRepCache, sha256Hex, bareHash,
 } from "../skill/universal-provenance/scripts/upc_common.mjs";
 import { buildRoCrateGraph } from "../skill/universal-provenance/scripts/ro-crate.mjs";
+import { buildProvGraph } from "../skill/universal-provenance/scripts/prov.mjs";
 import { validateCorpus } from "../skill/universal-provenance/scripts/upc.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -276,7 +277,7 @@ ok("filename rejects reserved", !checkFilename("sources/con/x.md").ok);
     };
     clearRepCache();
     const loaded = {
-      root: dir, corpus: { corpus_id: "cor-aaaaaaaaaaaa", upc_spec_version: "1.3.0", title: "t" },
+      root: dir, corpus: { corpus_id: "cor-aaaaaaaaaaaa", upc_spec_version: "1.4.0", title: "t" },
       sections: {}, sources: [{ obj: srcObj, dirRel: "sources/s" }],
       representations: [{ obj: repObj, sourceId: srcObj.source_id, abs, contained: true }],
       extractions: [{ obj: ext }], generations: [], syntheses: [], events: [], extractionSets: [], diagnostics: [],
@@ -368,6 +369,55 @@ ok("filename rejects reserved", !checkFilename("sources/con/x.md").ok);
   ok("enriched: src- id unchanged by enrichment (recipe-inert on disk)",
     JSON.parse(fs.readFileSync(sfile, "utf8")).source_id === srcId);
   fs.rmSync(tmp, { recursive: true, force: true });
+}
+
+// --- PROV-O export: structure, determinism, cautions (real example corpus) ---
+{
+  const EXAMPLE = path.join(HERE, "..", "examples", "web-research-corpus");
+  const loaded = loadCorpus(EXAMPLE);
+  const g1 = buildProvGraph(loaded);
+  const g2 = buildProvGraph(loadCorpus(EXAMPLE));
+  eq("prov deterministic (byte-identical rebuild)", JSON.stringify(g1), JSON.stringify(g2));
+
+  const graph = g1["@graph"];
+  ok("prov @context binds prov namespace", g1["@context"] && g1["@context"].prov === "http://www.w3.org/ns/prov#");
+
+  const entities = graph.filter((n) => n["@type"] === "prov:Entity");
+  const nObjs = loaded.sources.filter((s) => s.obj).length + loaded.representations.length +
+    loaded.extractions.length + loaded.generations.length + loaded.syntheses.length;
+  eq("prov: one prov:Entity per UPC object", entities.length, nObjs);
+
+  const activities = graph.filter((n) => n["@type"] === "prov:Activity");
+  eq("prov: one prov:Activity per event", activities.length, loaded.events.length);
+
+  const agents = graph.filter((n) => [].concat(n["@type"]).includes("prov:Agent"));
+  ok("prov: emits agents (SoftwareAgent/Person)", agents.length > 0 &&
+    agents.every((a) => [].concat(a["@type"]).some((t) => t === "prov:SoftwareAgent" || t === "prov:Person")));
+
+  ok("prov: has a wasDerivedFrom edge", graph.some((n) => n["prov:wasDerivedFrom"]));
+  ok("prov: has a wasGeneratedBy edge", graph.some((n) => n["prov:wasGeneratedBy"]));
+  ok("prov: NEVER emits hadPrimarySource (source is not a claimed primary source)",
+    !JSON.stringify(g1).includes("hadPrimarySource"));
+
+  const ids = graph.map((n) => n["@id"]);
+  eq("prov: @id unique across @graph", new Set(ids).size, ids.length);
+}
+
+// --- PROV-O cautions: wasRevisionOf (supersedes, NOT duplicate_of) + wasQuotedFrom ---
+{
+  const loaded = {
+    root: ".", corpus: { corpus_id: "cor-aaaaaaaaaaaa", upc_spec_version: "1.4.0" }, sections: {},
+    sources: [{ obj: { source_id: "src-aaaaaaaaaaaa", source_kind: "url", supersedes: "src-bbbbbbbbbbbb", representations: [] } }],
+    representations: [{ obj: { representation_id: "rep-aaaaaaaaaaaa", role: "clean_markdown", media_type: "text/markdown", path: "x.md", sha256: "sha256:00", duplicate_of: "rep-cccccccccccc" }, sourceId: "src-aaaaaaaaaaaa" }],
+    extractions: [{ obj: { extraction_id: "ext-000000000001", source_id: "src-aaaaaaaaaaaa", representation_ref: "rep-aaaaaaaaaaaa", type: "quote", status: "active", direct_quote: "hi", supersedes: "ext-000000000002", locator: { type: "char_range", representation_ref: "rep-aaaaaaaaaaaa", value: { start: 0, end: 2 } } } }],
+    generations: [], syntheses: [], events: [], extractionSets: [], diagnostics: [],
+  };
+  const byId = new Map(buildProvGraph(loaded)["@graph"].map((n) => [n["@id"], n]));
+  const src = byId.get("#src-aaaaaaaaaaaa"), rep = byId.get("#rep-aaaaaaaaaaaa"), ext = byId.get("#ext-000000000001");
+  eq("prov: source supersedes -> wasRevisionOf", src["prov:wasRevisionOf"] && src["prov:wasRevisionOf"]["@id"], "#src-bbbbbbbbbbbb");
+  eq("prov: extraction supersedes -> wasRevisionOf", ext["prov:wasRevisionOf"] && ext["prov:wasRevisionOf"]["@id"], "#ext-000000000002");
+  eq("prov: direct_quote -> wasQuotedFrom the representation", ext["prov:wasQuotedFrom"] && ext["prov:wasQuotedFrom"]["@id"], "#rep-aaaaaaaaaaaa");
+  ok("prov: representation duplicate_of is NOT a wasRevisionOf", !rep["prov:wasRevisionOf"]);
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

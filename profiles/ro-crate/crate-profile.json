@@ -14,12 +14,12 @@
       "@id": "./",
       "@type": [ "Dataset", "Profile" ],
       "name": "UPC RO-Crate Profile",
-      "version": "1.3.0",
+      "version": "1.4.0",
       "description": "A research-evidence profile of RO-Crate 1.3 for Universal Provenance Corpus (UPC) exports: exact quotation gates, codepoint selector semantics, derivation constraints, and conformance levels.",
       "conformsTo": { "@id": "https://w3id.org/ro/crate/1.3" },
       "hasPart": [ { "@id": "profile.md" } ],
-      "upc:specVersion": "1.3.0",
-      "identifier": "https://provenance.dev/upc/1.3.0/profiles/ro-crate"
+      "upc:specVersion": "1.4.0",
+      "identifier": "https://provenance.dev/upc/1.4.0/profiles/ro-crate"
     },
     {
       "@id": "profile.md",

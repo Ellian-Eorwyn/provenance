@@ -1,7 +1,7 @@
 # Universal Provenance Corpus (UPC)
 
 **A tool-independent standard for storing research materials with explicit,
-portable provenance and byte-exact quotation gates.** Version **1.3.0**.
+portable provenance and byte-exact quotation gates.** Version **1.4.0**.
 
 A UPC corpus is a folder in which both humans and software can always answer:
 *What is this object? Where did it come from? What transformations produced it?
@@ -137,11 +137,12 @@ Regenerate manifests, CSV mirrors, and the browser; then open `index.html`:
 node skill/universal-provenance/scripts/upc.mjs regen examples/web-research-corpus
 ```
 
-Export an RO-Crate 1.3 metadata graph (a deterministic, read-only projection —
-the corpus objects stay canonical):
+Export an RO-Crate 1.3 metadata graph, or a W3C PROV-O derivation graph
+(deterministic, read-only projections — the corpus objects stay canonical):
 
 ```bash
 node skill/universal-provenance/scripts/upc.mjs export examples/web-research-corpus --format ro-crate
+node skill/universal-provenance/scripts/upc.mjs export examples/web-research-corpus --format prov -o prov.jsonld
 ```
 
 Rebuild the examples and run the tests:

@@ -133,7 +133,7 @@ error-severity finding:
 {
   "status": "failed",
   "corpus": "/path/to/corpus",
-  "upc_spec_version": "1.3.0",
+  "upc_spec_version": "1.4.0",
   "level": "L1",
   "counts": { "sources": 12, "representations": 34, "extractions": 88, "generations": 12, "syntheses": 1 },
   "errors": [

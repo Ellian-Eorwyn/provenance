@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://provenance.dev/upc/1.3.0/schemas/locator.schema.json",
+  "$id": "https://provenance.dev/upc/1.4.0/schemas/locator.schema.json",
   "title": "UPC Locator",
   "description": "Points into a SPECIFIC representation. A locator is (representation_ref, typed position); a position never stands alone. The value shape is constrained per type by the oneOf below. Only char_range is gate-bearing (anchors a verified quotation, §03); char_range counts Unicode codepoints, 0-based, end-exclusive, into the representation's UTF-8-decoded bytes.",
   "type": "object",

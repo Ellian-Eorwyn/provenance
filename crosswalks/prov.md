@@ -5,13 +5,16 @@ UPC's provenance model is *inspired by* [W3C PROV](https://www.w3.org/TR/prov-o/
 PROV-N, or PROV-O required (§07). This crosswalk maps the two so a PROV-consuming
 system can understand a UPC derivation graph.
 
-- **Status.** This is a **mapping document**. A PROV projection command
-  (`upc export … --format prov`) is a planned follow-up; the RO-Crate projection
-  already exposes derivation edges (`prov:wasDerivedFrom`) via
-  [ro-crate.md](ro-crate.md). When the PROV exporter ships it reuses the same
-  entity/activity/agent mapping below.
+- **Status.** Shipped in 1.4.0. `upc export <corpus> --format prov` emits the
+  mapping below as deterministic, zero-dependency **flattened PROV-O JSON-LD**
+  (streamed to stdout or `-o <file>`), reusing the RO-Crate exporter's
+  entity/activity/agent machinery. The RO-Crate projection also exposes derivation
+  edges (`prov:wasDerivedFrom`) via [ro-crate.md](ro-crate.md); the PROV export is
+  the dedicated PROV view.
 - **Direction:** export/projection only. UPC keeps the compact operational
-  JSON/JSONL as canonical; PROV is an interoperability view.
+  JSON/JSONL as canonical; PROV is an interoperability view. Like `index.html` and
+  the CSV mirrors, the PROV output is regenerable and never a second source of
+  truth.
 
 Legend: **exact** · **partial** · **incompatible** · **UPC-only**.
 

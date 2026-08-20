@@ -77,5 +77,5 @@ for the gate).
 
 ## Direction
 
-Export only in 1.3.0 (inside the RO-Crate projection). No OA importer; OA selectors
+Export only in 1.4.0 (inside the RO-Crate projection). No OA importer; OA selectors
 never become gate-bearing UPC locators.

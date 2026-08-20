@@ -1,5 +1,5 @@
 {
-  "upc_spec_version": "1.3.0",
+  "upc_spec_version": "1.4.0",
   "corpus_id": "cor-bd9a8eb07fb8",
   "title": "Migration downtime research",
   "readme": "Universal Provenance Corpus. Work only from ids resolved through the manifests; sources are immutable; derived objects link back via provenance.derived_from. Quotations are verified byte-for-byte (spec/03).",
@@ -50,6 +50,6 @@
     }
   ],
   "integrity": {
-    "schema_hash": "sha256:5023608b6c219c6df04e5fb58d9846a87b4425208b4f95ec40750eff1c548771"
+    "schema_hash": "sha256:e12f7f86e04b238eceaa90ead9d1e77d22719d17c7ef04901acdec29330921a0"
   }
 }

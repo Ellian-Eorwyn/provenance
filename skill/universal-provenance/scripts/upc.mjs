@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// UPC 1.3.0 command-line tool. Zero deps, Node >= 18.
+// UPC 1.4.0 command-line tool. Zero deps, Node >= 18.
 //
 //   upc validate <dir> [--strict]
 //   upc verify-quotes <file> --corpus <dir> [--strict]
@@ -7,7 +7,7 @@
 //   upc quote <ext-id> --corpus <dir> [--narrow <start> <end>]
 //   upc regen <dir>
 //   upc build-index <dir>
-//   upc export <dir> --format bibtex|ris|csl-json|jsonl|markdown|ro-crate [-o <file>] [--copy]
+//   upc export <dir> --format bibtex|ris|csl-json|jsonl|markdown|ro-crate|prov [-o <file>] [--copy]
 //   upc mint <src|ext|gen|syn|rep> [--corpus <dir>]        (JSON object on stdin)
 //   upc reanchor <ext-id>|--all --corpus <dir> [--to <rep-id>]
 //
@@ -20,6 +20,7 @@ import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
 import * as U from "./upc_common.mjs";
 import { writeRoCrate } from "./ro-crate.mjs";
+import { buildProvGraph } from "./prov.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
@@ -829,6 +830,7 @@ function exportCmd(root, format) {
       return `- ${au ? au + ". " : ""}${yr ? "(" + yr + "). " : ""}*${bib.title || o.title || o.source_id}*.${bib.url ? " " + bib.url : ""}`;
     }).join("\n") + "\n";
   }
+  if (format === "prov") return JSON.stringify(buildProvGraph(loaded), null, 2) + "\n";
   throw new Error(`unknown format ${format}`);
 }
 
@@ -981,7 +983,7 @@ async function main() {
         const dir = rest.find((a) => !a.startsWith("--") && a !== arg(rest, "--format") && a !== arg(rest, "-o"));
         const format = arg(rest, "--format");
         const out = arg(rest, "-o");
-        if (!dir || !format) { process.stderr.write("usage: upc export <dir> --format bibtex|ris|csl-json|jsonl|markdown|ro-crate [-o <file>] [--copy]\n"); process.exit(2); }
+        if (!dir || !format) { process.stderr.write("usage: upc export <dir> --format bibtex|ris|csl-json|jsonl|markdown|ro-crate|prov [-o <file>] [--copy]\n"); process.exit(2); }
         if (format === "ro-crate") {
           print(writeRoCrate(dir, { outDir: out, copy: rest.includes("--copy") }));
           break;
@@ -1007,7 +1009,7 @@ async function main() {
         break;
       }
       default:
-        process.stderr.write("UPC 1.3.0 — commands: validate, verify-quotes, verify, quote, regen, build-index, export, mint, reanchor\n");
+        process.stderr.write("UPC 1.4.0 — commands: validate, verify-quotes, verify, quote, regen, build-index, export, mint, reanchor\n");
         process.exit(cmd ? 2 : 0);
     }
   } catch (e) {

@@ -70,7 +70,7 @@ const sortRefs = (arr) => arr.slice().sort((a, b) => (a["@id"] < b["@id"] ? -1 :
  */
 export function buildRoCrateGraph(loaded) {
   const corpus = loaded.corpus || {};
-  const upcVer = /^1\./.test(corpus.upc_spec_version || "") ? corpus.upc_spec_version : "1.3.0";
+  const upcVer = /^1\./.test(corpus.upc_spec_version || "") ? corpus.upc_spec_version : "1.4.0";
   const profileId = `https://provenance.dev/upc/${upcVer}/profiles/ro-crate`;
 
   // rep-id -> relative path (File @id) and the cached record for context reads.

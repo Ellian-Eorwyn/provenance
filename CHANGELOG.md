@@ -3,6 +3,34 @@
 All notable changes to the Universal Provenance Corpus (UPC) standard.
 Versioning is semantic (§00 Versioning policy).
 
+## 1.4.0 — 2026-08-20
+
+**Backward-compatible (additive) minor release: W3C PROV-O export.** No object
+field, vocabulary, id recipe, or quotation gate changed; the schema `$id`s bump to
+`1.4.0` (which changes `integrity.schema_hash` — regenerate projections with
+`upc regen`). Every 1.3.0 corpus remains valid.
+
+### Added — PROV-O export
+
+- **`upc export <corpus> --format prov`** — a deterministic, zero-dependency
+  **W3C PROV-O** projection as flattened JSON-LD (streamed to stdout or `-o
+  <file>`). Reuses the RO-Crate exporter's agent/entity machinery and realizes the
+  [crosswalks/prov.md](crosswalks/prov.md) mapping: derived objects → `prov:Entity`,
+  events → `prov:Activity`, tools/people → `prov:SoftwareAgent`/`prov:Person`,
+  `derived_from` → `prov:wasDerivedFrom`, event inputs → `prov:used`, production →
+  `prov:wasGeneratedBy`, `supersedes` → `prov:wasRevisionOf`, `direct_quote` →
+  `prov:wasQuotedFrom`.
+- Like `index.html` / CSV / RO-Crate, the PROV output is a **regenerable,
+  non-canonical** view; the UPC objects stay the single source of truth.
+
+### Not carried into PROV (by design)
+
+- The **hop-B/C quotation gate is UPC-only.** `prov:wasQuotedFrom` records where a
+  quotation came from but carries **none** of UPC's mechanical guarantee (§11).
+- A source is a captured resource, **not** a claimed primary source: the export
+  **never** emits `prov:hadPrimarySource`. A representation's `duplicate_of` is
+  **not** a revision, so it is never mapped to `prov:wasRevisionOf`.
+
 ## 1.3.0 — 2026-08-20
 
 **Backward-compatible (additive) minor release: optional source identity
