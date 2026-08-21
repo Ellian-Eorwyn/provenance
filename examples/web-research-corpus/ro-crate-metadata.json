@@ -26,10 +26,10 @@
           "@id": "https://w3id.org/ro/crate/1.3"
         },
         {
-          "@id": "https://provenance.dev/upc/1.4.0/profiles/ro-crate"
+          "@id": "https://provenance.dev/upc/1.5.0/profiles/ro-crate"
         }
       ],
-      "upc:specVersion": "1.4.0",
+      "upc:specVersion": "1.5.0",
       "description": "Universal Provenance Corpus. Work only from ids resolved through the manifests; sources are immutable; derived objects link back via provenance.derived_from. Quotations are verified byte-for-byte (spec/03).",
       "datePublished": "2026-08-17T12:00:00Z",
       "hasPart": [
@@ -38,6 +38,12 @@
         },
         {
           "@id": "sources/cloudlore-2023-blue-green-deploys/representations/raw.html"
+        },
+        {
+          "@id": "sources/fieldnotes-2025-migration-downtime-study/representations/paper.pdf"
+        },
+        {
+          "@id": "sources/fieldnotes-2025-migration-downtime-study/representations/paper.txt"
         },
         {
           "@id": "sources/watchdog-2024-migrate-with-no-downtime/generated/gen-9a03fbd7e3ff.md"
@@ -49,6 +55,9 @@
           "@id": "sources/watchdog-2024-migrate-with-no-downtime/representations/images/figure.svg"
         },
         {
+          "@id": "sources/watchdog-2024-migrate-with-no-downtime/representations/ocr/figure.txt"
+        },
+        {
           "@id": "sources/watchdog-2024-migrate-with-no-downtime/representations/raw.html"
         },
         {
@@ -58,6 +67,9 @@
       "mentions": [
         {
           "@id": "#src-604878cb9e3d"
+        },
+        {
+          "@id": "#src-6779f4028860"
         },
         {
           "@id": "#src-b95bb22d8232"
@@ -131,10 +143,19 @@
       ],
       "result": [
         {
+          "@id": "#ext-3f36fb2b12e5"
+        },
+        {
           "@id": "#ext-77004eca0a27"
         },
         {
+          "@id": "#ext-979053746723"
+        },
+        {
           "@id": "#ext-d8129f9b7114"
+        },
+        {
+          "@id": "#ext-e32197281015"
         },
         {
           "@id": "#ext-e6c4c782bd3b"
@@ -197,6 +218,44 @@
       "upc:status": "success"
     },
     {
+      "@id": "#evt-000006",
+      "@type": "CreateAction",
+      "identifier": "evt-000006",
+      "upc:eventId": "evt-000006",
+      "upc:activityType": "import",
+      "startTime": "2026-08-17T12:00:00Z",
+      "endTime": "2026-08-17T12:00:00Z",
+      "agent": {
+        "@id": "#tool-pi-forge"
+      },
+      "result": [
+        {
+          "@id": "#src-6779f4028860"
+        },
+        {
+          "@id": "sources/fieldnotes-2025-migration-downtime-study/representations/paper.pdf"
+        },
+        {
+          "@id": "sources/fieldnotes-2025-migration-downtime-study/representations/paper.txt"
+        }
+      ],
+      "upc:status": "success"
+    },
+    {
+      "@id": "#ext-3f36fb2b12e5",
+      "@type": "upc:Extraction",
+      "identifier": "ext-3f36fb2b12e5",
+      "upc:extractionId": "ext-3f36fb2b12e5",
+      "upc:sourceId": "src-b95bb22d8232",
+      "upc:type": "image_region",
+      "upc:status": "active",
+      "upc:representation": {
+        "@id": "sources/watchdog-2024-migrate-with-no-downtime/representations/images/figure.svg"
+      },
+      "text": "Figure label reporting zero downtime for the staging-first strategy.",
+      "upc:query": "What does the figure claim about staging-first downtime?"
+    },
+    {
       "@id": "#ext-77004eca0a27",
       "@type": "upc:Extraction",
       "identifier": "ext-77004eca0a27",
@@ -248,6 +307,82 @@
       }
     },
     {
+      "@id": "#ext-979053746723",
+      "@type": "upc:Extraction",
+      "identifier": "ext-979053746723",
+      "upc:extractionId": "ext-979053746723",
+      "upc:sourceId": "src-6779f4028860",
+      "upc:type": "evidence",
+      "upc:status": "active",
+      "upc:representation": {
+        "@id": "sources/fieldnotes-2025-migration-downtime-study/representations/paper.txt"
+      },
+      "text": "The field study measured zero downtime for the staging-first strategy.",
+      "upc:query": "How much downtime does a staging-first cutover cause?",
+      "upc:directQuote": "A staging-first cutover reported zero seconds of downtime.",
+      "upc:charRange": {
+        "start": 202,
+        "end": 260
+      },
+      "upc:gateAuthoritative": true,
+      "upc:annotation": {
+        "@id": "#ext-979053746723-anno"
+      }
+    },
+    {
+      "@id": "#ext-979053746723-anno",
+      "@type": "Annotation",
+      "upc:interopOnly": true,
+      "target": [
+        {
+          "source": {
+            "@id": "sources/fieldnotes-2025-migration-downtime-study/representations/paper.txt"
+          },
+          "selector": [
+            {
+              "@type": "TextPositionSelector",
+              "start": 202,
+              "end": 260,
+              "upc:unit": "codepoint"
+            },
+            {
+              "@type": "TextQuoteSelector",
+              "exact": "A staging-first cutover reported zero seconds of downtime.",
+              "prefix": "ue-green 9s,\nstaging-first 0s.\n\n",
+              "suffix": "\n"
+            },
+            {
+              "@type": "FragmentSelector",
+              "value": "#line=10,11",
+              "upc:conformsTo": "rfc5147",
+              "upc:unit": "line"
+            }
+          ]
+        },
+        {
+          "source": {
+            "@id": "sources/fieldnotes-2025-migration-downtime-study/representations/paper.pdf"
+          },
+          "selector": [
+            {
+              "@type": "FragmentSelector",
+              "value": "#page=2",
+              "upc:conformsTo": "pdf-open-params",
+              "upc:unit": "page"
+            },
+            {
+              "@type": "TextQuoteSelector",
+              "exact": "A staging-first cutover reported zero seconds of downtime."
+            }
+          ]
+        }
+      ],
+      "body": {
+        "@type": "TextualBody",
+        "value": "A staging-first cutover reported zero seconds of downtime."
+      }
+    },
+    {
       "@id": "#ext-d8129f9b7114",
       "@type": "upc:Extraction",
       "identifier": "ext-d8129f9b7114",
@@ -296,6 +431,79 @@
       "body": {
         "@type": "TextualBody",
         "value": "cut over DNS only after the staging copy is fully validated"
+      }
+    },
+    {
+      "@id": "#ext-e32197281015",
+      "@type": "upc:Extraction",
+      "identifier": "ext-e32197281015",
+      "upc:extractionId": "ext-e32197281015",
+      "upc:sourceId": "src-b95bb22d8232",
+      "upc:type": "quote",
+      "upc:status": "active",
+      "upc:representation": {
+        "@id": "sources/watchdog-2024-migrate-with-no-downtime/representations/ocr/figure.txt"
+      },
+      "text": "The figure states that the staging-first strategy has zero downtime.",
+      "upc:query": "What does the figure claim about staging-first downtime?",
+      "upc:directQuote": "Downtime: staging-first = 0s",
+      "upc:charRange": {
+        "start": 0,
+        "end": 28
+      },
+      "upc:gateAuthoritative": true,
+      "upc:annotation": {
+        "@id": "#ext-e32197281015-anno"
+      }
+    },
+    {
+      "@id": "#ext-e32197281015-anno",
+      "@type": "Annotation",
+      "upc:interopOnly": true,
+      "target": [
+        {
+          "source": {
+            "@id": "sources/watchdog-2024-migrate-with-no-downtime/representations/ocr/figure.txt"
+          },
+          "selector": [
+            {
+              "@type": "TextPositionSelector",
+              "start": 0,
+              "end": 28,
+              "upc:unit": "codepoint"
+            },
+            {
+              "@type": "TextQuoteSelector",
+              "exact": "Downtime: staging-first = 0s",
+              "suffix": "\n"
+            }
+          ]
+        },
+        {
+          "source": {
+            "@id": "sources/watchdog-2024-migrate-with-no-downtime/representations/images/figure.svg"
+          },
+          "selector": [
+            {
+              "@type": "FragmentSelector",
+              "value": "#xywh=pixel:12,52,200,18",
+              "upc:conformsTo": "media-frags",
+              "upc:unit": "pixel",
+              "upc:reference": {
+                "width": 240,
+                "height": 120
+              }
+            },
+            {
+              "@type": "TextQuoteSelector",
+              "exact": "Downtime: staging-first = 0s"
+            }
+          ]
+        }
+      ],
+      "body": {
+        "@type": "TextualBody",
+        "value": "Downtime: staging-first = 0s"
       }
     },
     {
@@ -427,6 +635,29 @@
       }
     },
     {
+      "@id": "#src-6779f4028860",
+      "@type": [
+        "Report",
+        "upc:Source"
+      ],
+      "identifier": "src-6779f4028860",
+      "upc:sourceId": "src-6779f4028860",
+      "name": "Migration downtime: a field study",
+      "author": [
+        "Fieldnotes Collective"
+      ],
+      "datePublished": "2025",
+      "upc:sourceKind": "document",
+      "hasPart": [
+        {
+          "@id": "sources/fieldnotes-2025-migration-downtime-study/representations/paper.pdf"
+        },
+        {
+          "@id": "sources/fieldnotes-2025-migration-downtime-study/representations/paper.txt"
+        }
+      ]
+    },
+    {
       "@id": "#src-b95bb22d8232",
       "@type": [
         "WebPage",
@@ -447,6 +678,9 @@
         },
         {
           "@id": "sources/watchdog-2024-migrate-with-no-downtime/representations/images/figure.svg"
+        },
+        {
+          "@id": "sources/watchdog-2024-migrate-with-no-downtime/representations/ocr/figure.txt"
         },
         {
           "@id": "sources/watchdog-2024-migrate-with-no-downtime/representations/raw.html"
@@ -579,6 +813,31 @@
       "upc:representationId": "rep-43835cc18b34"
     },
     {
+      "@id": "sources/fieldnotes-2025-migration-downtime-study/representations/paper.pdf",
+      "@type": "File",
+      "name": "paper.pdf",
+      "identifier": "rep-be0de02db3cf",
+      "encodingFormat": "application/pdf",
+      "contentSize": 1485,
+      "upc:sha256": "be0de02db3cfbe4c736e645a3fe245a65864119653b32dc0721f04bc05e86958",
+      "upc:role": "document_pdf",
+      "upc:representationId": "rep-be0de02db3cf"
+    },
+    {
+      "@id": "sources/fieldnotes-2025-migration-downtime-study/representations/paper.txt",
+      "@type": "File",
+      "name": "paper.txt",
+      "identifier": "rep-48eb8688f8c1",
+      "encodingFormat": "text/plain",
+      "contentSize": 261,
+      "upc:sha256": "48eb8688f8c1068f36ff6df09faf63b24484651fa79f735d5d440954490e3d13",
+      "upc:role": "text",
+      "upc:representationId": "rep-48eb8688f8c1",
+      "upc:derivedFrom": {
+        "@id": "sources/fieldnotes-2025-migration-downtime-study/representations/paper.pdf"
+      }
+    },
+    {
       "@id": "sources/watchdog-2024-migrate-with-no-downtime/generated/gen-9a03fbd7e3ff.md",
       "@type": "File",
       "name": "gen-9a03fbd7e3ff.md",
@@ -612,6 +871,20 @@
       "upc:representationId": "img-b26e480807a2",
       "upc:derivedFrom": {
         "@id": "sources/watchdog-2024-migrate-with-no-downtime/representations/clean.md"
+      }
+    },
+    {
+      "@id": "sources/watchdog-2024-migrate-with-no-downtime/representations/ocr/figure.txt",
+      "@type": "File",
+      "name": "figure.txt",
+      "identifier": "rep-7a76f03c1537",
+      "encodingFormat": "text/plain",
+      "contentSize": 29,
+      "upc:sha256": "7a76f03c15378d5557bdcc5b97bce60e46a815fa5757976053e205b827e37f8c",
+      "upc:role": "ocr",
+      "upc:representationId": "rep-7a76f03c1537",
+      "upc:derivedFrom": {
+        "@id": "sources/watchdog-2024-migrate-with-no-downtime/representations/images/figure.svg"
       }
     },
     {

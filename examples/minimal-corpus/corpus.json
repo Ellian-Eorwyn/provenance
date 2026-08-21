@@ -1,5 +1,5 @@
 {
-  "upc_spec_version": "1.4.0",
+  "upc_spec_version": "1.5.0",
   "corpus_id": "cor-bb1e337e082b",
   "title": "Minimal UPC corpus",
   "readme": "Universal Provenance Corpus. Work only from ids resolved through the manifests. Quotations are verified byte-for-byte (spec/03).",
@@ -35,6 +35,6 @@
   ],
   "syntheses": [],
   "integrity": {
-    "schema_hash": "sha256:e12f7f86e04b238eceaa90ead9d1e77d22719d17c7ef04901acdec29330921a0"
+    "schema_hash": "sha256:4c309e242d20cd5b3ade70db0b078501ac5ddb77966303db87e253f942cbbd88"
   }
 }

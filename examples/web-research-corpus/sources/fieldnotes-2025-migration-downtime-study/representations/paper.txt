@@ -1,0 +1,11 @@
+Migration downtime: a field study
+
+Staging-first cutover eliminates visitor-facing downtime
+in every trial we ran.
+
+Results
+
+Measured downtime by strategy: direct 42s, blue-green 9s,
+staging-first 0s.
+
+A staging-first cutover reported zero seconds of downtime.

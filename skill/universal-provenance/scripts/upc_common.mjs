@@ -99,6 +99,46 @@ export function decodeUtf8Strict(bytes) {
 }
 
 // ---------------------------------------------------------------------------
+// Line derivation (spec/03). UPC line numbers are 1-based and INCLUSIVE, over
+// the same codepoint sequence char_range indexes. A line break is "\n"; a CRLF
+// file therefore numbers identically to an LF one (the "\r" is just a codepoint
+// on the preceding line). Advisory only: line_range never gates a quotation.
+// ---------------------------------------------------------------------------
+
+function lineAtCp(cps, cpOffset) {
+  const n = Math.max(0, Math.min(cpOffset, cps.length));
+  let line = 1;
+  for (let i = 0; i < n; i++) if (cps[i] === "\n") line++;
+  return line;
+}
+
+/** 1-based line number containing the codepoint at `cpOffset`. */
+export function charToLine(text, cpOffset) {
+  return lineAtCp(Array.from(text), cpOffset);
+}
+
+/** The 1-based, inclusive {start,end} line span covered by codepoints [start,end). */
+export function lineRangeForCharRange(text, start, end) {
+  const cps = Array.from(text);
+  const s = Math.max(0, Math.min(start, cps.length));
+  const e = Math.max(s, Math.min(end, cps.length));
+  // the last codepoint actually inside the span (empty span => its start line)
+  const lastInside = e > s ? e - 1 : s;
+  return { start: lineAtCp(cps, s), end: lineAtCp(cps, lastInside) };
+}
+
+/** Codepoints of context shown on each side of a resolved span by default. */
+export const DEFAULT_CONTEXT = 90;
+
+/** The lines of a text, dropping the empty element a trailing newline produces,
+ *  so "a\nb\n" is two lines. Indexed 1-based by line_range. */
+export function textLines(text) {
+  const lines = String(text == null ? "" : text).split("\n");
+  if (lines.length > 1 && lines[lines.length - 1] === "") lines.pop();
+  return lines;
+}
+
+// ---------------------------------------------------------------------------
 // Content-addressed id minting (spec/06). id = prefix + first 12 hex of
 // sha256(UTF-8 key). Rep/img ids are the file byte hash (no key string).
 // ---------------------------------------------------------------------------
@@ -362,6 +402,40 @@ export function clearRepCache() {
 
 export function exactEquals(a, b) {
   return a === b;
+}
+
+/** Media types that can carry a verified quotation: bytes that ARE text (spec/02). */
+export function isTextualMedia(mt) {
+  return /^text\//.test(mt || "") || mt === "application/json" || mt === "application/xml";
+}
+
+/** Is this representation role a DERIVED text (transcript / OCR) rather than the
+ *  captured source text? Role-only check; prefer isDerivedText when the corpus is
+ *  available, because the role name alone cannot see a text layer pulled out of a
+ *  PDF (spec/05 trust boundary, spec/09 badge). */
+export function isTranscriptRole(role) {
+  return role === "transcript" || role === "ocr_pdf" || /ocr/.test(role || "");
+}
+
+/** Does a quotation against this representation land on the §05 trust boundary?
+ *
+ *  The boundary is not a naming convention, it is a question about bytes: the
+ *  quote gate is byte-exact, and bytes only exist for text. So a textual
+ *  representation is DERIVED text whenever the bytes it came from were not
+ *  themselves text — an OCR of an image, a transcript of audio, a text layer
+ *  pulled out of a PDF. Each of those steps is inference, not equality.
+ *
+ *  A text-to-text conversion (raw HTML -> cleaned Markdown) is NOT on the
+ *  boundary: §11 counts that as "exact in the cleaned representation".
+ *
+ *  `lookupRep(id)` resolves a representation_ref to its record, or null. */
+export function isDerivedText(repObj, lookupRep) {
+  if (!repObj) return false;
+  if (isTranscriptRole(repObj.role)) return true;
+  const parentRef = repObj.parent_representation_ref;
+  if (!parentRef || typeof lookupRep !== "function") return false;
+  const parent = lookupRep(parentRef);
+  return !!(parent && !isTextualMedia(parent.media_type));
 }
 
 /** Hop B for one extraction against an already-decoded representation.
@@ -756,4 +830,125 @@ export function loadCorpus(root) {
   }
 
   return { root: absRoot, corpus, sections, sources, representations, extractions, extractionSets, generations, syntheses, events, diagnostics };
+}
+
+// ---------------------------------------------------------------------------
+// Locator resolution (spec/03, spec/05, spec/09). Turns a locator into the
+// structured context a reading surface needs to "bring up the source."
+//
+// EXACTLY ONE locator type is gate-bearing: char_range. Every other type is a
+// PRESENTATION locator - resolved for display, never verified, never part of
+// identity. `gate_bearing` and `verified` are reported per locator so a caller
+// can never accidentally present an advisory position as a checked one.
+// ---------------------------------------------------------------------------
+
+const STRING_LOCATORS = new Set(["heading", "section", "css_selector", "xpath", "url"]);
+
+/** The loadCorpus representation wrapper for a rep id, or undefined. */
+export function findRepEntry(loaded, repId) {
+  return (loaded.representations || []).find((r) => r.obj && r.obj.representation_id === repId);
+}
+
+/** A compact, display-oriented summary of a representation. */
+function repSummary(entry) {
+  const o = entry.obj;
+  const out = { id: o.representation_id, role: o.role, media_type: o.media_type, path: o.path };
+  if (o.parent_representation_ref) out.parent_representation_ref = o.parent_representation_ref;
+  if (o.description != null) out.description = o.description;
+  if (o.caption != null) out.caption = o.caption;
+  if (o.has_text != null) out.has_text = o.has_text;
+  if (o.dimensions) out.dimensions = o.dimensions;
+  return out;
+}
+
+/** Resolve one locator against a loaded corpus. Returns a structured context
+ *  block; never throws. opts: {context} codepoints of surrounding text. */
+export function resolveLocator(loaded, locator, opts = {}) {
+  const ctx = Number.isInteger(opts.context) && opts.context >= 0 ? opts.context : DEFAULT_CONTEXT;
+  const loc = locator || {};
+  const kind = loc.type;
+  const gate_bearing = kind === "char_range";
+  const base = { kind, gate_bearing, representation_ref: loc.representation_ref };
+  // advisory metadata rides along untouched, so a caller can honour unit/frames
+  if (loc.conforms_to != null) base.conforms_to = loc.conforms_to;
+  if (loc.quote_hint != null) base.quote_hint = loc.quote_hint;
+
+  const entry = findRepEntry(loaded, loc.representation_ref);
+  if (!entry) return { ...base, resolved: false, reason: "dangling_representation" };
+  base.representation = repSummary(entry);
+  const path = entry.obj.path;
+
+  if (!gate_bearing) base.trust = "recorded_not_gated";
+
+  const readText = () => {
+    if (!entry.contained || !fs.existsSync(entry.abs)) return null;
+    const rec = getRepFile(entry.abs);
+    return rec.utf8ok ? rec : null;
+  };
+
+  switch (kind) {
+    case "char_range": {
+      const v = loc.value || {};
+      const rec = readText();
+      if (!rec) return { ...base, resolved: false, reason: "representation_unreadable" };
+      const len = rec.cps.length;
+      if (!(Number.isInteger(v.start) && Number.isInteger(v.end) && 0 <= v.start && v.start <= v.end && v.end <= len)) {
+        return { ...base, resolved: false, reason: "locator_range_invalid", detail: `range [${v.start},${v.end}] invalid for length ${len}` };
+      }
+      return {
+        ...base,
+        resolved: true,
+        unit: loc.unit || "codepoint",
+        context: {
+          before: rec.cps.slice(Math.max(0, v.start - ctx), v.start).join(""),
+          exact: rec.cps.slice(v.start, v.end).join(""),
+          after: rec.cps.slice(v.end, Math.min(len, v.end + ctx)).join(""),
+        },
+        char_range: { start: v.start, end: v.end },
+        line_range: lineRangeForCharRange(rec.text, v.start, v.end),
+      };
+    }
+    case "line_range": {
+      const v = loc.value || {};
+      const rec = readText();
+      if (!rec) return { ...base, resolved: false, reason: "representation_unreadable" };
+      const lines = textLines(rec.text);
+      if (!(Number.isInteger(v.start) && Number.isInteger(v.end) && v.start >= 1 && v.start <= v.end)) {
+        return { ...base, resolved: false, reason: "locator_range_invalid", detail: `line range [${v.start},${v.end}]` };
+      }
+      const slice = lines.slice(v.start - 1, v.end);
+      return {
+        ...base,
+        resolved: true,
+        unit: loc.unit || "line",
+        basis: "1-based-inclusive",
+        line_range: { start: v.start, end: v.end },
+        line_count: lines.length,
+        path,
+        lines: slice,
+        text: slice.join("\n"),
+      };
+    }
+    case "page": {
+      const page = loc.value;
+      return { ...base, resolved: true, unit: loc.unit || "page", page, path, fragment: `#page=${page}` };
+    }
+    case "bbox": {
+      const b = Array.isArray(loc.value) ? loc.value : [];
+      const reference = loc.reference || entry.obj.dimensions || null;
+      const out = { ...base, resolved: true, unit: loc.unit || "pixel", bbox: b, path };
+      if (reference) out.reference = reference;
+      if (out.unit === "pixel" && b.length === 4) out.fragment = `#xywh=pixel:${b[0]},${b[1]},${b[2]},${b[3]}`;
+      else if (out.unit === "percent" && b.length === 4) out.fragment = `#xywh=percent:${b[0]},${b[1]},${b[2]},${b[3]}`;
+      return out;
+    }
+    case "timestamp_range": {
+      const v = loc.value || {};
+      return { ...base, resolved: true, unit: loc.unit || "second", start: v.start, end: v.end, path, fragment: `#t=${v.start},${v.end}` };
+    }
+    default: {
+      if (STRING_LOCATORS.has(kind)) return { ...base, resolved: true, value: loc.value, path };
+      return { ...base, resolved: false, reason: "unknown_locator_type" };
+    }
+  }
 }

@@ -7,7 +7,7 @@ exact quotation gates, selector semantics, and derivation constraints. UPC does
 **not** replace its own object store with RO-Crate; instead it emits a **lossless
 RO-Crate projection** so any UPC corpus can be consumed by the RO-Crate ecosystem.
 
-- **Direction (1.4.0): export only.** `upc export <corpus> --format ro-crate`
+- **Direction (1.5.0): export only.** `upc export <corpus> --format ro-crate`
   writes `ro-crate-metadata.json` (see §09 projections). Like `index.html` and the
   CSV mirrors, it is a **regenerable, non-canonical** view; the UPC objects remain
   the single source of truth. RO-Crate *import* (round-trip) is deferred — reading
@@ -15,7 +15,7 @@ RO-Crate projection** so any UPC corpus can be consumed by the RO-Crate ecosyste
   zero-dependency implementation and a later decision (see §00 versioning).
 - **Profile.** The projection declares conformance to the **UPC RO-Crate profile**
   (`profiles/ro-crate/`), whose canonical id is
-  `https://provenance.dev/upc/1.4.0/profiles/ro-crate`.
+  `https://provenance.dev/upc/1.5.0/profiles/ro-crate`.
 
 Legend: **exact** (semantics coincide) · **partial** (maps, but with a stated
 divergence) · **incompatible** (do not equate) · **UPC-only** (no RO-Crate
@@ -38,6 +38,8 @@ counterpart; carried as a `upc:` term).
 | Activity event (`events.jsonl`) | `CreateAction` (schema.org) | partial | PROV `Activity` in [prov.md](prov.md); `instrument`/`object`/`result` |
 | Input dependency (`derived_from`) | `prov:wasDerivedFrom` / action input | exact | |
 | Corpus profile conformance | `conformsTo` | exact | |
+| `secondary_locators[]` (presentation / cross-representation) | additional `Annotation` `target` entries with `FragmentSelector`s | partial | advisory only; see [web-annotation.md](web-annotation.md) |
+| Image `description` / `has_text` / `dimensions` | `File` with schema.org properties; `upc:` terms for the rest | partial | the verified OCR quotation lives on the companion `ocr` representation, not the image |
 | **The hop-B/C quotation gate** | — | **UPC-only** | RO-Crate describes *where* a selection is; it does not verify a quote. §11. |
 | Content-addressed id recipe (§06) | — | **UPC-only** | preserved as `identifier`, never overloaded onto `@id` |
 

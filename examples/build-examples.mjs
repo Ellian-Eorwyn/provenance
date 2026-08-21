@@ -32,6 +32,42 @@ function writeText(abs, content) { fs.mkdirSync(path.dirname(abs), { recursive: 
 function writeJSON(abs, obj) { writeText(abs, JSON.stringify(obj, null, 2) + "\n"); }
 function writeJSONL(abs, arr) { writeText(abs, arr.map((o) => JSON.stringify(o)).join("\n") + "\n"); }
 function rmrf(p) { fs.rmSync(p, { recursive: true, force: true }); }
+
+// A minimal, deterministic, dependency-free PDF: enough of ISO 32000 to be a real
+// openable document with selectable text on numbered pages, so the `page` locator
+// and its `#page=N` deep link can be exercised against actual PDF bytes.
+// Deliberately pure ASCII: byte length then equals string length, which is what
+// the xref offsets below are computed from, and what sha() hashes.
+function buildPdf(pages, title) {
+  const escPdf = (t) => t.replace(/([\\()])/g, "\\$1");
+  const objs = [];
+  const FONT = 3 + pages.length * 2;
+  const INFO = FONT + 1;
+  objs[1] = "<< /Type /Catalog /Pages 2 0 R >>";
+  objs[2] = `<< /Type /Pages /Kids [${pages.map((_, i) => `${3 + i * 2} 0 R`).join(" ")}] /Count ${pages.length} >>`;
+  pages.forEach((lines, i) => {
+    const pageNo = 3 + i * 2;
+    objs[pageNo] = `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 ${FONT} 0 R >> >> /Contents ${pageNo + 1} 0 R >>`;
+    objs[pageNo + 1] = { stream: lines.map((ln, k) => `BT /F1 13 Tf 72 ${720 - k * 22} Td (${escPdf(ln)}) Tj ET`).join("\n") };
+  });
+  objs[FONT] = "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>";
+  objs[INFO] = `<< /Title (${escPdf(title)}) /Producer (upc-examples) >>`;
+
+  let out = "%PDF-1.4\n";
+  const offsets = [];
+  for (let n = 1; n < objs.length; n++) {
+    offsets[n] = out.length;
+    const o = objs[n];
+    const body = typeof o === "string" ? o : `<< /Length ${o.stream.length} >>\nstream\n${o.stream}\nendstream`;
+    out += `${n} 0 obj\n${body}\nendobj\n`;
+  }
+  const startxref = out.length;
+  out += `xref\n0 ${objs.length}\n0000000000 65535 f \n`;
+  for (let n = 1; n < objs.length; n++) out += String(offsets[n]).padStart(10, "0") + " 00000 n \n";
+  out += `trailer\n<< /Size ${objs.length} /Root 1 0 R /Info ${INFO} 0 R >>\nstartxref\n${startxref}\n%%EOF\n`;
+  if (/[^\x00-\x7F]/.test(out)) throw new Error("PDF must stay ASCII: xref offsets are computed from string length");
+  return out;
+}
 function repStamp(method) { return { produced_by: { tool: "pi-forge", tool_version: "0.2.0", method }, created_at: TS }; }
 
 // ===========================================================================
@@ -82,7 +118,7 @@ function buildMinimal() {
   writeJSONL(path.join(srcDir, "extractions.jsonl"), [ext]);
 
   writeJSON(path.join(root, "corpus.json"), {
-    upc_spec_version: "1.4.0", corpus_id: "cor-" + sha256Hex(Buffer.from("corpus\nminimal", "utf8")).slice(0, 12),
+    upc_spec_version: "1.5.0", corpus_id: "cor-" + sha256Hex(Buffer.from("corpus\nminimal", "utf8")).slice(0, 12),
     title: "Minimal UPC corpus", readme: "Universal Provenance Corpus. Work only from ids resolved through the manifests. Quotations are verified byte-for-byte (spec/03).",
     rules_note: "spec/00-overview.md", created: TS, modified: TS, generated_by: { tool: "pi-forge", tool_version: "0.2.0" },
     sections: { sources: "sources/", provenance: "provenance/events.jsonl", sources_csv: "sources.csv", extractions_csv: "extractions.csv", index_html: "index.html" },
@@ -116,15 +152,23 @@ function buildWebResearch() {
   writeText(path.join(wDir, "representations", "raw.html"), wRaw);
   writeText(path.join(wDir, "representations", "clean.md"), wClean);
   writeText(path.join(wDir, "representations", "images", "figure.svg"), wSvg);
+  // The figure's visible text, OCR'd into its OWN textual representation. This is
+  // what makes the text separately findable AND gate-verifiable: the SVG itself is
+  // image/svg+xml, which is not a textual media type, so nothing can be quoted
+  // from it directly (spec/05).
+  const wOcr = "Downtime: staging-first = 0s\n";
+  writeText(path.join(wDir, "representations", "ocr", "figure.txt"), wOcr);
   const wRawId = mintRepId(Buffer.from(wRaw, "utf8"));
   const wCleanId = mintRepId(Buffer.from(wClean, "utf8"));
   const wImgId = mintImgId(Buffer.from(wSvg, "utf8"));
+  const wOcrId = mintRepId(Buffer.from(wOcr, "utf8"));
   const wSrcId = mintSrcId({ canonicalUrl: canonicalUrl(wUrl) });
 
   const wReps = [
     { representation_id: wRawId, role: "raw_html", media_type: "text/html", path: `sources/${wSlug}/representations/raw.html`, sha256: sha(wRaw), bytes: Buffer.byteLength(wRaw), produced_by: "http", provenance: repStamp("http") },
     { representation_id: wCleanId, role: "clean_markdown", media_type: "text/markdown", path: `sources/${wSlug}/representations/clean.md`, sha256: sha(wClean), char_count: codepointLength(wClean), parent_representation_ref: wRawId, produced_by: "readability", provenance: repStamp("readability") },
-    { representation_id: wImgId, role: "image", media_type: "image/svg+xml", path: `sources/${wSlug}/representations/images/figure.svg`, sha256: sha(wSvg), parent_representation_ref: wCleanId, description: "Bar note: staging-first migration shows zero downtime.", produced_by: "conversion", dimensions: { width: 240, height: 120 }, provenance: repStamp("conversion") },
+    { representation_id: wImgId, role: "image", media_type: "image/svg+xml", path: `sources/${wSlug}/representations/images/figure.svg`, sha256: sha(wSvg), parent_representation_ref: wCleanId, description: "Bar note: staging-first migration shows zero downtime.", has_text: true, ocr_text: "Downtime: staging-first = 0s", caption: "Figure 1. Downtime by cutover strategy.", produced_by: "conversion", dimensions: { width: 240, height: 120 }, provenance: repStamp("conversion") },
+    { representation_id: wOcrId, role: "ocr", media_type: "text/plain", path: `sources/${wSlug}/representations/ocr/figure.txt`, sha256: sha(wOcr), bytes: Buffer.byteLength(wOcr), char_count: codepointLength(wOcr), parent_representation_ref: wImgId, produced_by: "ocr", provenance: repStamp("ocr") },
   ];
   const wQuote = "cut over DNS only after the staging copy is fully validated";
   const wExt = {
@@ -139,6 +183,44 @@ function buildWebResearch() {
     provenance: { produced_by: { tool: "pi-forge", tool_version: "0.2.0", model: "local-llm", method: "model", prompt_version: "web-research/evidence@3" }, created_at: TS, derived_from: { source_ids: [wSrcId], representation_refs: [wCleanId] }, input_digest: sha(wClean) },
   };
   wExt.extraction_id = mintExtId(wExt);
+
+  // A VERIFIED quotation of the text visible in the figure. It is anchored by
+  // char_range into the OCR representation (so hop B gates it, badge
+  // "verified-to-transcript"), and carries a SECONDARY bbox into the image so a
+  // reader can be shown where on the figure that text sits. That second step is
+  // recorded, not gated (spec/05 trust boundary).
+  const wFigQuote = "Downtime: staging-first = 0s";
+  const wOcrExt = {
+    source_id: wSrcId, representation_ref: wOcrId, type: "quote", status: "active",
+    text: "The figure states that the staging-first strategy has zero downtime.",
+    direct_quote: wFigQuote,
+    locator: { type: "char_range", representation_ref: wOcrId, value: anchor(wOcr, wFigQuote).value, unit: "codepoint" },
+    secondary_locators: [
+      {
+        type: "bbox", representation_ref: wImgId, value: [12, 52, 200, 18],
+        unit: "pixel", reference: { width: 240, height: 120 }, conforms_to: "media-frags",
+        quote_hint: { exact: wFigQuote },
+      },
+    ],
+    query: "What does the figure claim about staging-first downtime?",
+    interpretation: "explicit", confidence: "high", confidence_score: 0.9,
+    rationale: "The figure's own label, read by OCR and quoted from the OCR text.",
+    provenance: { produced_by: { tool: "pi-forge", tool_version: "0.2.0", method: "ocr" }, created_at: TS, derived_from: { source_ids: [wSrcId], representation_refs: [wOcrId, wImgId] }, input_digest: sha(wOcr) },
+  };
+  wOcrExt.extraction_id = mintExtId(wOcrExt);
+
+  // The region itself, as an UNGATED reading of the image (spec/05): a bbox is
+  // never gate-bearing, so this carries `text` and no direct_quote.
+  const wRegionExt = {
+    source_id: wSrcId, representation_ref: wImgId, type: "image_region", status: "active",
+    text: "Figure label reporting zero downtime for the staging-first strategy.",
+    locator: { type: "bbox", representation_ref: wImgId, value: [12, 52, 200, 18], unit: "pixel", reference: { width: 240, height: 120 } },
+    query: "What does the figure claim about staging-first downtime?",
+    interpretation: "explicit", confidence: "medium", confidence_score: 0.6,
+    rationale: "Region reading; the verified text of this region is ext " + wOcrExt.extraction_id + ".",
+    provenance: { produced_by: { tool: "pi-forge", tool_version: "0.2.0", method: "vision" }, created_at: TS, derived_from: { source_ids: [wSrcId], representation_refs: [wImgId] }, input_digest: sha(wSvg) },
+  };
+  wRegionExt.extraction_id = mintExtId(wRegionExt);
 
   // ---- Source 2: cloudlore (non-ASCII: astral emoji, em-dash, é) ----
   const cSlug = "cloudlore-2023-blue-green-deploys";
@@ -185,6 +267,53 @@ function buildWebResearch() {
     provenance: { produced_by: { tool: "pi-forge", tool_version: "0.2.0", model: "local-llm", method: "model", prompt_version: "web-research/evidence@3" }, created_at: TS, derived_from: { source_ids: [cSrcId], representation_refs: [cCleanId] }, input_digest: sha(cClean) },
   };
   setExt.extraction_id = mintExtId(setExt);
+
+  // ---- Source 3: a native PDF whitepaper (document_pdf + its text layer) ----
+  // Exercises the `page` presentation locator end to end: a quotation gated
+  // against the extracted text layer, carrying a secondary `page` locator back
+  // into the PDF it was extracted from (spec/05).
+  const pSlug = "fieldnotes-2025-migration-downtime-study";
+  const pDir = path.join(root, "sources", pSlug);
+  const pTitle = "Migration downtime: a field study";
+  const pdfPages = [
+    [pTitle, "", "Staging-first cutover eliminates visitor-facing downtime", "in every trial we ran."],
+    ["Results", "", "Measured downtime by strategy: direct 42s, blue-green 9s,", "staging-first 0s.", "", "A staging-first cutover reported zero seconds of downtime."],
+  ];
+  const pPdf = buildPdf(pdfPages, pTitle);
+  // The text layer an extractor would produce, page order preserved, pages
+  // separated by a blank line. Derived from the SAME source of truth as the PDF
+  // bytes, so the two can never drift apart.
+  const pText = pdfPages.map((lines) => lines.join("\n")).join("\n\n") + "\n";
+  writeText(path.join(pDir, "representations", "paper.pdf"), pPdf);
+  writeText(path.join(pDir, "representations", "paper.txt"), pText);
+  const pPdfId = mintRepId(Buffer.from(pPdf, "utf8"));
+  const pTxtId = mintRepId(Buffer.from(pText, "utf8"));
+  const pSrcId = mintSrcId({ primaryBytesSha256: sha(pPdf) });
+
+  const pReps = [
+    { representation_id: pPdfId, role: "document_pdf", media_type: "application/pdf", path: `sources/${pSlug}/representations/paper.pdf`, sha256: sha(pPdf), bytes: Buffer.byteLength(pPdf), page_count: pdfPages.length, produced_by: "import", provenance: repStamp("import") },
+    { representation_id: pTxtId, role: "text", media_type: "text/plain", path: `sources/${pSlug}/representations/paper.txt`, sha256: sha(pText), bytes: Buffer.byteLength(pText), char_count: codepointLength(pText), parent_representation_ref: pPdfId, produced_by: "conversion", provenance: repStamp("conversion") },
+  ];
+
+  const pQuote = "A staging-first cutover reported zero seconds of downtime.";
+  const pQuoteLine = pText.split("\n").findIndex((l) => l.includes(pQuote)) + 1; // 1-based
+  const pExt = {
+    source_id: pSrcId, representation_ref: pTxtId, type: "evidence", status: "active",
+    text: "The field study measured zero downtime for the staging-first strategy.",
+    direct_quote: pQuote,
+    locator: { type: "char_range", representation_ref: pTxtId, value: anchor(pText, pQuote).value, unit: "codepoint" },
+    secondary_locators: [
+      // where it sits in the ORIGINAL PDF -- cross-representation, advisory
+      { type: "page", representation_ref: pPdfId, value: 2, conforms_to: "pdf-open-params", quote_hint: { exact: pQuote } },
+      // and where it sits in the extracted text, for a line-addressed reader
+      { type: "line_range", representation_ref: pTxtId, value: { start: pQuoteLine, end: pQuoteLine }, conforms_to: "rfc5147" },
+    ],
+    query: "How much downtime does a staging-first cutover cause?",
+    interpretation: "explicit", confidence: "high", confidence_score: 0.9,
+    rationale: "The study's own result sentence, quoted from the PDF's text layer.",
+    provenance: { produced_by: { tool: "pi-forge", tool_version: "0.2.0", method: "conversion" }, created_at: TS, derived_from: { source_ids: [pSrcId], representation_refs: [pTxtId, pPdfId] }, input_digest: sha(pText) },
+  };
+  pExt.extraction_id = mintExtId(pExt);
 
   // ---- Generation: watchdog summary with a cited quotation ----
   const summaryMd = [
@@ -234,7 +363,7 @@ function buildWebResearch() {
     representations: wReps, extractions_path: `sources/${wSlug}/extractions.jsonl`, generations: [gen.generation_id],
     provenance: { produced_by: { tool: "pi-forge", tool_version: "0.2.0", method: "http" }, created_at: TS },
   });
-  writeJSONL(path.join(wDir, "extractions.jsonl"), [wExt]);
+  writeJSONL(path.join(wDir, "extractions.jsonl"), [wExt, wOcrExt, wRegionExt]);
 
   writeJSON(path.join(cDir, "source.json"), {
     source_id: cSrcId, source_kind: "url", title: "Blue-green deployments explained",
@@ -247,6 +376,14 @@ function buildWebResearch() {
   });
   writeJSONL(path.join(cDir, "extractions.jsonl"), [cExt]);
 
+  writeJSON(path.join(pDir, "source.json"), {
+    source_id: pSrcId, source_kind: "document", title: pTitle,
+    bibliographic: { item_type: "report", title: pTitle, authors: [{ literal: "Fieldnotes Collective" }], issued: { date_parts: [[2025]] } },
+    representations: pReps, extractions_path: `sources/${pSlug}/extractions.jsonl`,
+    provenance: { produced_by: { tool: "pi-forge", tool_version: "0.2.0", method: "import" }, created_at: TS },
+  });
+  writeJSONL(path.join(pDir, "extractions.jsonl"), [pExt]);
+
   const setId = "set-blue-green-metaphors";
   writeJSON(path.join(root, "extractions", setId, "manifest.json"), {
     set_id: setId, title: "Blue-green metaphors", query: "How does blue-green keep a spare environment ready?",
@@ -258,13 +395,14 @@ function buildWebResearch() {
   writeJSONL(path.join(root, "provenance", "events.jsonl"), [
     { event_id: "evt-000001", activity_type: "fetch", tool: "pi-forge", started_at: TS, ended_at: TS, inputs: {}, outputs: { source_ids: [wSrcId], representation_refs: [wRawId] }, status: "success", notes: null },
     { event_id: "evt-000002", activity_type: "fetch", tool: "pi-forge", started_at: TS, ended_at: TS, inputs: {}, outputs: { source_ids: [cSrcId], representation_refs: [cRawId] }, status: "success", notes: null },
-    { event_id: "evt-000003", activity_type: "extract", tool: "pi-forge", model: "local-llm", started_at: TS, ended_at: TS, inputs: { representation_refs: [wCleanId, cCleanId] }, outputs: { extraction_ids: [wExt.extraction_id, cExt.extraction_id, setExt.extraction_id] }, status: "success", notes: null },
+    { event_id: "evt-000006", activity_type: "import", tool: "pi-forge", started_at: TS, ended_at: TS, inputs: {}, outputs: { source_ids: [pSrcId], representation_refs: [pPdfId, pTxtId] }, status: "success", notes: null },
+    { event_id: "evt-000003", activity_type: "extract", tool: "pi-forge", model: "local-llm", started_at: TS, ended_at: TS, inputs: { representation_refs: [wCleanId, cCleanId] }, outputs: { extraction_ids: [wExt.extraction_id, wOcrExt.extraction_id, wRegionExt.extraction_id, cExt.extraction_id, pExt.extraction_id, setExt.extraction_id] }, status: "success", notes: null },
     { event_id: "evt-000004", activity_type: "generate", tool: "researchassistant", model: "some-model", started_at: TS, ended_at: TS, inputs: { representation_refs: [wCleanId], extraction_ids: [wExt.extraction_id] }, outputs: { generation_ids: [gen.generation_id] }, status: "success", notes: null },
     { event_id: "evt-000005", activity_type: "synthesize", tool: "pi-forge", model: "local-llm", started_at: TS, ended_at: TS, inputs: { extraction_ids: [wExt.extraction_id, cExt.extraction_id] }, outputs: { synthesis_ids: [syn.synthesis_id] }, status: "success", notes: null },
   ]);
 
   writeJSON(path.join(root, "corpus.json"), {
-    upc_spec_version: "1.4.0", corpus_id: "cor-" + sha256Hex(Buffer.from("corpus\nweb-research", "utf8")).slice(0, 12),
+    upc_spec_version: "1.5.0", corpus_id: "cor-" + sha256Hex(Buffer.from("corpus\nweb-research", "utf8")).slice(0, 12),
     title: "Migration downtime research", readme: "Universal Provenance Corpus. Work only from ids resolved through the manifests; sources are immutable; derived objects link back via provenance.derived_from. Quotations are verified byte-for-byte (spec/03).",
     rules_note: "spec/00-overview.md", created: TS, modified: TS, generated_by: { tool: "pi-forge", tool_version: "0.2.0" },
     sections: { sources: "sources/", extractions: "extractions/", syntheses: "syntheses/", provenance: "provenance/events.jsonl", sources_csv: "sources.csv", extractions_csv: "extractions.csv", index_html: "index.html" },

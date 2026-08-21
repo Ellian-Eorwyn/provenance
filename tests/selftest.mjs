@@ -12,8 +12,11 @@ import {
   parseQuoteMarkers, findUncitedQuotes, mintExtId, mintSrcId, computeInputDigest,
   writeCsv, parseCsv,
   loadCorpus, clearRepCache, sha256Hex, bareHash,
+  charToLine, lineRangeForCharRange, textLines, resolveLocator, isTranscriptRole,
+  isDerivedText, isTextualMedia,
 } from "../skill/universal-provenance/scripts/upc_common.mjs";
-import { buildRoCrateGraph } from "../skill/universal-provenance/scripts/ro-crate.mjs";
+import { buildRoCrateGraph, fragmentForLocator, selectorsForLocator, buildAnnotationTargets } from "../skill/universal-provenance/scripts/ro-crate.mjs";
+import { buildModel as buildBrowserModel } from "../skill/universal-provenance/scripts/build-index.mjs";
 import { buildProvGraph } from "../skill/universal-provenance/scripts/prov.mjs";
 import { validateCorpus } from "../skill/universal-provenance/scripts/upc.mjs";
 
@@ -27,6 +30,7 @@ const eq = (name, got, want) => {
   else { fail++; console.error(`FAIL ${name}\n  got:  ${g}\n  want: ${w}`); };
 };
 const ok = (name, cond) => { if (cond) pass++; else { fail++; console.error(`FAIL ${name}`); } };
+const getRepFileForTest = (abs) => { const t = fs.readFileSync(abs, "utf8"); return { utf8ok: true, text: t, cps: Array.from(t) }; };
 
 // --- JCS / RFC 8785 ---
 eq("jcs empty object", jcs({}), "{}");
@@ -277,7 +281,7 @@ ok("filename rejects reserved", !checkFilename("sources/con/x.md").ok);
     };
     clearRepCache();
     const loaded = {
-      root: dir, corpus: { corpus_id: "cor-aaaaaaaaaaaa", upc_spec_version: "1.4.0", title: "t" },
+      root: dir, corpus: { corpus_id: "cor-aaaaaaaaaaaa", upc_spec_version: "1.5.0", title: "t" },
       sections: {}, sources: [{ obj: srcObj, dirRel: "sources/s" }],
       representations: [{ obj: repObj, sourceId: srcObj.source_id, abs, contained: true }],
       extractions: [{ obj: ext }], generations: [], syntheses: [], events: [], extractionSets: [], diagnostics: [],
@@ -371,6 +375,522 @@ ok("filename rejects reserved", !checkFilename("sources/con/x.md").ok);
   fs.rmSync(tmp, { recursive: true, force: true });
 }
 
+// --- line derivation: 1-based inclusive, astral- and CRLF-correct ---
+{
+  const t = "alpha\nbeta\ngamma";
+  eq("charToLine: first codepoint is line 1", charToLine(t, 0), 1);
+  eq("charToLine: after the first \\n is line 2", charToLine(t, 6), 2);
+  eq("charToLine: past the end clamps to the last line", charToLine(t, 999), 3);
+
+  // one astral codepoint is TWO UTF-16 units; line math must count codepoints
+  const astral = "a\u{1F600}b\ncd";
+  eq("charToLine: astral char does not shift the line", charToLine(astral, 3), 1);
+  eq("charToLine: codepoint after the break is line 2", charToLine(astral, 4), 2);
+
+  // CRLF numbers identically to LF: the \r rides on the preceding line
+  const crlf = "one\r\ntwo\r\nthree";
+  eq("charToLine: CRLF line 2", charToLine(crlf, 5), 2);
+  eq("lineRangeForCharRange: CRLF span stays on line 2", lineRangeForCharRange(crlf, 5, 8), { start: 2, end: 2 });
+
+  eq("lineRangeForCharRange: single line span", lineRangeForCharRange(t, 0, 5), { start: 1, end: 1 });
+  eq("lineRangeForCharRange: multi-line span is inclusive", lineRangeForCharRange(t, 0, 10), { start: 1, end: 2 });
+  eq("lineRangeForCharRange: span reaching line 3", lineRangeForCharRange(t, 0, 12), { start: 1, end: 3 });
+  eq("lineRangeForCharRange: empty span reports its own line", lineRangeForCharRange(t, 7, 7), { start: 2, end: 2 });
+  // a span ending exactly ON a newline still belongs to the line it terminates
+  eq("lineRangeForCharRange: span ending at the break stays on that line", lineRangeForCharRange(t, 0, 6), { start: 1, end: 1 });
+
+  eq("textLines: trailing newline does not add a line", textLines("a\nb\n").length, 2);
+  eq("textLines: no trailing newline", textLines("a\nb").length, 2);
+  eq("textLines: a blank final line counts", textLines("a\n\n").length, 2);
+
+  ok("isTranscriptRole: ocr is a derived text", isTranscriptRole("ocr"));
+  ok("isTranscriptRole: ocr_pdf is a derived text", isTranscriptRole("ocr_pdf"));
+  ok("isTranscriptRole: transcript is a derived text", isTranscriptRole("transcript"));
+  ok("isTranscriptRole: clean_markdown is NOT a derived text", !isTranscriptRole("clean_markdown"));
+}
+
+// --- ext- id is INERT to secondary_locators and to advisory locator metadata ---
+// The single most important invariant of this release: presentation metadata
+// must never reach the identity recipe. canonicalLocator keeps exactly
+// {type, representation_ref, value}, so anything else is free.
+{
+  const baseExt = {
+    source_id: "src-aaaaaaaaaaaa", representation_ref: "rep-aaaaaaaaaaaa",
+    direct_quote: "hello", type: "quote",
+    locator: { type: "char_range", representation_ref: "rep-aaaaaaaaaaaa", value: { start: 0, end: 5 } },
+  };
+  const id0 = mintExtId(baseExt);
+
+  const withSecondary = { ...baseExt, secondary_locators: [
+    { type: "bbox", representation_ref: "img-bbbbbbbbbbbb", value: [1, 2, 3, 4], reference: { width: 9, height: 9 } },
+    { type: "page", representation_ref: "rep-cccccccccccc", value: 7 },
+  ] };
+  eq("ext id: unchanged by adding secondary_locators", mintExtId(withSecondary), id0);
+
+  const withMeta = { ...baseExt, locator: { ...baseExt.locator,
+    conforms_to: "rfc5147", unit: "codepoint",
+    reference: { width: 240, height: 120 },
+    quote_hint: { exact: "hello", prefix: "say ", suffix: " there" } } };
+  eq("ext id: unchanged by advisory metadata on the primary locator", mintExtId(withMeta), id0);
+
+  const both = { ...withMeta, secondary_locators: withSecondary.secondary_locators };
+  eq("ext id: unchanged by metadata AND secondary_locators together", mintExtId(both), id0);
+
+  // control: the id MUST still move when something inside value changes
+  const moved = { ...baseExt, locator: { ...baseExt.locator, value: { start: 0, end: 4 } } };
+  ok("ext id: DOES change when locator.value changes (control)", mintExtId(moved) !== id0);
+}
+
+// --- resolveLocator: one shape per locator type, gate flag never lies ---
+{
+  const EXAMPLE = path.join(HERE, "..", "examples", "web-research-corpus");
+  clearRepCache();
+  const loaded = loadCorpus(EXAMPLE);
+  const ext = loaded.extractions.find((e) => e.obj.direct_quote != null).obj;
+  const repId = ext.representation_ref;
+
+  const pr = resolveLocator(loaded, ext.locator, { context: 10 });
+  ok("resolveLocator: char_range resolves", pr.resolved === true);
+  ok("resolveLocator: char_range is the only gate-bearing kind", pr.gate_bearing === true);
+  eq("resolveLocator: exact span equals the direct_quote", pr.context.exact, ext.direct_quote);
+  eq("resolveLocator: context window honours opts.context", Array.from(pr.context.before).length, 10);
+  eq("resolveLocator: unit is codepoints", pr.unit, "codepoint");
+  ok("resolveLocator: char_range derives a line_range", Number.isInteger(pr.line_range.start));
+  ok("resolveLocator: a gate-bearing locator carries no recorded_not_gated trust", pr.trust === undefined);
+
+  const mk = (o) => resolveLocator(loaded, { representation_ref: repId, ...o });
+  for (const [kind, loc] of [
+    ["page", { type: "page", value: 7 }],
+    ["bbox", { type: "bbox", value: [1, 2, 3, 4] }],
+    ["timestamp_range", { type: "timestamp_range", value: { start: 1, end: 2 } }],
+    ["line_range", { type: "line_range", value: { start: 1, end: 1 } }],
+    ["section", { type: "section", value: "x" }],
+  ]) {
+    const r = mk(loc);
+    ok(`resolveLocator: ${kind} resolves`, r.resolved === true);
+    ok(`resolveLocator: ${kind} is NOT gate-bearing`, r.gate_bearing === false);
+    eq(`resolveLocator: ${kind} is labelled recorded_not_gated`, r.trust, "recorded_not_gated");
+  }
+  eq("resolveLocator: page emits a PDF fragment", mk({ type: "page", value: 7 }).fragment, "#page=7");
+  eq("resolveLocator: bbox emits a media fragment", mk({ type: "bbox", value: [1, 2, 3, 4] }).fragment, "#xywh=pixel:1,2,3,4");
+  eq("resolveLocator: timestamp emits an NPT fragment", mk({ type: "timestamp_range", value: { start: 1, end: 2 } }).fragment, "#t=1,2");
+  eq("resolveLocator: line_range returns the line text", mk({ type: "line_range", value: { start: 1, end: 1 } }).lines.length, 1);
+
+  eq("resolveLocator: line 0 is rejected (lines are 1-based)",
+    mk({ type: "line_range", value: { start: 0, end: 1 } }).reason, "locator_range_invalid");
+  eq("resolveLocator: dangling representation is reported, not thrown",
+    resolveLocator(loaded, { type: "page", representation_ref: "rep-ffffffffffff", value: 1 }).reason, "dangling_representation");
+  eq("resolveLocator: an out-of-range char_range is reported, not thrown",
+    resolveLocator(loaded, { type: "char_range", representation_ref: repId, value: { start: 0, end: 10 ** 9 } }).reason, "locator_range_invalid");
+}
+
+// --- secondary_locators advisories: fire correctly, and NEVER move the level ---
+{
+  const EXAMPLE = path.join(HERE, "..", "examples", "web-research-corpus");
+  clearRepCache();
+  const base = validateCorpus(EXAMPLE);
+  const SEC_CODES = ["secondary_locator_dangling", "secondary_locator_cross_source", "bbox_out_of_bounds", "line_range_out_of_bounds"];
+  ok("baseline example raises no secondary-locator advisories",
+    !base.warnings.some((w) => SEC_CODES.includes(w.code)));
+
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "upc-seclos-"));
+  const dst = path.join(tmp, "corpus");
+  fs.cpSync(EXAMPLE, dst, { recursive: true });
+  const sdir = path.join(dst, "sources", "watchdog-2024-migrate-with-no-downtime");
+  const sobj = JSON.parse(fs.readFileSync(path.join(sdir, "source.json"), "utf8"));
+  const img = sobj.representations.find((r) => r.role === "image");
+  const other = JSON.parse(fs.readFileSync(path.join(dst, "sources", "cloudlore-2023-blue-green-deploys", "source.json"), "utf8"));
+  const xfile = path.join(sdir, "extractions.jsonl");
+  const recs = fs.readFileSync(xfile, "utf8").trim().split("\n").map((l) => JSON.parse(l));
+  const target = recs[0];
+  const own = target.representation_ref;
+  target.secondary_locators = [
+    { type: "section", representation_ref: own, value: "x" },                                  // same rep -> silent
+    { type: "bbox", representation_ref: img.representation_id, value: [0, 0, 10, 10] },         // cross-REP, in bounds -> silent
+    { type: "bbox", representation_ref: img.representation_id, value: [200, 100, 100, 100] },   // -> bbox_out_of_bounds
+    { type: "line_range", representation_ref: own, value: { start: 0, end: 2 } },               // -> line_range_out_of_bounds
+    { type: "line_range", representation_ref: own, value: { start: 1, end: 99999 } },           // -> line_range_out_of_bounds
+    { type: "page", representation_ref: "rep-ffffffffffff", value: 3 },                         // -> secondary_locator_dangling
+    { type: "section", representation_ref: other.representations[0].representation_id, value: "x" }, // -> cross_source
+  ];
+  fs.writeFileSync(xfile, recs.map((r) => JSON.stringify(r)).join("\n") + "\n");
+  clearRepCache();
+  const rep = validateCorpus(dst);
+  const wc = (code) => rep.warnings.filter((w) => w.code === code).length;
+  eq("secondary: exactly one dangling", wc("secondary_locator_dangling"), 1);
+  eq("secondary: exactly one cross-source (crossing representations is legitimate)", wc("secondary_locator_cross_source"), 1);
+  eq("secondary: exactly one bbox_out_of_bounds (the in-bounds one stays silent)", wc("bbox_out_of_bounds"), 1);
+  eq("secondary: two line_range_out_of_bounds (start<1 and end past EOF)", wc("line_range_out_of_bounds"), 2);
+  eq("secondary: advisories add no errors",
+    JSON.stringify(rep.errors.map((e) => e.code).sort()), JSON.stringify(base.errors.map((e) => e.code).sort()));
+  ok("secondary: conformance level unchanged (advisories are gate-inert)", rep.level === base.level);
+  eq("secondary: ext- id on disk unchanged by adding secondary_locators",
+    JSON.parse(fs.readFileSync(xfile, "utf8").trim().split("\n")[0]).extraction_id, recs[0].extraction_id);
+  fs.rmSync(tmp, { recursive: true, force: true });
+}
+
+// --- structured image info: description + has_text + a findable, gated quote ---
+// The three connected pieces of spec/05, exercised end-to-end on the real example.
+{
+  const EXAMPLE = path.join(HERE, "..", "examples", "web-research-corpus");
+  clearRepCache();
+  const loaded = loadCorpus(EXAMPLE);
+  const img = loaded.representations.find((r) => r.obj.role === "image");
+  const ocr = loaded.representations.find((r) => r.obj.role === "ocr");
+
+  ok("image: the example carries an image representation", !!img);
+  ok("image: (1) description is the summary", typeof img.obj.description === "string" && img.obj.description.length > 0);
+  eq("image: (2) has_text flags text presence", img.obj.has_text, true);
+  ok("image: dimensions are recorded (a pixel bbox is meaningless without them)",
+    img.obj.dimensions && img.obj.dimensions.width > 0 && img.obj.dimensions.height > 0);
+
+  ok("ocr: (3) a companion ocr-role representation exists", !!ocr);
+  ok("ocr: the companion is a TEXTUAL media type (the image itself is not)", /^text\//.test(ocr.obj.media_type));
+  eq("ocr: the companion points back at the image", ocr.obj.parent_representation_ref, img.obj.representation_id);
+  ok("ocr: image/svg+xml is NOT textual, so the image cannot be quoted directly",
+    !/^text\//.test(img.obj.media_type));
+
+  // the vocabulary actually admits the role the spec has always referenced
+  const vocab = JSON.parse(fs.readFileSync(path.join(HERE, "..", "vocab", "vocab.json"), "utf8"));
+  ok("vocab: representation_role admits 'ocr'", vocab.$defs.representation_role.enum.includes("ocr"));
+
+  // the quote into the OCR text is GATED, and labelled as derived text
+  const q = loaded.extractions.map((e) => e.obj).find((o) => o.representation_ref === ocr.obj.representation_id);
+  ok("ocr quote: exists", !!q);
+  ok("ocr quote: is anchored by char_range", q.locator.type === "char_range");
+  const rec = { utf8ok: true, text: fs.readFileSync(ocr.abs, "utf8"), cps: Array.from(fs.readFileSync(ocr.abs, "utf8")) };
+  ok("ocr quote: PASSES the codepoint gate", verifyHopB(q, rec).ok === true);
+  ok("ocr quote: its role is derived text -> verified-to-transcript", isTranscriptRole(ocr.obj.role));
+
+  // the cross-representation region: resolvable, in bounds, and never gated
+  const sec = (q.secondary_locators || []).find((l) => l.type === "bbox");
+  ok("ocr quote: carries a secondary bbox into the image", !!sec);
+  eq("ocr quote: the bbox targets the image, not the text", sec.representation_ref, img.obj.representation_id);
+  const r = resolveLocator(loaded, sec);
+  ok("region: resolves", r.resolved === true);
+  ok("region: is NOT gate-bearing", r.gate_bearing === false);
+  eq("region: is labelled recorded_not_gated", r.trust, "recorded_not_gated");
+  const [x, y, w, h] = sec.value;
+  ok("region: bbox lies inside the image dimensions",
+    x + w <= img.obj.dimensions.width && y + h <= img.obj.dimensions.height);
+
+  // and the ungated region reading is a separate, non-quoting extraction
+  const region = loaded.extractions.map((e) => e.obj).find((o) => o.type === "image_region");
+  ok("image_region: exists as its own extraction", !!region);
+  ok("image_region: carries NO direct_quote (a bbox can never gate one)", region.direct_quote == null);
+  ok("image_region: is anchored by bbox", region.locator.type === "bbox");
+}
+
+// --- Web Annotation: presentation selectors + the multi-target cross-rep shape ---
+{
+  const R = "rep-aaaaaaaaaaaa";
+  // RFC 5147 is 0-based half-open; UPC line_range is 1-based inclusive.
+  eq("fragment: line_range 3-5 exports as RFC 5147 #line=2,5",
+    fragmentForLocator({ type: "line_range", representation_ref: R, value: { start: 3, end: 5 } }), "#line=2,5");
+  eq("fragment: a single line still shifts only the start",
+    fragmentForLocator({ type: "line_range", representation_ref: R, value: { start: 1, end: 1 } }), "#line=0,1");
+  eq("fragment: page -> PDF open parameters",
+    fragmentForLocator({ type: "page", representation_ref: R, value: 7 }), "#page=7");
+  eq("fragment: bbox -> Media Fragments pixel",
+    fragmentForLocator({ type: "bbox", representation_ref: R, value: [12, 52, 200, 18] }), "#xywh=pixel:12,52,200,18");
+  eq("fragment: bbox honours unit percent",
+    fragmentForLocator({ type: "bbox", representation_ref: R, value: [5, 10, 20, 30], unit: "percent" }), "#xywh=percent:5,10,20,30");
+  eq("fragment: timestamp_range -> NPT",
+    fragmentForLocator({ type: "timestamp_range", representation_ref: R, value: { start: 10, end: 12.5 } }), "#t=10,12.5");
+  eq("fragment: char_range has NO fragment form (it is the gate, not a projection)",
+    fragmentForLocator({ type: "char_range", representation_ref: R, value: { start: 0, end: 5 } }), null);
+  eq("fragment: section has no unambiguous syntax, so none is invented",
+    fragmentForLocator({ type: "section", representation_ref: R, value: "Cutover" }), null);
+
+  const bboxSel = selectorsForLocator({ type: "bbox", representation_ref: R, value: [12, 52, 200, 18], reference: { width: 240, height: 120 } });
+  eq("selector: bbox emits one FragmentSelector", bboxSel.length, 1);
+  eq("selector: bbox carries upc:unit", bboxSel[0]["upc:unit"], "pixel");
+  eq("selector: bbox carries upc:conformsTo", bboxSel[0]["upc:conformsTo"], "media-frags");
+  eq("selector: bbox carries its reference frame (pixels are resolution-dependent)",
+    JSON.stringify(bboxSel[0]["upc:reference"]), JSON.stringify({ width: 240, height: 120 }));
+  ok("selector: a presentation selector is NEVER gate-authoritative",
+    bboxSel.every((x) => x["upc:gateAuthoritative"] === undefined));
+
+  const cr = selectorsForLocator({ type: "char_range", representation_ref: R, value: { start: 0, end: 5 } }, { quote: "hello" });
+  eq("selector: char_range emits position + quote", cr.map((x) => x["@type"]).join("+"), "TextPositionSelector+TextQuoteSelector");
+  eq("selector: char_range positions are codepoints", cr[0]["upc:unit"], "codepoint");
+
+  const hinted = selectorsForLocator({ type: "page", representation_ref: R, value: 3, quote_hint: { exact: "Q", prefix: "a", suffix: "b" } });
+  eq("selector: quote_hint becomes a TextQuoteSelector re-find hint",
+    hinted.map((x) => x["@type"]).join("+"), "FragmentSelector+TextQuoteSelector");
+
+  // cross-representation -> two targets, each selector bound to its own source
+  const lookup = (id) => ({ ref: { "@id": id + ".file" }, rec: null });
+  const ext = {
+    representation_ref: R, direct_quote: "hello",
+    locator: { type: "char_range", representation_ref: R, value: { start: 0, end: 5 } },
+    secondary_locators: [
+      { type: "section", representation_ref: R, value: "same rep, no fragment" },
+      { type: "bbox", representation_ref: "img-bbbbbbbbbbbb", value: [1, 2, 3, 4] },
+    ],
+  };
+  const t = buildAnnotationTargets(ext, lookup);
+  ok("annotation: a cross-representation locator makes target an ARRAY", Array.isArray(t));
+  eq("annotation: exactly two targets (text + image)", t.length, 2);
+  eq("annotation: target 1 is the text representation", t[0].source["@id"], R + ".file");
+  eq("annotation: target 2 is the image", t[1].source["@id"], "img-bbbbbbbbbbbb.file");
+  eq("annotation: the image target carries the FragmentSelector", t[1].selector[0]["@type"], "FragmentSelector");
+  ok("annotation: the image fragment is NOT on the text target",
+    !JSON.stringify(t[0]).includes("FragmentSelector"));
+
+  // same-representation only -> the 1.5.0 bare-object shape is preserved
+  const t1 = buildAnnotationTargets({ ...ext, secondary_locators: [ext.secondary_locators[0]] }, lookup);
+  ok("annotation: a single target keeps the bare-object shape (1.5.0 compatible)", !Array.isArray(t1));
+  eq("annotation: a section secondary contributes no selector", t1.selector.length, 2);
+}
+
+// --- the real example: multi-target annotation + RO-Crate determinism ---
+{
+  const EXAMPLE = path.join(HERE, "..", "examples", "web-research-corpus");
+  clearRepCache();
+  const g1 = buildRoCrateGraph(loadCorpus(EXAMPLE));
+  clearRepCache();
+  const g2 = buildRoCrateGraph(loadCorpus(EXAMPLE));
+  eq("ro-crate: still byte-identical across rebuilds with presentation selectors",
+    JSON.stringify(g1), JSON.stringify(g2));
+
+  const annos = g1["@graph"].filter((n) => n["@type"] === "Annotation");
+  const multi = annos.filter((a) => Array.isArray(a.target));
+  // two cross-representation quotes: OCR text -> image, PDF text layer -> PDF
+  eq("ro-crate: two multi-target annotations (the OCR quote and the PDF quote)", multi.length, 2);
+  const targets = multi.flatMap((a) => a.target);
+  const img = targets.find((t) => String(t.source["@id"]).endsWith(".svg"));
+  ok("ro-crate: the image target exists", !!img);
+  eq("ro-crate: it carries the media fragment", img.selector[0].value, "#xywh=pixel:12,52,200,18");
+  const pdf = targets.find((t) => String(t.source["@id"]).endsWith(".pdf"));
+  ok("ro-crate: the PDF target exists", !!pdf);
+  eq("ro-crate: it carries the PDF open-parameters fragment", pdf.selector[0].value, "#page=2");
+  eq("ro-crate: tagged with the PDF fragment standard", pdf.selector[0]["upc:conformsTo"], "pdf-open-params");
+  ok("ro-crate: every annotation is flagged interop-only",
+    annos.every((a) => a["upc:interopOnly"] === true));
+  ok("ro-crate: no annotation claims gate authority",
+    !JSON.stringify(annos).includes("gateAuthoritative"));
+}
+
+// --- browser model: image info, anchors, and derived line numbers survive ---
+{
+  const EXAMPLE = path.join(HERE, "..", "examples", "web-research-corpus");
+  clearRepCache();
+  const m = buildBrowserModel(loadCorpus(EXAMPLE));
+
+  const img = m.sources.flatMap((s) => s.representations).find((r) => r.isImage);
+  ok("browser: the image representation is recognised as an image", !!img);
+  ok("browser: description reaches the view model", !!img.description);
+  eq("browser: has_text reaches the view model", img.has_text, true);
+  ok("browser: dimensions reach the view model", img.dimensions && img.dimensions.width === 240);
+  ok("browser: caption reaches the view model", !!img.caption);
+
+  // pick the OCR quote specifically: it is the one carrying a region anchor
+  const q = m.extractions.find((e) => (e.anchors || []).some((a) => a.kind === "bbox" && !a.primary));
+  ok("browser: the OCR quote is badged verified-to-transcript", q.badge === "verified-to-transcript");
+  eq("browser: a char_range quote derives its line number", JSON.stringify(q.lineRange), JSON.stringify({ start: 1, end: 1 }));
+  const bbox = (q.anchors || []).find((a) => a.kind === "bbox");
+  ok("browser: the cross-rep region anchor is present", !!bbox);
+  ok("browser: it is flagged cross_representation", bbox.cross_representation === true);
+  eq("browser: it is labelled recorded_not_gated", bbox.trust, "recorded_not_gated");
+  ok("browser: it resolves to the image file", /figure\.svg$/.test(bbox.representation.path));
+  ok("browser: it carries the reference frame the overlay scales against",
+    bbox.reference && bbox.reference.width === 240 && bbox.reference.height === 120);
+
+  const text = m.extractions.find((e) => e.badge === "verified");
+  ok("browser: an ordinary text quote also derives a line number", text.lineRange && text.lineRange.start >= 1);
+
+  // the PDF path: a page anchor into the original document, and its deep link
+  const pdfQ = m.extractions.find((e) => (e.anchors || []).some((a) => a.kind === "page"));
+  ok("browser: the PDF-text quote is present", !!pdfQ);
+  const page = pdfQ.anchors.find((a) => a.kind === "page");
+  eq("browser: the page anchor resolves to page 2", page.page, 2);
+  eq("browser: it emits a PDF open-parameters fragment", page.fragment, "#page=2");
+  ok("browser: it is flagged cross_representation (text layer -> the PDF)", page.cross_representation === true);
+  eq("browser: it is labelled recorded_not_gated", page.trust, "recorded_not_gated");
+  ok("browser: it resolves to the .pdf file", /\.pdf$/.test(page.path));
+  const lr = pdfQ.anchors.find((a) => a.kind === "line_range");
+  ok("browser: the line_range anchor carries a path for its RFC 5147 link", !!(lr && lr.path));
+
+  const region = m.extractions.find((e) => e.type === "image_region");
+  ok("browser: the ungated region reading stays ungated", region.verified === false);
+
+  // the whole point: presentation anchors never move a badge
+  ok("browser: every anchor except the primary char_range is non-gate-bearing",
+    m.extractions.every((e) => (e.anchors || []).every((a) => a.gate_bearing === (a.primary && a.kind === "char_range"))));
+}
+
+// --- the §05 trust boundary follows the BYTES, not the role name ---
+// A text layer pulled out of a PDF is derived text even though its role is the
+// generic "text": the bytes it came from are not text. Badging it plain
+// "verified" would claim the quote was checked against the document itself.
+{
+  ok("textual: text/plain", isTextualMedia("text/plain"));
+  ok("textual: text/markdown", isTextualMedia("text/markdown"));
+  ok("textual: application/json", isTextualMedia("application/json"));
+  ok("textual: application/pdf is NOT text", !isTextualMedia("application/pdf"));
+  ok("textual: image/svg+xml is NOT text", !isTextualMedia("image/svg+xml"));
+  ok("textual: audio/mpeg is NOT text", !isTextualMedia("audio/mpeg"));
+
+  const reps = {
+    "rep-pdf": { representation_id: "rep-pdf", role: "document_pdf", media_type: "application/pdf" },
+    "rep-html": { representation_id: "rep-html", role: "raw_html", media_type: "text/html" },
+    "img-1": { representation_id: "img-1", role: "image", media_type: "image/png" },
+    "rep-audio": { representation_id: "rep-audio", role: "audio", media_type: "audio/mpeg" },
+  };
+  const look = (id) => reps[id] || null;
+
+  ok("derived: a text layer extracted from a PDF IS derived text",
+    isDerivedText({ role: "text", media_type: "text/plain", parent_representation_ref: "rep-pdf" }, look));
+  ok("derived: cleaned Markdown from raw HTML is NOT derived text (text -> text)",
+    !isDerivedText({ role: "clean_markdown", media_type: "text/markdown", parent_representation_ref: "rep-html" }, look));
+  ok("derived: OCR text from an image IS derived text",
+    isDerivedText({ role: "ocr", media_type: "text/plain", parent_representation_ref: "img-1" }, look));
+  ok("derived: a transcript is derived text by role alone, with no parent",
+    isDerivedText({ role: "transcript", media_type: "text/plain" }, look));
+  ok("derived: a transcript of audio is derived text",
+    isDerivedText({ role: "transcript", media_type: "text/plain", parent_representation_ref: "rep-audio" }, look));
+  ok("derived: a captured source text with no parent is NOT derived",
+    !isDerivedText({ role: "text", media_type: "text/plain" }, look));
+  ok("derived: an unresolvable parent is not assumed to be non-text",
+    !isDerivedText({ role: "text", media_type: "text/plain", parent_representation_ref: "rep-nope" }, look));
+  ok("derived: null representation is handled", !isDerivedText(null, look));
+}
+
+// --- the PDF example: a real document, a gated text layer, a page deep link ---
+{
+  const EXAMPLE = path.join(HERE, "..", "examples", "web-research-corpus");
+  clearRepCache();
+  const loaded = loadCorpus(EXAMPLE);
+  const pdf = loaded.representations.find((r) => r.obj.role === "document_pdf");
+  ok("pdf: the example carries a native document_pdf representation", !!pdf);
+  eq("pdf: its media type is application/pdf", pdf.obj.media_type, "application/pdf");
+  eq("pdf: page_count is recorded", pdf.obj.page_count, 2);
+
+  // the bytes on disk are a real, structurally valid PDF
+  const bytes = fs.readFileSync(pdf.abs);
+  ok("pdf: starts with a PDF header", bytes.subarray(0, 8).toString("latin1").startsWith("%PDF-1."));
+  ok("pdf: ends with %%EOF", bytes.subarray(-8).toString("latin1").includes("%%EOF"));
+  eq("pdf: declares the same page count in its page tree",
+    (bytes.toString("latin1").match(/\/Count (\d+)/) || [])[1], String(pdf.obj.page_count));
+  ok("pdf: bytes hash to the recorded sha256", "sha256:" + sha256Hex(bytes) === bareHash(pdf.obj.sha256).replace(/^/, "sha256:"));
+  // every xref offset must point at the object it claims, or no reader can open it
+  const txt = bytes.toString("latin1");
+  const sx = Number((txt.match(/startxref\s+(\d+)/) || [])[1]);
+  ok("pdf: startxref points at the xref table", txt.slice(sx, sx + 4) === "xref");
+  const rows = [...txt.slice(sx).matchAll(/(\d{10}) (\d{5}) ([nf])/g)];
+  ok("pdf: every in-use xref offset points at its object",
+    rows.every((m, i) => m[3] === "f" || txt.startsWith(i + " 0 obj", Number(m[1]))));
+
+  // the text layer is derived text, and its quote is gated against IT
+  const layer = loaded.representations.find((r) => r.obj.parent_representation_ref === pdf.obj.representation_id);
+  ok("pdf: a text layer hangs off the PDF", !!layer);
+  eq("pdf: the layer's role is the generic text", layer.obj.role, "text");
+  ok("pdf: yet it counts as derived text (its parent is not text)",
+    isDerivedText(layer.obj, (id) => { const r = loaded.representations.find((x) => x.obj.representation_id === id); return r ? r.obj : null; }));
+
+  const q = loaded.extractions.map((e) => e.obj).find((o) => o.representation_ref === layer.obj.representation_id);
+  ok("pdf: a quotation is anchored into the text layer", !!q);
+  const rec = getRepFileForTest(layer.abs);
+  ok("pdf: the quotation PASSES the codepoint gate", verifyHopB(q, rec).ok === true);
+  ok("pdf: the quoted text really appears in the PDF's own content stream",
+    txt.includes(q.direct_quote));
+
+  const page = (q.secondary_locators || []).find((l) => l.type === "page");
+  ok("pdf: it carries a secondary page locator", !!page);
+  eq("pdf: pointing into the PDF itself", page.representation_ref, pdf.obj.representation_id);
+  eq("pdf: at page 2", page.value, 2);
+  const r = resolveLocator(loaded, page);
+  eq("pdf: which resolves to a #page= deep link", r.fragment, "#page=2");
+  eq("pdf: labelled recorded_not_gated", r.trust, "recorded_not_gated");
+  ok("pdf: and is never gate-bearing", r.gate_bearing === false);
+}
+
+// --- the generated browser must actually PARSE ---
+// The client is emitted from a template literal, so every backslash in it is an
+// escaping hazard; a broken regex there produces an index.html that looks fine on
+// disk and dies on load. Parse-check the emitted script instead of trusting it.
+{
+  for (const name of ["web-research-corpus", "minimal-corpus"]) {
+    const html = fs.readFileSync(path.join(HERE, "..", "examples", name, "index.html"), "utf8");
+    const blocks = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map((m) => m[1]);
+    ok(`browser(${name}): has an inline client script`, blocks.length >= 1);
+    for (let i = 0; i < blocks.length; i++) {
+      let parsed = true, err = "";
+      try { new Function(blocks[i]); } catch (e) { parsed = false; err = e.message; }
+      ok(`browser(${name}): inline script ${i} parses as JavaScript${parsed ? "" : " — " + err}`, parsed);
+    }
+    // the embedded data island must be valid JSON too
+    const data = /<script type="application\/json" id="upc-data">([\s\S]*?)<\/script>/.exec(html);
+    ok(`browser(${name}): the data island is present`, !!data);
+    let jsonOk = true;
+    try { JSON.parse(data[1].replace(/\\u003c/g, "<")); } catch { jsonOk = false; }
+    ok(`browser(${name}): the data island is valid JSON`, jsonOk);
+  }
+}
+
+// --- the in-page source viewer: bytes embedded at build time, never truncated ---
+{
+  const EXAMPLE = path.join(HERE, "..", "examples", "web-research-corpus");
+  clearRepCache();
+  const loaded = loadCorpus(EXAMPLE);
+  const m = buildBrowserModel(loaded);
+
+  ok("viewer: the model carries a representation map", !!m.reps);
+  ok("viewer: it reports what it embedded", m.embed && typeof m.embed.embedded === "number");
+  eq("viewer: nothing was skipped in this corpus", m.embed.skipped, 0);
+
+  // every TEXTUAL representation is embedded, and byte-exactly
+  for (const r of loaded.representations) {
+    const rec = m.reps[r.obj.representation_id];
+    ok(`viewer: ${r.obj.role} is in the map`, !!rec);
+    if (!isTextualMedia(r.obj.media_type)) {
+      ok(`viewer: ${r.obj.role} (non-text) carries no embedded text`, rec.text === undefined);
+      continue;
+    }
+    eq(`viewer: ${r.obj.role} text is byte-exact`, rec.text, fs.readFileSync(r.abs, "utf8"));
+    eq(`viewer: ${r.obj.role} line count matches`, rec.lineCount, textLines(fs.readFileSync(r.abs, "utf8")).length);
+  }
+
+  // the viewer must be able to place a quotation: its rep is embedded, and the
+  // char_range lands inside the embedded text
+  for (const e of m.extractions.filter((x) => x.badge === "verified" || x.badge === "verified-to-transcript")) {
+    const rec = m.reps[e.representation_ref];
+    ok(`viewer: ${e.id} has its source embedded`, typeof rec.text === "string");
+    const cps = Array.from(rec.text);
+    const v = e.locator.value;
+    eq(`viewer: ${e.id} span in the embedded text equals the quote`, cps.slice(v.start, v.end).join(""), e.quote);
+    ok(`viewer: ${e.id} derived line is within the document`, e.lineRange.end <= rec.lineCount);
+  }
+
+  // a PDF is referenced, never inlined (binary would bloat the page)
+  const pdf = Object.values(m.reps).find((r) => r.isPdf);
+  ok("viewer: the PDF is in the map", !!pdf);
+  ok("viewer: the PDF carries no embedded text", pdf.text === undefined);
+  ok("viewer: the PDF knows its page count, for the pane's caption", pdf.page_count === 2);
+
+  // an image is referenced by path, with the frame the overlay needs
+  const img = Object.values(m.reps).find((r) => r.isImage);
+  ok("viewer: the image is in the map", !!img);
+  ok("viewer: with its dimensions", img.dimensions && img.dimensions.width === 240);
+
+  const html = fs.readFileSync(path.join(EXAMPLE, "index.html"), "utf8");
+  ok("viewer: the pane is mounted in the page", /class="viewer/.test(html) || /viewerShell/.test(html));
+  ok("viewer: position chips drive the pane instead of a new tab", /openSource\(/.test(html));
+  ok("viewer: an external link is still offered", /open externally/.test(html));
+  ok("viewer: oversized representations are refused, not truncated", /too large to embed/.test(html));
+}
+
+// --- §09 deep links: #ex=, and search/sort carried in the hash ---
+{
+  const html = fs.readFileSync(path.join(HERE, "..", "examples", "web-research-corpus", "index.html"), "utf8");
+  ok("deep links: the #ex=<ext-id> shorthand is implemented", /\^ex=/.test(html));
+  ok("deep links: the hash carries a search parameter", /params?\.|URLSearchParams/.test(html) && /"q"/.test(html));
+  ok("deep links: the hash carries sort and direction", /"sort"/.test(html) && /"dir"/.test(html));
+  ok("deep links: sorting is wired to the column headers", /toggleSort/.test(html));
+  ok("deep links: in-place updates do not re-route (focus would be lost)", /selfNav/.test(html));
+}
+
 // --- PROV-O export: structure, determinism, cautions (real example corpus) ---
 {
   const EXAMPLE = path.join(HERE, "..", "examples", "web-research-corpus");
@@ -406,7 +926,7 @@ ok("filename rejects reserved", !checkFilename("sources/con/x.md").ok);
 // --- PROV-O cautions: wasRevisionOf (supersedes, NOT duplicate_of) + wasQuotedFrom ---
 {
   const loaded = {
-    root: ".", corpus: { corpus_id: "cor-aaaaaaaaaaaa", upc_spec_version: "1.4.0" }, sections: {},
+    root: ".", corpus: { corpus_id: "cor-aaaaaaaaaaaa", upc_spec_version: "1.5.0" }, sections: {},
     sources: [{ obj: { source_id: "src-aaaaaaaaaaaa", source_kind: "url", supersedes: "src-bbbbbbbbbbbb", representations: [] } }],
     representations: [{ obj: { representation_id: "rep-aaaaaaaaaaaa", role: "clean_markdown", media_type: "text/markdown", path: "x.md", sha256: "sha256:00", duplicate_of: "rep-cccccccccccc" }, sourceId: "src-aaaaaaaaaaaa" }],
     extractions: [{ obj: { extraction_id: "ext-000000000001", source_id: "src-aaaaaaaaaaaa", representation_ref: "rep-aaaaaaaaaaaa", type: "quote", status: "active", direct_quote: "hi", supersedes: "ext-000000000002", locator: { type: "char_range", representation_ref: "rep-aaaaaaaaaaaa", value: { start: 0, end: 2 } } } }],

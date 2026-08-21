@@ -1,6 +1,6 @@
 # UPC RO-Crate Profile
 
-- **Profile id:** `https://provenance.dev/upc/1.4.0/profiles/ro-crate`
+- **Profile id:** `https://provenance.dev/upc/1.5.0/profiles/ro-crate`
 - **Conforms to:** [RO-Crate 1.3](https://w3id.org/ro/crate/1.3)
 - **Adds:** the UPC evidence model, selector semantics, quotation-verification
   boundary, derivation constraints, and conformance levels.
@@ -74,7 +74,13 @@ Properties: `upc:sourceId`, `upc:extractionId`, `upc:generationId`,
 `upc:evidence`, `upc:source`, `upc:confidence`, `upc:question`, `upc:aliases`,
 `upc:retrieval`, `upc:sha256`, `upc:specVersion`, `upc:corpusId`,
 `upc:identifiers`, `upc:identifierScheme`, `upc:relations`, `upc:relationType`,
-`upc:relationTarget`.
+`upc:relationTarget`, `upc:conformsTo`, `upc:reference`.
+
+`upc:conformsTo` names the external fragment standard a `FragmentSelector`
+projects to (`rfc5147`, `media-frags`, `pdf-open-params`); `upc:reference` carries
+the `{width, height}` frame a pixel `bbox` was captured against, because
+`#xywh=pixel:` is resolution-dependent. Both are advisory, and both appear only on
+selectors that are already flagged `upc:interopOnly`.
 
 ## The quotation gate is UPC-authoritative; Web-Annotation selectors are advisory
 

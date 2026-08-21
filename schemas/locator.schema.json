@@ -1,14 +1,36 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://provenance.dev/upc/1.4.0/schemas/locator.schema.json",
+  "$id": "https://provenance.dev/upc/1.5.0/schemas/locator.schema.json",
   "title": "UPC Locator",
-  "description": "Points into a SPECIFIC representation. A locator is (representation_ref, typed position); a position never stands alone. The value shape is constrained per type by the oneOf below. Only char_range is gate-bearing (anchors a verified quotation, §03); char_range counts Unicode codepoints, 0-based, end-exclusive, into the representation's UTF-8-decoded bytes.",
+  "description": "Points into a SPECIFIC representation. A locator is (representation_ref, typed position); a position never stands alone. The value shape is constrained per type by the oneOf below. Only char_range is gate-bearing (anchors a verified quotation, §03); char_range counts Unicode codepoints, 0-based, end-exclusive, into the representation's UTF-8-decoded bytes. line_range counts lines 1-based and inclusive. The optional conforms_to/unit/reference/quote_hint members are advisory presentation metadata: they are siblings of value, are excluded from the ext- identity recipe (\u00a706), and never influence the gate.",
   "type": "object",
   "required": ["type", "representation_ref"],
   "properties": {
     "type": { "$ref": "../vocab/vocab.json#/$defs/locator_type" },
     "representation_ref": { "type": "string", "minLength": 1 },
-    "value": {}
+    "value": {},
+    "conforms_to": { "type": "string", "minLength": 1, "description": "Advisory. The external fragment standard this locator's position is expressed in, for projection: rfc5147 (text #line=/#char=), media-frags (W3C Media Fragments #xywh=/#t=), pdf-open-params (PDF #page=). Never affects verification or identity (\u00a703)." },
+    "unit": { "type": "string", "minLength": 1, "description": "Advisory. The counting unit of value. Text ranges: codepoint (the UPC default and the only gate-bearing unit) or utf16. Regions: pixel or percent. Never affects verification or identity." },
+    "reference": {
+      "type": "object",
+      "description": "Advisory. The resolution frame a bbox was captured against; required in practice for a pixel bbox to be meaningful, since #xywh=pixel: is resolution-dependent (\u00a705).",
+      "properties": {
+        "width": { "type": "integer", "minimum": 0 },
+        "height": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": true
+    },
+    "quote_hint": {
+      "type": "object",
+      "description": "Advisory re-find hint, mapping to a W3C Web Annotation TextQuoteSelector. Lets a consumer re-locate the span by content when offsets drift. NEVER a substitute for the hop-B gate: a quote_hint is not verified.",
+      "required": ["exact"],
+      "properties": {
+        "exact": { "type": "string" },
+        "prefix": { "type": "string" },
+        "suffix": { "type": "string" }
+      },
+      "additionalProperties": true
+    }
   },
   "oneOf": [
     {

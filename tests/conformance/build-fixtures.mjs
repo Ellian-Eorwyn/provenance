@@ -71,7 +71,7 @@ function seed(dir, { withL2 } = {}) {
       { event_id: "evt-000002", activity_type: "synthesize", tool: "t", started_at: TS, ended_at: TS, inputs: { extraction_ids: [ext.extraction_id] }, outputs: { synthesis_ids: [syn.synthesis_id] }, status: "success", notes: null },
     ]);
   }
-  wJSON(path.join(dir, "corpus.json"), { upc_spec_version: "1.4.0", corpus_id: "cor-" + sha256Hex(Buffer.from(dir, "utf8")).slice(0, 12), title: "Fixture", readme: "fixture", created: TS, modified: TS, sections });
+  wJSON(path.join(dir, "corpus.json"), { upc_spec_version: "1.5.0", corpus_id: "cor-" + sha256Hex(Buffer.from(dir, "utf8")).slice(0, 12), title: "Fixture", readme: "fixture", created: TS, modified: TS, sections });
   regen(dir);
   return { slug, sd, repId, srcId, ext, gen, syn };
 }

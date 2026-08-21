@@ -3,6 +3,163 @@
 All notable changes to the Universal Provenance Corpus (UPC) standard.
 Versioning is semantic (§00 Versioning policy).
 
+## 1.5.0 — 2026-08-21
+
+**Backward-compatible (additive) minor release: anchored context navigation and
+structured image info.** No id recipe and no quotation gate changed; hop B is
+still codepoint-exact, `char_range`-only, and unnormalized. The schema `$id`s bump
+to `1.5.0` (which changes `integrity.schema_hash` — regenerate projections with
+`upc regen`). Every 1.4.0 corpus remains valid.
+
+### Added — select-to-source navigation
+
+- **`upc locate <ext-id> --corpus <dir> [--format json|web-annotation]`** — a
+  read-only command that resolves an extraction's **primary and every secondary**
+  locator into a structured *context bundle*: the verified span with its
+  surrounding text, its derived 1-based line number, and each advisory
+  presentation locator with its representation, reference frame, and trust label.
+  This is the backend call a reading surface makes to bring a quotation's source
+  up in place.
+- **`resolveLocator` / `charToLine` / `lineRangeForCharRange` / `textLines`** in
+  `upc_common.mjs` — pure, zero-dependency helpers behind the command.
+- **Advisory locator metadata**, all optional and all *siblings* of `value` so
+  they stay outside the `ext-` identity recipe: `conforms_to`, `unit`,
+  `reference` (a bbox's `{width, height}` frame), and `quote_hint`
+  (`{exact, prefix?, suffix?}`, a content-based re-find aid that is **never** a
+  verification path).
+- **`secondary_locators[]` is now formalized** (§03) as the home for presentation
+  *and cross-representation* locators. A secondary locator MAY address a
+  different representation of the same source; `locator_rep_mismatch` constrains
+  only the primary locator, which is what makes that expressible.
+- **`line_range` is normatively 1-based and inclusive** (§03). The schema keeps
+  `minimum: 0` so no existing corpus can be invalidated; the bound is enforced by
+  a new advisory instead.
+- Four new **advisory** rules, warnings only and inert to the conformance level:
+  `secondary_locator_dangling`, `secondary_locator_cross_source`,
+  `bbox_out_of_bounds`, `line_range_out_of_bounds`.
+
+### Added — structured image info
+
+- **`ocr` joins the `representation_role` vocabulary.** §05 has referenced this
+  role since 1.0.0, but the closed enum only had `ocr_pdf`, so no producer could
+  actually emit it. The mechanism §05 prescribes is now expressible.
+- **`has_text`** (optional boolean) on a representation — the text-presence
+  indication of the image triple: `description` says what the image *is*,
+  `has_text` says whether it *says* anything, and the findable, gate-verified
+  quotation of that text lives in a companion `ocr`-role textual representation.
+- `ocr_text` is documented as what it always was: an advisory blob, never
+  verified and never quotable.
+- The web-research example now exercises the whole path end to end — an image
+  with `has_text`, a companion `ocr` representation, a `direct_quote` that
+  **passes the codepoint gate** against it, and a secondary `bbox` carrying that
+  verified text back to a region on the picture.
+- It also carries a **real native PDF** (`document_pdf`, 2 pages, generated
+  deterministically with no dependencies) plus its extracted text layer, a
+  quotation gated against that layer, and a secondary `page` locator producing a
+  `paper.pdf#page=2` deep link — so the `page` presentation locator is exercised
+  against actual PDF bytes rather than only unit-tested.
+
+### Added — reference browser
+
+- Images render inline with their description, text flag, caption, and
+  dimensions; a `bbox` is drawn as an overlay positioned in **percent of its
+  reference frame**, so it stays correct at any display scale.
+- Quotations show their derived line number and an RFC 5147 `#line=` link to the
+  source file; `page` locators deep-link with `#page=N`.
+- The cross-representation case is rendered in full: an OCR quotation is shown
+  verified *and* highlighted on the image it was read from.
+- **An in-page source viewer.** A sticky pane beside the evidence list (and an
+  inline one under a source's representations) shows the representation itself,
+  positioned at the locator: numbered lines with the quoted span marked, the PDF
+  at its page, the image with its region highlighted. Position chips drive the
+  pane instead of opening a new tab; an "open externally" link remains in the
+  pane header. Textual representations are **embedded at build time** — the same
+  bytes the gate ran against — because `fetch` is unavailable from a `file:`
+  origin and an iframe of a text file cannot be annotated cross-origin, so
+  embedding is the only way the offline browser can show and mark up a source.
+  Embedding is budgeted (512 KiB per representation, 8 MiB per corpus, with
+  representations that extractions point into served first); anything over budget
+  is **omitted entirely and offered as a link**, never truncated, because half a
+  document shown as if it were whole is the exact failure this browser exists to
+  prevent.
+- **§09 deep links are now actually implemented.** The hash carries the view, the
+  selected extraction, the active search, and the sort key/direction
+  (`#/evidence/<ext-id>?q=…&sort=…&dir=…`), so a filtered view is shareable and
+  reloads identically. The `#ex=<ext-id>` shorthand addresses one extraction
+  directly. Evidence columns are sortable. Typing updates the hash in place
+  without re-routing, so focus is never lost.
+
+### Added — Web Annotation emission
+
+- Presentation locators now project to `FragmentSelector`s: `line_range` → RFC
+  5147 `#line=`, `page` → `#page=`, `bbox` → Media Fragments `#xywh=pixel:`,
+  `timestamp_range` → `#t=`, each tagged `upc:conformsTo` and `upc:unit`, and
+  each paired with a `TextQuoteSelector` re-find hint.
+- A locator addressing a **different representation** becomes an **additional
+  `target`**, not another selector on the existing one — an OA selector is only
+  meaningful against its own `target.source`. An annotation with a single target
+  keeps the 1.4.0 bare-object shape, so existing exports are byte-identical.
+- New `upc:` terms: `upc:conformsTo`, `upc:reference`.
+
+### Fixed — the trust boundary now follows the bytes, not the role name
+
+- **A text layer extracted from a PDF is derived text.** §05 has always said a
+  quotation of PDF text "lands on the trust boundary", but the badge was decided
+  from the role *string* (`transcript`, `ocr*`), so a `role: "text"` layer whose
+  parent is a PDF was badged plain **verified** — claiming the quote had been
+  checked against the document when it had only been checked against a rendering
+  of it. `isDerivedText` now decides from the derivation: a textual
+  representation is derived text when the bytes it came from were not themselves
+  text. A text-to-text conversion (raw HTML → cleaned Markdown) is unaffected and
+  still badges **verified**, matching §11's "exact in the cleaned representation".
+- The badge label broadens from "≈ to transcript" to **"≈ to derived text"**,
+  which is accurate for transcripts, OCR, and extracted text layers alike. The
+  badge *identifier* (`verified-to-transcript`) is unchanged.
+- The `TEXTUAL` media predicate, previously duplicated in two scripts, is now the
+  shared `isTextualMedia`.
+
+### Fixed — browser
+
+- A line position no longer renders twice when an extraction carries both a
+  derived line number and an explicit `line_range` secondary for the same place.
+- The source metadata grid sized its key column at a fixed `130px`, so a long key
+  (`alias:researchassistant`) overlapped its value. It now sizes to content,
+  cannot starve the value column, and stacks below 560px.
+- `line_range` resolution now returns `path`, so its RFC 5147 link is emitted.
+- A new selftest **parse-checks every generated `index.html`**. The client is
+  emitted from a template literal, where a single lost backslash produces a page
+  that looks fine on disk and dies on load; nothing caught that before.
+
+### Not weakened (the point of the release)
+
+- **The gate is untouched.** `verifyHopB` still keys on the primary `char_range`
+  alone, over codepoints, with no normalization. Presentation locators are never
+  verified and can never carry a `direct_quote`.
+- **Identity is untouched.** `mintExtId` still hashes only
+  `{type, representation_ref, value}` of the primary locator. Selftests assert the
+  `ext-` id is unchanged by adding `secondary_locators` or locator metadata, and
+  still changes when `locator.value` does.
+- **The trust boundary is louder, not blurrier.** A region drawn on an image is
+  *recorded, not gated*, and §09 now **requires** a conforming surface to say so
+  wherever it draws one.
+
+### Compatibility
+
+- **The new optional members are invisible to a 1.4.0 reader.** `has_text` sits on
+  a representation and the locator metadata sits on a locator; both schemas are
+  `additionalProperties: true`, and the `unknown_field` advisory scans only the
+  *top level* of source / extraction / generation / synthesis objects. So a 1.4.0
+  validator accepts them silently — it does not even warn, unlike the
+  `identifiers`/`relations` case in 1.3.0, which added top-level members.
+- **`role: "ocr"` is the one genuine forward-incompatibility.**
+  `representation_role` is a closed enum with no `x-` escape, so a 1.4.0
+  validator raises `schema_invalid` (an L0 error) on a corpus that uses it. A
+  producer targeting mixed readers should keep emitting `transcript` until its
+  readers are on 1.5.0.
+- Existing RO-Crate exports are unchanged: an extraction with no
+  cross-representation locator still emits the 1.4.0 annotation shape byte for
+  byte.
+
 ## 1.4.0 — 2026-08-20
 
 **Backward-compatible (additive) minor release: W3C PROV-O export.** No object

@@ -1,0 +1,55 @@
+%PDF-1.4
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R 5 0 R] /Count 2 >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 7 0 R >> >> /Contents 4 0 R >>
+endobj
+4 0 obj
+<< /Length 238 >>
+stream
+BT /F1 13 Tf 72 720 Td (Migration downtime: a field study) Tj ET
+BT /F1 13 Tf 72 698 Td () Tj ET
+BT /F1 13 Tf 72 676 Td (Staging-first cutover eliminates visitor-facing downtime) Tj ET
+BT /F1 13 Tf 72 654 Td (in every trial we ran.) Tj ET
+endstream
+endobj
+5 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 7 0 R >> >> /Contents 6 0 R >>
+endobj
+6 0 obj
+<< /Length 330 >>
+stream
+BT /F1 13 Tf 72 720 Td (Results) Tj ET
+BT /F1 13 Tf 72 698 Td () Tj ET
+BT /F1 13 Tf 72 676 Td (Measured downtime by strategy: direct 42s, blue-green 9s,) Tj ET
+BT /F1 13 Tf 72 654 Td (staging-first 0s.) Tj ET
+BT /F1 13 Tf 72 632 Td () Tj ET
+BT /F1 13 Tf 72 610 Td (A staging-first cutover reported zero seconds of downtime.) Tj ET
+endstream
+endobj
+7 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>
+endobj
+8 0 obj
+<< /Title (Migration downtime: a field study) /Producer (upc-examples) >>
+endobj
+xref
+0 9
+0000000000 65535 f 
+0000000009 00000 n 
+0000000058 00000 n 
+0000000121 00000 n 
+0000000247 00000 n 
+0000000536 00000 n 
+0000000662 00000 n 
+0000001043 00000 n 
+0000001140 00000 n 
+trailer
+<< /Size 9 /Root 1 0 R /Info 8 0 R >>
+startxref
+1229
+%%EOF

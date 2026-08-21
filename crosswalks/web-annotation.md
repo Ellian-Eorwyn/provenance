@@ -23,10 +23,12 @@ Legend: **exact** · **partial** · **incompatible** · **UPC-only**.
 | context (read at the locator) | `TextQuoteSelector.prefix`/`suffix` | exact | UPC reads these from the representation at build time; advisory, for re-anchoring |
 | `css_selector` | `CssSelector` | exact | non-gating in both |
 | `xpath` | `XPathSelector` | exact | non-gating |
-| `bbox` `[x,y,w,h]` | `FragmentSelector` (media frag) / SVG selector | partial | image region |
-| `timestamp_range` `{start,end}` sec | `FragmentSelector` (`#t=start,end`) | partial | audio/video |
-| `page` / `heading` / `section` | `FragmentSelector` / `RangeSelector` (approx) | partial | coarse, non-gating |
-| `secondary_locators[]` | `refinedBy` / multiple selectors | partial | advisory, excluded from UPC identity |
+| `line_range` `{start,end}` | `FragmentSelector` (RFC 5147 `#line=`) | **partial** | UPC is 1-based inclusive, RFC 5147 is 0-based half-open — see "Fragment syntax" |
+| `bbox` `[x,y,w,h]` | `FragmentSelector` (Media Fragments `#xywh=pixel:`) / `SvgSelector` for irregular shapes | partial | image region; resolution-dependent, so `upc:reference` travels with it |
+| `timestamp_range` `{start,end}` sec | `FragmentSelector` (`#t=start,end`) | partial | audio/video, NPT seconds |
+| `page` | `FragmentSelector` (`#page=N`, PDF open parameters) | partial | coarse, non-gating |
+| `heading` / `section` | `RangeSelector` (approx) | partial | not emitted: no unambiguous fragment syntax |
+| `secondary_locators[]` | an additional `target`, or extra selectors on the same target | partial | advisory, excluded from UPC identity — see "Cross-representation targets" |
 | **hop-B verification** | — | **UPC-only** | OA records a selection; it does not verify a quote |
 
 Companion annotation shape emitted by the projection:
@@ -43,6 +45,81 @@ Companion annotation shape emitted by the projection:
 
 The extraction entity *itself* additionally carries `upc:charRange: {start,end}`
 and `upc:gateAuthoritative: true`.
+
+## Fragment syntax, and the unit traps in each
+
+Presentation locators project to four external fragment syntaxes. Every one is
+emitted inside a `FragmentSelector`, flagged `upc:interopOnly: true`, and tagged
+with `upc:conformsTo` and `upc:unit`. **None of them is ever verified**, and none
+may carry `upc:gateAuthoritative`.
+
+| UPC locator | Fragment emitted | `upc:conformsTo` | Standard |
+|---|---|---|---|
+| `line_range` | `#line=<start-1>,<end>` | `rfc5147` | [RFC 5147](https://www.rfc-editor.org/rfc/rfc5147) |
+| `page` | `#page=<n>` | `pdf-open-params` | PDF open parameters (RFC 8118 / ISO 32000-2) |
+| `bbox` | `#xywh=pixel:x,y,w,h` | `media-frags` | [W3C Media Fragments](https://www.w3.org/TR/media-frags/) |
+| `timestamp_range` | `#t=<start>,<end>` | `media-frags` | Media Fragments, NPT seconds |
+
+Each trap, stated plainly rather than silently reconciled:
+
+- **RFC 5147 is 0-based and half-open; UPC `line_range` is 1-based and
+  inclusive.** UPC lines 3–5 export as `#line=2,5`. RFC 5147 also counts line
+  *terminators* as part of the line and is therefore CRLF-sensitive, while UPC
+  numbers lines by `\n` alone. The shift is applied only at this boundary; §03
+  governs inside UPC.
+- **PDF user space is bottom-left with Y increasing upward; image space is
+  top-left with Y increasing downward.** A `bbox` is defined in *image* pixels
+  (§05). Anything derived from a PDF's own coordinates must be flipped before it
+  becomes a UPC `bbox`; UPC does not do this for you and cannot detect a
+  mis-flipped box.
+- **`#xywh=pixel:` is resolution-dependent.** The same region on a 240×120 render
+  and a 2400×1200 render has different pixel numbers. This is why a `bbox`
+  carries `reference: {width, height}`, exported as `upc:reference`. Without it a
+  pixel fragment is not portable. `#xywh=percent:` avoids the problem and is
+  emitted when `unit` is `percent`.
+- **`timestamp_range` is seconds, half-open**, relative to media start.
+
+## Cross-representation targets
+
+A secondary locator may address a **different representation of the same source**
+than the primary one does — that is how a quotation verified against an `ocr` text
+records where on the *image* that text sits (§05).
+
+An OA `selector` is only meaningful against its own `target.source`, so such a
+locator MUST NOT be appended to the text target's selector array. The projection
+emits an **additional target** instead, and `target` becomes an array:
+
+```json
+{ "@type": "Annotation", "@id": "#ext-e32197281015-anno", "upc:interopOnly": true,
+  "target": [
+    { "source": {"@id": "…/ocr/figure.txt"},
+      "selector": [
+        {"@type": "TextPositionSelector", "start": 0, "end": 28, "upc:unit": "codepoint"},
+        {"@type": "TextQuoteSelector", "exact": "Downtime: staging-first = 0s"} ] },
+    { "source": {"@id": "…/images/figure.svg"},
+      "selector": [
+        {"@type": "FragmentSelector", "value": "#xywh=pixel:12,52,200,18",
+         "upc:conformsTo": "media-frags", "upc:unit": "pixel",
+         "upc:reference": {"width": 240, "height": 120}},
+        {"@type": "TextQuoteSelector", "exact": "Downtime: staging-first = 0s"} ] } ],
+  "body": { "@type": "TextualBody", "value": "Downtime: staging-first = 0s" } }
+```
+
+A secondary locator on the *same* representation adds its selectors to the
+existing target rather than creating a second one, and an annotation with a single
+target keeps the bare-object form.
+
+**`refinedBy` is deliberately not used for this.** `refinedBy` narrows a selection
+*within one resource*; using it across resources would assert that the image
+region is a refinement of the text span, which is exactly the inference UPC
+refuses to make. The two targets are co-equal and differently trusted: the text
+one is gated, the image one is recorded.
+
+**IIIF.** For images served through a [IIIF](https://iiif.io/) Image API endpoint,
+the same region is addressable as a IIIF region parameter and the annotation
+target may be a IIIF canvas. UPC does not emit IIIF: it has no way to know an
+image's IIIF service. The `bbox` plus `reference` carries everything a IIIF-aware
+consumer needs to construct one.
 
 ## Normalization divergence (why `char_range` → `TextPositionSelector` is only *partial*)
 
@@ -77,5 +154,11 @@ for the gate).
 
 ## Direction
 
-Export only in 1.4.0 (inside the RO-Crate projection). No OA importer; OA selectors
-never become gate-bearing UPC locators.
+Export only (inside the RO-Crate projection, and via `upc locate --format
+web-annotation` for a single extraction). No OA importer; OA selectors never
+become gate-bearing UPC locators.
+
+Since 1.5.0 the projection also covers presentation and cross-representation
+locators, as `FragmentSelector`s on their own targets. This widened what UPC
+*describes*; it did not widen what UPC *verifies*, which remains exactly the
+primary `char_range`.

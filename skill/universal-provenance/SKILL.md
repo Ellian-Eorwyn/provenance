@@ -60,8 +60,9 @@ node scripts/upc.mjs validate <corpus-dir> [--strict]
 node scripts/upc.mjs verify-quotes <file> --corpus <corpus-dir> [--strict]
 node scripts/upc.mjs verify <ext-id> --corpus <corpus-dir>
 node scripts/upc.mjs quote <ext-id> --corpus <corpus-dir> [--narrow <start> <end>]
+node scripts/upc.mjs locate <ext-id> --corpus <corpus-dir> [--format json|web-annotation]
 node scripts/upc.mjs regen <corpus-dir>
-node scripts/upc.mjs export <corpus-dir> --format bibtex|ris|csl-json|jsonl|markdown [-o <file>]
+node scripts/upc.mjs export <corpus-dir> --format bibtex|ris|csl-json|jsonl|markdown|ro-crate|prov [-o <file>]
 node scripts/upc.mjs reanchor <ext-id>|--all --corpus <corpus-dir> [--to <rep-id>]
 node scripts/upc.mjs build-index <corpus-dir>
 node scripts/upc.mjs mint <src|ext|gen|syn> < object.json
@@ -78,16 +79,35 @@ node scripts/upc.mjs mint <src|ext|gen|syn> < object.json
   hint if the quote drifted.
 - **quote** — prints `"<exact quote>" [ext-id]`, ready to paste; `--narrow <a> <b>`
   mints a sub-quote extraction and prints its marker.
+- **locate** — resolves an extraction's locators into a structured **context
+  bundle**: the verified span with its surrounding text and derived 1-based line
+  number, plus every advisory presentation locator (page, image region,
+  timestamp) with its representation and trust label. This is the call a reading
+  surface makes to bring a quotation's source up in place — including the
+  cross-representation case, where a quote verified against an `ocr` text carries
+  a `bbox` back onto the image it was read from. `--format web-annotation` emits
+  the same thing as a W3C Web Annotation. Read-only, and advisory positions are
+  always marked as such: only the primary `char_range` is gated.
 - **regen** — rebuilds `corpus.json` (counts, indexes, `schema_hash`), the CSV
   mirrors, and `index.html` from the objects, atomically. Also the crash-recovery
   move.
-- **export** — CSL-JSON (authoritative) → BibTeX/RIS, plus `jsonl` and `markdown`.
+- **export** — CSL-JSON (authoritative) → BibTeX/RIS, plus `jsonl`, `markdown`,
+  `ro-crate`, and `prov`.
 - **reanchor** — after a representation is re-rendered, byte-exact-searches the
   successor for each quote and re-locates it (unique hit) or flags `needs_review`.
 - **build-index** — writes a self-contained, offline `index.html` browser (a
   projection): findability, the provenance graph both ways, and a **verification
   badge on every quotation** with context read from the representation at the
-  locator. Read-only.
+  locator. Renders images inline with their description and text flag, draws a
+  `bbox` region on the picture, and shows derived line numbers and `#page=` links
+  into the original PDF — every one of them labelled as navigation, never as
+  evidence. A **source pane** sits beside the evidence list: clicking any position
+  chip opens that representation in place — numbered lines with the quoted span
+  marked, the PDF at its page, the image with its region — rather than a new tab.
+  Textual representations are embedded at build time (the bytes the gate ran
+  against), so the pane works offline from `file://`. Search, sort, and the
+  selected extraction ride in the URL hash (`#ex=<ext-id>` addresses one
+  directly), so a filtered view is shareable. Read-only.
 
 `validate.mjs` / `build-index.mjs` remain as thin back-compat wrappers. The
 scripts locate the UPC `schemas/` and `vocab/` by walking up from the script dir;

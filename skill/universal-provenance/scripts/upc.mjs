@@ -1,10 +1,11 @@
 #!/usr/bin/env node
-// UPC 1.4.0 command-line tool. Zero deps, Node >= 18.
+// UPC 1.5.0 command-line tool. Zero deps, Node >= 18.
 //
 //   upc validate <dir> [--strict]
 //   upc verify-quotes <file> --corpus <dir> [--strict]
 //   upc verify <ext-id> --corpus <dir>
 //   upc quote <ext-id> --corpus <dir> [--narrow <start> <end>]
+//   upc locate <ext-id> --corpus <dir> [--format json|web-annotation] [--context <n>]
 //   upc regen <dir>
 //   upc build-index <dir>
 //   upc export <dir> --format bibtex|ris|csl-json|jsonl|markdown|ro-crate|prov [-o <file>] [--copy]
@@ -19,7 +20,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
 import * as U from "./upc_common.mjs";
-import { writeRoCrate } from "./ro-crate.mjs";
+import { isTextualMedia as U_TEXTUAL } from "./upc_common.mjs";
+import { writeRoCrate, buildAnnotationTargets } from "./ro-crate.mjs";
 import { buildProvGraph } from "./prov.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -201,7 +203,7 @@ function idFormatOk(id) {
   const re = ID_PATTERNS[pref];
   return re ? re.test(id) : false;
 }
-const TEXTUAL = (mt) => /^text\//.test(mt || "") || mt === "application/json" || mt === "application/xml";
+const TEXTUAL = U_TEXTUAL; // shared predicate (upc_common), kept as a local alias
 const BAND = { high: [0.67, 1.0], medium: [0.34, 0.66], low: [0.0, 0.33] };
 
 export function validateCorpus(root, opts = {}) {
@@ -591,6 +593,50 @@ export function validateCorpus(root, opts = {}) {
     }
   }
 
+  // secondary_locators advisories (presentation / cross-representation, §03/§05/§08).
+  // Warnings only, always: a secondary locator is advisory by construction --
+  // never gate-bearing, never part of identity -- so a bad one must never move
+  // the conformance level. A secondary MAY address a different representation
+  // of the same source (that is how a cross-representation region highlight is
+  // recorded); addressing a different SOURCE is what gets flagged.
+  {
+    for (const e of loaded.extractions) {
+      const o = e.obj;
+      for (const loc of o.secondary_locators || []) {
+        if (!loc || typeof loc !== "object") continue;
+        const ref = loc.representation_ref;
+        const rep = ref ? model.repById.get(ref) : null;
+        if (!rep) { warn("secondary_locator_dangling", o.extraction_id, `secondary locator representation_ref ${ref} does not resolve`); continue; }
+        if (rep.sourceId && o.source_id && rep.sourceId !== o.source_id) {
+          warn("secondary_locator_cross_source", o.extraction_id, `secondary locator targets ${ref} in source ${rep.sourceId}, not ${o.source_id}`);
+        }
+        if (loc.type === "bbox") {
+          // A bbox lives in its declared reference frame; fall back to the
+          // target image's own dimensions when no frame is declared.
+          const frame = loc.reference || rep.obj.dimensions;
+          const v = loc.value;
+          if (frame && Array.isArray(v) && v.length === 4 && Number.isFinite(frame.width) && Number.isFinite(frame.height)) {
+            if (v[0] + v[2] > frame.width || v[1] + v[3] > frame.height) {
+              warn("bbox_out_of_bounds", o.extraction_id, `bbox [${v.join(",")}] exceeds ${frame.width}x${frame.height} on ${ref}`);
+            }
+          }
+        }
+        if (loc.type === "line_range") {
+          const v = loc.value || {};
+          if (Number.isInteger(v.start) && v.start < 1) {
+            warn("line_range_out_of_bounds", o.extraction_id, `line_range start ${v.start} is below 1 (line numbers are 1-based, §03)`);
+          } else if (rep.contained && fs.existsSync(rep.abs)) {
+            const rec = U.getRepFile(rep.abs);
+            if (rec.utf8ok && Number.isInteger(v.end)) {
+              const n = U.textLines(rec.text).length;
+              if (v.end > n) warn("line_range_out_of_bounds", o.extraction_id, `line_range end ${v.end} exceeds ${n} lines in ${ref}`);
+            }
+          }
+        }
+      }
+    }
+  }
+
   // --- level from rules passed (capped by content) ---
   const errLevels = new Set(errors.map((e) => e.level));
   const ceiling = hasL2 ? 2 : loaded.extractions.length ? 1 : 0;
@@ -658,6 +704,84 @@ function verifyExtractionCmd(extId, corpusRoot) {
   if (!res.ok) { out.detail = res.detail; if (res.hint) out.hint = res.hint; }
   out.verified = hopA && res.ok;
   return out;
+}
+
+// ---------------------------------------------------------------------------
+// locate <ext-id>: resolve every locator on an extraction into the structured
+// context a reading surface needs to bring the source up in place.
+//
+// The primary locator carries the gate verdict. Every secondary is reported as
+// advisory, and one that addresses a different representation is additionally
+// flagged cross_representation with trust "recorded_not_gated" -- a surface MUST
+// NOT present it as a verified position (spec/05 trust boundary, spec/09).
+// Read-only: nothing here writes to the corpus.
+// ---------------------------------------------------------------------------
+function locateCmd(extId, corpusRoot, opts = {}) {
+  const loaded = U.loadCorpus(corpusRoot);
+  U.clearRepCache();
+  const model = buildModel(loaded);
+  const ext = model.extById.get(extId);
+  if (!ext) return { status: "failed", errors: [{ code: "output_cites_unknown_extraction", detail: extId }] };
+
+  const ctxOpt = Number.isInteger(opts.context) ? { context: opts.context } : {};
+  const rep = model.repById.get(ext.representation_ref);
+  const repRec = rep && rep.contained && fs.existsSync(rep.abs) ? U.getRepFile(rep.abs) : null;
+
+  // The §09 badge taxonomy, computed exactly as the browser computes it.
+  let badge = "unverifiable";
+  if (ext.direct_quote == null) badge = "paraphrase";
+  else if (repRec && TEXTUAL(rep.obj.media_type) && ext.locator && ext.locator.type === "char_range") {
+    const res = U.verifyHopB(ext, repRec);
+    const lookupRep = (id) => { const r = model.repById.get(id); return r ? r.obj : null; };
+    badge = res.ok ? (U.isDerivedText(rep.obj, lookupRep) ? "verified-to-transcript" : "verified") : "failed";
+  }
+
+  const primary = U.resolveLocator(loaded, ext.locator, ctxOpt);
+  primary.verified = badge === "verified" || badge === "verified-to-transcript";
+
+  const secondary = (ext.secondary_locators || []).map((loc) => {
+    const r = U.resolveLocator(loaded, loc, ctxOpt);
+    r.advisory = true;
+    if (loc && loc.representation_ref && loc.representation_ref !== ext.representation_ref) {
+      r.cross_representation = true;
+    }
+    return r;
+  });
+
+  const bundle = {
+    status: "ok",
+    extraction_id: extId,
+    source_id: ext.source_id,
+    type: ext.type,
+    extraction_status: ext.status || "active",
+    badge,
+    direct_quote: ext.direct_quote != null ? ext.direct_quote : null,
+    text: ext.text != null ? ext.text : null,
+    primary,
+    secondary,
+  };
+
+  if (opts.format === "web-annotation") {
+    const lookup = (repId) => {
+      const r = model.repById.get(repId);
+      if (!r || !r.obj) return null;
+      const rec = r.contained && fs.existsSync(r.abs) ? U.getRepFile(r.abs) : null;
+      return { ref: { "@id": r.obj.path }, rec };
+    };
+    const target = buildAnnotationTargets(ext, lookup);
+    if (!target) return { status: "failed", extraction_id: extId, errors: [{ code: "no_projectable_locator", detail: "no locator projects to a Web Annotation selector" }] };
+    const anno = {
+      "@context": ["http://www.w3.org/ns/anno.jsonld", { upc: "https://provenance.dev/upc/terms#" }],
+      "@id": "#" + extId + "-anno",
+      "@type": "Annotation",
+      "upc:interopOnly": true,
+      "upc:badge": badge,
+      target,
+    };
+    if (ext.direct_quote != null) anno.body = { "@type": "TextualBody", value: ext.direct_quote };
+    return anno;
+  }
+  return bundle;
 }
 
 // ---------------------------------------------------------------------------
@@ -958,6 +1082,20 @@ async function main() {
         process.exit(rep.verified === false || rep.status === "failed" ? 1 : 0);
         break;
       }
+
+      case "locate": {
+        const corpus = arg(rest, "--corpus");
+        const id = rest.find((a) => a.startsWith("ext-"));
+        if (!id || !corpus) { process.stderr.write("usage: upc locate <ext-id> --corpus <dir> [--format json|web-annotation] [--context <n>]\n"); process.exit(2); }
+        const fmt = arg(rest, "--format") || "json";
+        if (fmt !== "json" && fmt !== "web-annotation") { process.stderr.write(`unknown --format ${fmt} (expected json|web-annotation)\n`); process.exit(2); }
+        const ctxRaw = arg(rest, "--context");
+        const ctx = ctxRaw === undefined ? undefined : Number(ctxRaw);
+        if (ctxRaw !== undefined && !(Number.isInteger(ctx) && ctx >= 0)) { process.stderr.write("--context must be a non-negative integer\n"); process.exit(2); }
+        const out = locateCmd(id, corpus, { format: fmt, context: ctx });
+        print(out);
+        process.exit(out && out.status === "failed" ? 1 : 0);
+      }
       case "quote": {
         const id = rest.find((a) => a.startsWith("ext-"));
         const corpus = arg(rest, "--corpus");
@@ -1009,7 +1147,7 @@ async function main() {
         break;
       }
       default:
-        process.stderr.write("UPC 1.4.0 — commands: validate, verify-quotes, verify, quote, regen, build-index, export, mint, reanchor\n");
+        process.stderr.write("UPC 1.5.0 — commands: validate, verify-quotes, verify, quote, locate, regen, build-index, export, mint, reanchor\n");
         process.exit(cmd ? 2 : 0);
     }
   } catch (e) {
@@ -1020,7 +1158,7 @@ async function main() {
 
 // Exports for thin wrappers / tests; only run the CLI when invoked directly.
 // (validateCorpus is already exported at its declaration.)
-export { verifyQuotesFile, verifyExtractionCmd, quoteCmd, regenCmd, exportCmd, mintCmd, reanchorCmd, buildModel, sourcesCsv, extractionsCsv, computeSchemaHash };
+export { verifyQuotesFile, verifyExtractionCmd, quoteCmd, locateCmd, regenCmd, exportCmd, mintCmd, reanchorCmd, buildModel, sourcesCsv, extractionsCsv, computeSchemaHash };
 
 const _isDirect = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
 if (_isDirect) main();

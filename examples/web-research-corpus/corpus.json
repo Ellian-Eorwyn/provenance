@@ -1,5 +1,5 @@
 {
-  "upc_spec_version": "1.4.0",
+  "upc_spec_version": "1.5.0",
   "corpus_id": "cor-bd9a8eb07fb8",
   "title": "Migration downtime research",
   "readme": "Universal Provenance Corpus. Work only from ids resolved through the manifests; sources are immutable; derived objects link back via provenance.derived_from. Quotations are verified byte-for-byte (spec/03).",
@@ -20,9 +20,9 @@
     "index_html": "index.html"
   },
   "counts": {
-    "sources": 2,
-    "representations": 5,
-    "extractions": 3,
+    "sources": 3,
+    "representations": 8,
+    "extractions": 6,
     "generations": 1,
     "syntheses": 1
   },
@@ -33,6 +33,13 @@
       "title": "Blue-green deployments explained",
       "primary_url": "https://cloudlore.example/blog/blue-green",
       "sha256": "sha256:43835cc18b3442cc7ba81a00d62a2ee5a95ac5512c17e4507b15c93e874b759d"
+    },
+    {
+      "source_id": "src-6779f4028860",
+      "path": "sources/fieldnotes-2025-migration-downtime-study/",
+      "title": "Migration downtime: a field study",
+      "primary_url": "",
+      "sha256": "sha256:be0de02db3cfbe4c736e645a3fe245a65864119653b32dc0721f04bc05e86958"
     },
     {
       "source_id": "src-b95bb22d8232",
@@ -50,6 +57,6 @@
     }
   ],
   "integrity": {
-    "schema_hash": "sha256:e12f7f86e04b238eceaa90ead9d1e77d22719d17c7ef04901acdec29330921a0"
+    "schema_hash": "sha256:4c309e242d20cd5b3ade70db0b078501ac5ddb77966303db87e253f942cbbd88"
   }
 }

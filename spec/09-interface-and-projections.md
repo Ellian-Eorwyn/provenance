@@ -67,8 +67,17 @@ unverified text as verified:
 - **Per-quote badges.** Each quotation shows its gate result: **verified** (hop B
   passed against the representation), **failed** (hop B failed — offset drift or a
   rewritten representation), **verified-to-transcript** (passed against a
-  transcript/OCR text — labeled distinctly per §05's trust boundary), or
+  **derived** text — labeled distinctly per §05's trust boundary), or
   **unverifiable** (a `text`-only extraction or a coarse locator).
+  A text is *derived* when the bytes it came from were not themselves text: a
+  transcript of audio, an OCR of an image, or a text layer extracted from a PDF.
+  A conforming surface MUST decide this from the derivation, not from the role
+  name — a `role: "text"` representation whose `parent_representation_ref` is a
+  PDF is derived text, and badging it plain **verified** would claim the
+  quotation was checked against the document when it was checked against a
+  rendering of it. A text-to-text conversion (raw HTML → cleaned Markdown) is
+  *not* derived in this sense; §11 counts that as exact in the cleaned
+  representation.
 - **Paraphrases are never styled as quotes.** A `text`-only extraction (no
   `direct_quote`) MUST be labeled a paraphrase and MUST NOT be rendered in
   quotation marks, a blockquote, or `<mark>`. The word "Quote" is reserved for
@@ -80,6 +89,38 @@ unverified text as verified:
 - **Deep links.** URL-hash deep links address views *and individual extractions*
   (`#ex=<ext-id>`), and the active filters/search/sort are encoded in the hash so
   a filtered view is shareable.
+- **Presentation locators are shown as navigation, never as evidence.** A
+  conforming browser SHOULD surface the advisory positions an extraction carries
+  — the derived line number for a `char_range` quote, a `page`, a `bbox` region,
+  a `timestamp_range` — so a reader can get from a quotation to its place in the
+  source. It MUST render them visibly distinct from the gate result, and MUST NOT
+  let any of them change a badge. Resolving a presentation locator is a reading
+  aid; only hop B decides whether a quotation is verified.
+- **A region drawn on an image MUST be labeled as recorded, not gated.** When a
+  surface highlights a `bbox` on an image — including the cross-representation
+  case where a quotation verified against an `ocr` text is shown against the
+  picture that text was read from — it MUST state that the region is an
+  *inference* and not a verified position (§05). Showing the highlight without
+  that label would let a gated claim ("this text is exactly what the OCR says")
+  silently borrow authority for an ungated one ("and it is exactly there on the
+  image"). The two claims MUST stay visibly separate.
+- **A source view SHOULD show the representation in place.** Sending a reader to
+  a new tab to check a position defeats the purpose of a verification surface. A
+  conforming browser SHOULD be able to display the representation alongside the
+  evidence, positioned at the locator: the line for a `char_range` or
+  `line_range`, the page for a `page`, the region for a `bbox`. Because the
+  offline browser cannot read sibling files at view time (`fetch` is unavailable
+  from a `file:` origin), a textual representation shown this way MUST be carried
+  in the page as the bytes read at build time — the same bytes the gate ran
+  against — and MUST NOT be re-fetched at view time, which could silently show
+  text that no longer matches what was verified. A representation too large to
+  carry MUST be omitted entirely and offered as an external link; a **truncated**
+  document MUST NOT be presented as the document.
+- **Image representations carry their three pieces.** Where a browser shows an
+  image it SHOULD show the `description` (what the image is), the `has_text`
+  indication (whether it contains legible text), and a path to the verified
+  quotation of that text when one exists (§05). `ocr_text`, if displayed at all,
+  MUST be marked advisory and MUST NOT be presented as a quotation.
 
 ## Modifying a corpus
 

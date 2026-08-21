@@ -95,6 +95,57 @@ excluded from identity, never gated) — for example "this quote is also on page
 a `char_range` primary `locator` into a textual representation; otherwise it is a
 `text`-only extraction.
 
+### `line_range` is 1-based and inclusive
+
+A `line_range` counts **lines, numbered from 1, with both endpoints included**:
+`{ "start": 3, "end": 3 }` is the third line alone. A line break is `\n`; a CRLF
+file therefore numbers identically to an LF one, because the `\r` is simply a
+codepoint on the preceding line. A trailing newline does not create a final empty
+line, so `"a\nb\n"` is two lines.
+
+This differs deliberately from RFC 5147's `#line=`, which is 0-based and
+half-open. The difference is reconciled only at the projection boundary
+([crosswalks/web-annotation.md](../crosswalks/web-annotation.md)); inside UPC the
+1-based inclusive reading is normative. A `line_range` is **advisory** and is
+never verified: a line number is a reading aid, and only `char_range` gates.
+
+### Presentation and cross-representation locators
+
+`secondary_locators[]` is the home for two related, always-advisory jobs:
+
+- **Presentation.** A position expressed in whatever unit a reader can act on —
+  the line in a text file, the page in a PDF, the region on an image, the moment
+  in a recording. These make an extraction *navigable*, not *provable*.
+- **Cross-representation anchoring.** A secondary locator MAY address a
+  **different representation of the same source** than the primary locator does.
+  This is how a quotation verified against an OCR text records *where on the
+  image* that text sits (§05). The `locator_rep_mismatch` rule constrains only
+  the primary locator, precisely so this remains expressible.
+
+A secondary locator MUST NOT address a representation of a *different source*
+(advisory `secondary_locator_cross_source`, §08). Whatever it addresses, it is
+never gate-bearing and never enters the `ext-` identity recipe (§06): only the
+primary `char_range` does both.
+
+### Advisory locator metadata
+
+A locator MAY carry these optional members **alongside** `type`,
+`representation_ref`, and `value`. All four are advisory, and all four are
+deliberately siblings of `value` rather than members of it, because `value` is
+hashed into the extraction id while these are not (§06):
+
+| Member | Purpose |
+|---|---|
+| `conforms_to` | The external fragment standard the position projects to — `rfc5147`, `media-frags`, `pdf-open-params`. |
+| `unit` | What the numbers count: `codepoint` (the UPC default, and the only gate-bearing unit) or `utf16`; `pixel` or `percent` for a region. |
+| `reference` | `{ width, height }` — the resolution frame a pixel `bbox` was captured against. Required in practice for a `bbox` to mean anything, since pixel coordinates are resolution-dependent. |
+| `quote_hint` | `{ exact, prefix?, suffix? }` — a content-based re-find hint, mapping to a Web Annotation `TextQuoteSelector`. |
+
+`quote_hint` lets a consumer re-locate a span by **content** when stored offsets
+have drifted. It is a recovery aid and a projection input, **never** a
+verification path: a `quote_hint` is not checked by any gate, and matching one
+does not make a quotation verified. Only hop B does that.
+
 ### `char_range`, defined normatively
 
 `char_range` counts **Unicode codepoints** (Unicode scalar values), **0-based**,

@@ -1,6 +1,6 @@
 # UPC 00 — Overview
 
-**Universal Provenance Corpus (UPC), version 1.4.0**
+**Universal Provenance Corpus (UPC), version 1.5.0**
 
 A UPC corpus is a portable, tool-independent collection of research materials in
 which both humans and software can always answer: *What is this object? Where did
@@ -162,7 +162,7 @@ internal schema version, and follows semantic versioning:
 - **Major** (`2.0.0`) — a breaking change: a removed or renamed field, a tighter
   constraint that can reject a previously valid corpus, or a changed identifier
   or gate recipe.
-- **Minor** (`1.4.0`) — a backward-compatible addition: a new optional field, a
+- **Minor** (`1.5.0`) — a backward-compatible addition: a new optional field, a
   new enum value, a new object kind or section. A reader for `1.x` MUST accept a
   `1.y` corpus for any `y ≥ x`.
 - **Patch** (`1.1.1`) — editorial clarification only, no schema effect.
@@ -180,12 +180,12 @@ Two rules make additive minor versions actually compatible:
   tools room to extend.
 
 Each schema's `$id` embeds the minor version
-(`https://provenance.dev/upc/1.4.0/schemas/...`). The corpus records
+(`https://provenance.dev/upc/1.5.0/schemas/...`). The corpus records
 `integrity.schema_hash` (§01) so a reader can detect a schema skew even within a
 minor version. This document supersedes UPC 1.0.0 wholesale; see `CHANGELOG.md`.
 
 ## Status of this document
 
-Version 1.4.0. Reference implementation: the zero-dependency Node ≥18 skill under
+Version 1.5.0. Reference implementation: the zero-dependency Node ≥18 skill under
 `skill/universal-provenance/`. The spec is normative; where the reference code
 and this document disagree, the document governs and the code is the bug.

@@ -90,6 +90,10 @@ or informational).
 | `confidence` enum and `confidence_score` are inconsistent | `confidence_inconsistent` | Advis | e.g. `low` + `0.99` |
 | A source `identifiers[].scheme` is unrecognized | `identifier_scheme_unknown` | Advis | non-`x-` value outside `vocab/identifier_scheme`; UPC never resolves external identifiers (§02, §06) |
 | A source `relations[].target` is id-shaped but does not resolve | `relation_dangling` | Advis | only intra-corpus `src-`/`rep-`/… targets are checked; external identifiers / URLs are never checked (§02) |
+| A `secondary_locators[]` entry names a representation that does not resolve | `secondary_locator_dangling` | Advis | advisory by construction: a secondary locator is never gate-bearing (§03) |
+| A `secondary_locators[]` entry addresses a representation of a *different source* | `secondary_locator_cross_source` | Advis | crossing *representations* within one source is legitimate and expected (§03, §05); crossing sources is not |
+| A secondary `bbox` falls outside its reference frame | `bbox_out_of_bounds` | Advis | checked against the locator's `reference`, else the target image's `dimensions`; skipped when neither is recorded (§05) |
+| A secondary `line_range` starts below 1 or ends past the representation's last line | `line_range_out_of_bounds` | Advis | line numbers are 1-based and inclusive (§03) |
 
 ## Rule classes
 
@@ -133,7 +137,7 @@ error-severity finding:
 {
   "status": "failed",
   "corpus": "/path/to/corpus",
-  "upc_spec_version": "1.4.0",
+  "upc_spec_version": "1.5.0",
   "level": "L1",
   "counts": { "sources": 12, "representations": 34, "extractions": 88, "generations": 12, "syntheses": 1 },
   "errors": [

@@ -63,6 +63,151 @@ function issuedYear(bib) {
 
 const sortRefs = (arr) => arr.slice().sort((a, b) => (a["@id"] < b["@id"] ? -1 : a["@id"] > b["@id"] ? 1 : 0));
 
+// ---------------------------------------------------------------------------
+// W3C Web Annotation projection (crosswalks/web-annotation.md).
+//
+// INTEROP ONLY. Every selector emitted here is advisory: the UPC char_range
+// remains the sole gate-authoritative position (spec/11). Presentation locators
+// (line_range / page / bbox / timestamp_range) project to external fragment
+// syntaxes; none of them is ever verified, and none carries
+// `upc:gateAuthoritative`.
+//
+// Unit traps carried explicitly as `upc:unit`, never silently reconciled:
+//   - TextPositionSelector is codepoints here, UTF-16 in most implementations.
+//   - RFC 5147 #line= is 0-based and half-open; UPC line_range is 1-based
+//     inclusive, so the export shifts by one on the start only.
+//   - #xywh=pixel: is resolution-dependent, so `reference` dims travel with it.
+// ---------------------------------------------------------------------------
+
+const FRAGMENT_CONFORMS = {
+  line_range: "rfc5147",
+  page: "pdf-open-params",
+  bbox: "media-frags",
+  timestamp_range: "media-frags",
+};
+
+/** The external fragment string for a presentation locator, or null. */
+export function fragmentForLocator(locator) {
+  const loc = locator || {};
+  const v = loc.value;
+  switch (loc.type) {
+    // RFC 5147: 0-based, half-open. UPC: 1-based, inclusive.
+    case "line_range":
+      return v && Number.isInteger(v.start) && Number.isInteger(v.end) ? `#line=${v.start - 1},${v.end}` : null;
+    case "page":
+      return Number.isInteger(v) ? `#page=${v}` : null;
+    case "bbox": {
+      if (!Array.isArray(v) || v.length !== 4) return null;
+      const unit = loc.unit === "percent" ? "percent" : "pixel";
+      return `#xywh=${unit}:${v[0]},${v[1]},${v[2]},${v[3]}`;
+    }
+    case "timestamp_range":
+      return v && v.start != null && v.end != null ? `#t=${v.start},${v.end}` : null;
+    default:
+      return null;
+  }
+}
+
+/** The `upc:unit` a locator's selector is counted in. */
+function unitForLocator(loc) {
+  if (loc.unit) return loc.unit;
+  if (loc.type === "char_range") return "codepoint";
+  if (loc.type === "line_range") return "line";
+  if (loc.type === "bbox") return "pixel";
+  if (loc.type === "timestamp_range") return "second";
+  if (loc.type === "page") return "page";
+  return null;
+}
+
+/** A TextQuoteSelector from an explicit quote_hint, or from the exact quote plus
+ *  prefix/suffix read from the representation bytes. Never fabricated. */
+function quoteSelector(locator, quote, rec) {
+  const hint = locator && locator.quote_hint;
+  if (hint && typeof hint.exact === "string") {
+    const sel = { "@type": "TextQuoteSelector", exact: hint.exact };
+    if (hint.prefix) sel.prefix = hint.prefix;
+    if (hint.suffix) sel.suffix = hint.suffix;
+    return sel;
+  }
+  if (quote == null) return null;
+  const sel = { "@type": "TextQuoteSelector", exact: quote };
+  const v = locator && locator.value;
+  if (rec && rec.utf8ok && rec.cps && v && Number.isInteger(v.start) && Number.isInteger(v.end) &&
+      v.start <= rec.cps.length && v.end <= rec.cps.length) {
+    const prefix = rec.cps.slice(Math.max(0, v.start - CONTEXT_LEN), v.start).join("");
+    const suffix = rec.cps.slice(v.end, v.end + CONTEXT_LEN).join("");
+    if (prefix) sel.prefix = prefix;
+    if (suffix) sel.suffix = suffix;
+  }
+  return sel;
+}
+
+/** OA selectors for one locator. `quote` is the verbatim direct_quote when this
+ *  locator anchors one; `rec` is a U.getRepFile record for context reads. */
+export function selectorsForLocator(locator, { quote = null, rec = null } = {}) {
+  const loc = locator || {};
+  const out = [];
+  const unit = unitForLocator(loc);
+
+  if (loc.type === "char_range" && loc.value) {
+    out.push({ "@type": "TextPositionSelector", start: loc.value.start, end: loc.value.end, "upc:unit": unit });
+    const qs = quoteSelector(loc, quote, rec);
+    if (qs) out.push(qs);
+    return out;
+  }
+
+  const frag = fragmentForLocator(loc);
+  if (frag) {
+    const sel = { "@type": "FragmentSelector", value: frag };
+    const conforms = loc.conforms_to || FRAGMENT_CONFORMS[loc.type];
+    if (conforms) sel["upc:conformsTo"] = conforms;
+    if (unit) sel["upc:unit"] = unit;
+    if (loc.type === "bbox" && loc.reference) sel["upc:reference"] = loc.reference;
+    out.push(sel);
+  } else if (loc.type === "css_selector" && typeof loc.value === "string") {
+    out.push({ "@type": "CssSelector", value: loc.value });
+  } else if (loc.type === "xpath" && typeof loc.value === "string") {
+    out.push({ "@type": "XPathSelector", value: loc.value });
+  }
+
+  // A presentation locator may still carry a re-find hint for its own resource.
+  const qs = quoteSelector(loc, null, null);
+  if (qs) out.push(qs);
+  return out;
+}
+
+/** The OA `target` for an extraction: one entry per distinct representation.
+ *  A secondary locator on the SAME representation adds selectors to that entry;
+ *  one on a DIFFERENT representation becomes an additional target, because an OA
+ *  selector is only meaningful against its own target.source.
+ *  `lookup(repId)` -> { ref, rec } | null. Returns null when nothing projects. */
+export function buildAnnotationTargets(o, lookup) {
+  const order = [];
+  const byRep = new Map();
+  const addTo = (repId, selectors) => {
+    if (!selectors || !selectors.length) return;
+    const info = lookup(repId);
+    if (!info || !info.ref) return;
+    if (!byRep.has(repId)) { byRep.set(repId, { source: info.ref, selector: [] }); order.push(repId); }
+    byRep.get(repId).selector.push(...selectors);
+  };
+
+  const primary = o.locator || {};
+  const pInfo = lookup(primary.representation_ref);
+  addTo(primary.representation_ref, selectorsForLocator(primary, { quote: o.direct_quote, rec: pInfo && pInfo.rec }));
+
+  for (const sec of o.secondary_locators || []) {
+    if (!sec || !sec.representation_ref) continue;
+    const sInfo = lookup(sec.representation_ref);
+    addTo(sec.representation_ref, selectorsForLocator(sec, { rec: sInfo && sInfo.rec }));
+  }
+
+  const targets = order.map((id) => byRep.get(id));
+  if (!targets.length) return null;
+  // Keep the 1.5.0 shape (a bare object) when there is only one target.
+  return targets.length === 1 ? targets[0] : targets;
+}
+
 /**
  * Build the RO-Crate graph object from a loaded corpus (U.loadCorpus result).
  * Pure: no IO beyond U.getRepFile (reading representation bytes to derive verified
@@ -70,7 +215,7 @@ const sortRefs = (arr) => arr.slice().sort((a, b) => (a["@id"] < b["@id"] ? -1 :
  */
 export function buildRoCrateGraph(loaded) {
   const corpus = loaded.corpus || {};
-  const upcVer = /^1\./.test(corpus.upc_spec_version || "") ? corpus.upc_spec_version : "1.4.0";
+  const upcVer = /^1\./.test(corpus.upc_spec_version || "") ? corpus.upc_spec_version : "1.5.0";
   const profileId = `https://provenance.dev/upc/${upcVer}/profiles/ro-crate`;
 
   // rep-id -> relative path (File @id) and the cached record for context reads.
@@ -85,6 +230,14 @@ export function buildRoCrateGraph(loaded) {
     if (!id) return null;
     if (id.startsWith("rep-") || id.startsWith("img-")) return { "@id": repIdToPath.get(id) || "#" + id };
     return { "@id": "#" + id };
+  };
+  // rep-id -> { OA target source, byte record } for the Web Annotation projection.
+  const annoLookup = (repId) => {
+    const ref = idRef(repId);
+    if (!ref) return null;
+    const rr = repRecById.get(repId);
+    const rec = rr && rr.contained && fs.existsSync(rr.abs) ? U.getRepFile(rr.abs) : null;
+    return { ref, rec };
   };
   const derivedRefs = (df) => {
     const d = df || {};
@@ -228,33 +381,24 @@ export function buildRoCrateGraph(loaded) {
 
     if (gated) {
       e["upc:gateAuthoritative"] = true;
-      const annoId = "#" + o.extraction_id + "-anno";
-      e["upc:annotation"] = { "@id": annoId };
 
-      // Build the companion Annotation. TextQuoteSelector.exact is always the
-      // verbatim quote; the position selector + prefix/suffix are read from the
-      // representation bytes when available (never fabricated).
-      const v = o.locator.value;
-      const position = { "@type": "TextPositionSelector", start: v.start, end: v.end, "upc:unit": "codepoint" };
-      const quoteSel = { "@type": "TextQuoteSelector", exact: o.direct_quote };
-      const rr = repRecById.get(o.representation_ref);
-      if (rr && rr.contained && fs.existsSync(rr.abs)) {
-        const rec = U.getRepFile(rr.abs);
-        if (rec.utf8ok && rec.cps && v.start <= rec.cps.length && v.end <= rec.cps.length) {
-          const prefix = rec.cps.slice(Math.max(0, v.start - CONTEXT_LEN), v.start).join("");
-          const suffix = rec.cps.slice(v.end, v.end + CONTEXT_LEN).join("");
-          if (prefix) quoteSel.prefix = prefix;
-          if (suffix) quoteSel.suffix = suffix;
-        }
+      // Companion Annotation. TextQuoteSelector.exact is always the verbatim
+      // quote; the position selector + prefix/suffix are read from the
+      // representation bytes when available (never fabricated). Secondary
+      // locators project as advisory FragmentSelectors, on their own target
+      // entry when they address a different representation.
+      const target = buildAnnotationTargets(o, annoLookup);
+      if (target) {
+        const annoId = "#" + o.extraction_id + "-anno";
+        e["upc:annotation"] = { "@id": annoId };
+        abstract.push({
+          "@id": annoId,
+          "@type": "Annotation",
+          "upc:interopOnly": true,
+          target,
+          body: { "@type": "TextualBody", value: o.direct_quote },
+        });
       }
-      const target = { source: repRefEntity, selector: [position, quoteSel] };
-      abstract.push({
-        "@id": annoId,
-        "@type": "Annotation",
-        "upc:interopOnly": true,
-        target,
-        body: { "@type": "TextualBody", value: o.direct_quote },
-      });
     }
     abstract.push(e);
   }

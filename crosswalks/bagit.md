@@ -5,7 +5,7 @@ file-packaging format with checksum manifests, designed for reliable storage and
 transfer. It deliberately treats payload contents as **opaque bytes** — it knows
 nothing about UPC evidence semantics.
 
-**Status: deferred (not in UPC 1.4.0).** BagIt is useful as an *outer* packaging
+**Status: deferred (not in UPC 1.5.0).** BagIt is useful as an *outer* packaging
 for archival transfer / repository deposit, not as a replacement for UPC. A future
 optional command (`upc pack <corpus> --bagit`) could wrap a corpus (or its RO-Crate
 projection) in a bag; RO-Crate 1.3 explicitly permits profiles to recommend BagIt

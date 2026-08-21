@@ -1,8 +1,8 @@
 {
   "name": "universal-provenance",
   "type": "provenance-skill",
-  "version": "1.4.0",
-  "upc_spec_version": "1.4.0",
+  "version": "1.5.0",
+  "upc_spec_version": "1.5.0",
   "description": "Read, write, validate, verify, browse, and export a Universal Provenance Corpus (UPC) with byte-exact quotation gates.",
   "skill_file": "SKILL.md",
   "scripts_dir": "scripts",
@@ -35,6 +35,13 @@
       "command": "node scripts/upc.mjs verify",
       "args_hint": "<ext-id> --corpus <corpus-dir>",
       "description": "Report the full verification chain (hop A rep-hash + hop B quote-gate) for one extraction, with a reanchor hint if the quote drifted.",
+      "destructive": false
+    },
+    {
+      "name": "upc_locate",
+      "command": "node scripts/upc.mjs locate",
+      "args_hint": "<ext-id> --corpus <corpus-dir> [--format json|web-annotation] [--context <n>]",
+      "description": "Resolve every locator on an extraction into a structured context bundle: the verified span plus its surrounding text and derived line number, and each advisory presentation locator (page, region, timestamp) with its trust label. The API a reading surface calls to bring a quotation's source up in place. Read-only.",
       "destructive": false
     },
     {

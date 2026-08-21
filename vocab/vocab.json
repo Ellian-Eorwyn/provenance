@@ -1,9 +1,9 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://provenance.dev/upc/1.4.0/vocab/vocab.json",
+  "$id": "https://provenance.dev/upc/1.5.0/vocab/vocab.json",
   "title": "UPC Controlled Vocabularies",
   "description": "Single source of truth for every closed enum in the Universal Provenance Corpus standard. Object schemas $ref these definitions (e.g. \"vocab.json#/$defs/confidence\") so terminology is defined in exactly one place. Extensible fields anyOf a closed enum with an \"x-\" prefixed escape hatch.",
-  "upc_spec_version": "1.4.0",
+  "upc_spec_version": "1.5.0",
   "$defs": {
     "interpretation": {
       "description": "How directly the source supports an extracted statement.",
@@ -36,11 +36,11 @@
       "enum": ["url", "document", "image", "audio", "video", "dataset"]
     },
     "representation_role": {
-      "description": "What a representation IS relative to its source. A source may have many representations; role classifies each. Native PDFs are document_pdf (preserved as PDF); a print-to-PDF of a web page is rendered_pdf.",
+      "description": "What a representation IS relative to its source. A source may have many representations; role classifies each. Native PDFs are document_pdf (preserved as PDF); a print-to-PDF of a web page is rendered_pdf. ocr and transcript are DERIVED text: a quotation verified against one of them is verified to that text, never to the image or recording it came from (\u00a705).",
       "enum": [
         "original", "raw_html", "rendered_html", "rendered_pdf", "document_pdf",
         "ocr_pdf", "markdown", "clean_markdown", "text", "image", "audio",
-        "video", "transcript", "metadata", "thumbnail"
+        "video", "ocr", "transcript", "metadata", "thumbnail"
       ]
     },
     "extraction_type": {
