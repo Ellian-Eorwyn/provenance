@@ -1,0 +1,6 @@
+{
+  "fixture": "coding-dangling-target",
+  "expect": [
+    "dangling_coding_target"
+  ]
+}

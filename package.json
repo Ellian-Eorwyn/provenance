@@ -1,0 +1,55 @@
+{
+  "name": "@ellian-eorwyn/upc",
+  "version": "1.6.0",
+  "description": "Universal Provenance Corpus — a tool-independent research-corpus standard with byte-exact quotation gates. Spec, JSON Schemas, controlled vocabularies, and a zero-dependency reference implementation.",
+  "license": "SEE LICENSE IN LICENSE.md",
+  "type": "module",
+  "bin": {
+    "upc": "skill/universal-provenance/scripts/upc.mjs"
+  },
+  "exports": {
+    ".": "./skill/universal-provenance/scripts/upc.mjs",
+    "./common": "./skill/universal-provenance/scripts/upc_common.mjs",
+    "./ro-crate": "./skill/universal-provenance/scripts/ro-crate.mjs",
+    "./prov": "./skill/universal-provenance/scripts/prov.mjs",
+    "./build-index": "./skill/universal-provenance/scripts/build-index.mjs",
+    "./schemas/*": "./schemas/*",
+    "./vocab/vocab.json": "./vocab/vocab.json",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "skill/universal-provenance/scripts",
+    "skill/universal-provenance/references",
+    "skill/universal-provenance/SKILL.md",
+    "skill/universal-provenance/manifest.json",
+    "schemas",
+    "vocab",
+    "spec",
+    "profiles",
+    "crosswalks",
+    "VERSION",
+    "CHANGELOG.md",
+    "README.md",
+    "LICENSE.md"
+  ],
+  "scripts": {
+    "test": "node tests/selftest.mjs && node tests/conformance/build-fixtures.mjs && node tests/conformance/run-conformance.mjs",
+    "test:selftest": "node tests/selftest.mjs",
+    "test:conformance": "node tests/conformance/build-fixtures.mjs && node tests/conformance/run-conformance.mjs",
+    "build:examples": "node examples/build-examples.mjs"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {},
+  "keywords": [
+    "provenance",
+    "research",
+    "corpus",
+    "citation",
+    "quotation",
+    "ro-crate",
+    "prov-o",
+    "web-annotation"
+  ]
+}

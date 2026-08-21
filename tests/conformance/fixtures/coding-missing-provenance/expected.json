@@ -1,0 +1,6 @@
+{
+  "fixture": "coding-missing-provenance",
+  "expect": [
+    "missing_provenance"
+  ]
+}

@@ -1,0 +1,6 @@
+{
+  "fixture": "coding-dangling-codebook",
+  "expect": [
+    "dangling_codebook"
+  ]
+}

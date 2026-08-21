@@ -1,9 +1,9 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://provenance.dev/upc/1.5.0/vocab/vocab.json",
+  "$id": "https://provenance.dev/upc/1.6.0/vocab/vocab.json",
   "title": "UPC Controlled Vocabularies",
   "description": "Single source of truth for every closed enum in the Universal Provenance Corpus standard. Object schemas $ref these definitions (e.g. \"vocab.json#/$defs/confidence\") so terminology is defined in exactly one place. Extensible fields anyOf a closed enum with an \"x-\" prefixed escape hatch.",
-  "upc_spec_version": "1.5.0",
+  "upc_spec_version": "1.6.0",
   "$defs": {
     "interpretation": {
       "description": "How directly the source supports an extracted statement.",
@@ -24,7 +24,7 @@
       "enum": ["success", "needs_review", "failed", "skipped"]
     },
     "extraction_status": {
-      "description": "Lifecycle state of an extraction. Only `active` extractions are gated (§03) and exported; the others are retained and surfaced so nothing is lost. Defaults to active when absent.",
+      "description": "Lifecycle state of an extraction, and of a coding (\u00a712), which reuses this vocabulary rather than defining a parallel one. Only `active` extractions are gated (\u00a703) and exported; the others are retained and surfaced so nothing is lost. Defaults to active when absent.",
       "enum": ["active", "needs_review", "superseded", "retracted"]
     },
     "fetch_status": {
@@ -93,6 +93,17 @@
         "search", "fetch", "render", "extract", "embed",
         "generate", "synthesize", "validate", "import", "export",
         "modify", "reanchor", "retract", "remove", "redact"
+      ]
+    },
+    "coding_target_kind": {
+      "description": "What a coding is about (coding.target.kind, \u00a712). A coding never carries its own locator: a span-level coding targets an extraction that has already passed the hop-B gate, which is what keeps a code from becoming a back door for an unanchored span.",
+      "enum": ["extraction", "source", "representation"]
+    },
+    "codebook_unit": {
+      "description": "Advisory hint for what a codebook is normally applied to (codebook.unit, \u00a712), so a reader knows whether to expect span-level or document-level codings. Advisory only: it never constrains coding.target.kind.",
+      "anyOf": [
+        { "enum": ["passage", "source", "either"] },
+        { "type": "string", "pattern": "^x-[a-z0-9-]+$" }
       ]
     },
     "field_origin": {

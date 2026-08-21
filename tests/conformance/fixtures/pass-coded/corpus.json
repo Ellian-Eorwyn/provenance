@@ -1,0 +1,39 @@
+{
+  "upc_spec_version": "1.6.0",
+  "corpus_id": "cor-46598ce4911b",
+  "title": "Fixture",
+  "readme": "fixture",
+  "created": "2026-08-17T12:00:00Z",
+  "modified": "2026-08-17T12:00:00Z",
+  "sections": {
+    "sources": "sources/",
+    "provenance": "provenance/events.jsonl",
+    "sources_csv": "sources.csv",
+    "extractions_csv": "extractions.csv",
+    "index_html": "index.html",
+    "codebooks": "codebooks/",
+    "codings": "codings/"
+  },
+  "counts": {
+    "sources": 1,
+    "representations": 1,
+    "extractions": 1,
+    "generations": 0,
+    "syntheses": 0,
+    "codebooks": 1,
+    "codings": 1
+  },
+  "sources": [
+    {
+      "source_id": "src-c76847068a0a",
+      "path": "sources/note-migration/",
+      "title": "Note",
+      "primary_url": "",
+      "sha256": "sha256:8389412e9ea792add58bb528fff88b6d201eb0573272bfc144091c01d365dabd"
+    }
+  ],
+  "syntheses": [],
+  "integrity": {
+    "schema_hash": "sha256:0b2e1cf83449bcb6ed3a5ed246f8e47cfedb2f6a498e01dee5b94a5869d48c73"
+  }
+}

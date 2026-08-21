@@ -67,7 +67,8 @@ unverified text as verified:
 - **Per-quote badges.** Each quotation shows its gate result: **verified** (hop B
   passed against the representation), **failed** (hop B failed — offset drift or a
   rewritten representation), **verified-to-transcript** (passed against a
-  **derived** text — labeled distinctly per §05's trust boundary), or
+  **derived** text — labeled distinctly per §05's trust boundary),
+  **verified-to-rewrite** (passed against a *model-rewritten* text — below), or
   **unverifiable** (a `text`-only extraction or a coarse locator).
   A text is *derived* when the bytes it came from were not themselves text: a
   transcript of audio, an OCR of an image, or a text layer extracted from a PDF.
@@ -78,6 +79,18 @@ unverified text as verified:
   rendering of it. A text-to-text conversion (raw HTML → cleaned Markdown) is
   *not* derived in this sense; §11 counts that as exact in the cleaned
   representation.
+- **Model-rewritten text badges distinctly.** A textual representation is
+  *model-rewritten* when a **model** produced it from another **textual**
+  representation — an LLM "cleanup" of extracted Markdown, say. Rewriting is
+  inference, exactly like OCR or transcription: a model may silently normalise,
+  re-word, or *correct* its parent, so a quotation gated against a rewrite is
+  verified **to the rewrite** and not to the source. A conforming surface MUST
+  badge it **verified-to-rewrite** and MUST NOT badge it plain **verified**.
+  This must be decided from the derivation (`produced_by` plus the parent's media
+  type), never from the role name: a model-cleaned Markdown carries the same
+  `clean_markdown` role as a deterministic conversion, and only the derivation
+  separates them. A text-to-text conversion that is *not* a model rewrite —
+  readability HTML → Markdown — remains plain **verified**.
 - **Paraphrases are never styled as quotes.** A `text`-only extraction (no
   `direct_quote`) MUST be labeled a paraphrase and MUST NOT be rendered in
   quotation marks, a blockquote, or `<mark>`. The word "Quote" is reserved for
@@ -121,6 +134,34 @@ unverified text as verified:
   indication (whether it contains legible text), and a path to the verified
   quotation of that text when one exists (§05). `ocr_text`, if displayed at all,
   MUST be marked advisory and MUST NOT be presented as a quotation.
+
+### Displaying codes (§12)
+
+A code is a **judgement**, not a gate result, and a browsing surface must never let
+one borrow the other's authority.
+
+- **A code chip MUST be visually distinct from a verification badge**, and MUST NOT
+  sit where a badge would read as endorsing it. This is the same rule as the
+  bbox-is-inference label above, applied to labels instead of regions.
+- **A code is never shown without its coder.** One model's guess must not read as
+  consensus.
+- **Disagreement is displayed, not resolved.** Where two active codings assign
+  different labels to one target, a surface MUST show both and MUST NOT pick a
+  winner. An adjudication is itself a visible coding, by a coder whose handle says
+  so; there is no privileged "final" answer in the data (§12).
+- **A code on a broken span inherits the break.** If the target extraction fails
+  hop B, the passage MUST show the failure and the code MUST NOT be presented as
+  attached to verified text.
+- **A code's `definition` is at most one interaction away** (hover, click, or
+  inline). An undefined code is uninterpretable jargon.
+- **Open-codebook `value`s are prose, not quotations.** They follow the same rule
+  as a `text`-only extraction: never quotation marks, never a blockquote.
+- **Counts state their unit.** Span-level and source-level codings MUST NOT be
+  mixed into one undifferentiated number.
+- **Agreement statistics are projections.** Percent agreement and κ are computed
+  from the codings on demand and MUST NOT be stored (the projection rule above).
+- Deep links address codes and codings as well as extractions:
+  `#code=<cbk-id>:<code>`, `#coding=<cod-id>`, alongside `#ex=<ext-id>`.
 
 ## Modifying a corpus
 

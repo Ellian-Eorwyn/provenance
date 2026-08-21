@@ -1,0 +1,27 @@
+{
+  "codebook_id": "cbk-01f12e947ba3",
+  "namespace": "fixture",
+  "slug": "actor",
+  "title": "Actor",
+  "closed": true,
+  "unit": "passage",
+  "revision": 1,
+  "revision_digest": "sha256:a9b0b2ab5be2305ec5f8c125f6ef09475f36f5e59033f052e61712484bd516f0",
+  "codes": [
+    {
+      "code": "dup",
+      "label": "One"
+    },
+    {
+      "code": "dup",
+      "label": "Two"
+    }
+  ],
+  "provenance": {
+    "produced_by": {
+      "tool": "t",
+      "method": "manual"
+    },
+    "created_at": "2026-08-17T12:00:00Z"
+  }
+}

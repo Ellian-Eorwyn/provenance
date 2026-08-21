@@ -1,0 +1,42 @@
+{
+  "upc_spec_version": "1.6.0",
+  "corpus_id": "cor-f3e763686d2f",
+  "title": "Fixture",
+  "readme": "fixture",
+  "created": "2026-08-17T12:00:00Z",
+  "modified": "2026-08-17T12:00:00Z",
+  "sections": {
+    "sources": "sources/",
+    "provenance": "provenance/events.jsonl",
+    "sources_csv": "sources.csv",
+    "extractions_csv": "extractions.csv",
+    "index_html": "index.html"
+  },
+  "counts": {
+    "sources": 2,
+    "representations": 2,
+    "extractions": 1,
+    "generations": 0,
+    "syntheses": 0
+  },
+  "syntheses": [],
+  "integrity": {
+    "schema_hash": "sha256:0b2e1cf83449bcb6ed3a5ed246f8e47cfedb2f6a498e01dee5b94a5869d48c73"
+  },
+  "sources": [
+    {
+      "source_id": "src-bacbb80a8fa2",
+      "path": "sources/note-conflict/",
+      "title": "Conflicting copy",
+      "primary_url": "https://example.org/conflict",
+      "sha256": "sha256:f1c4aec913ad23e765ee17c7de1ea8bfb30de232c5efa131625bbfcbc904ad9c"
+    },
+    {
+      "source_id": "src-c76847068a0a",
+      "path": "sources/note-migration/",
+      "title": "Note",
+      "primary_url": "",
+      "sha256": "sha256:8389412e9ea792add58bb528fff88b6d201eb0573272bfc144091c01d365dabd"
+    }
+  ]
+}

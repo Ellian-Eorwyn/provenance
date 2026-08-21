@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://provenance.dev/upc/1.6.0/schemas/codebook.schema.json",
+  "title": "UPC Codebook",
+  "description": "A named coding scheme: the controlled vocabulary of codes a coder may apply (§12). A codebook is the SCHEME; a coding is one JUDGEMENT that applies one of its codes to one target. Identity is over (namespace, slug) and NOT over codes[], because a controlled vocabulary's job is to stay stable while its contents evolve — hashing the code list would dangle every codebook_ref on every edit. Evolution is carried by the advisory revision / revision_digest pair instead.",
+  "type": "object",
+  "required": ["codebook_id", "namespace", "slug", "title", "codes"],
+  "properties": {
+    "codebook_id": { "type": "string", "pattern": "^cbk-[0-9a-f]{12}$", "description": "cbk-<12hex> (§06), content-addressed over namespace + slug." },
+    "aliases": { "type": "object", "additionalProperties": { "type": "string" }, "description": "Tool-local ids, e.g. {\"researchassistant\": \"custom_92142bf5\"}." },
+    "namespace": { "type": "string", "minLength": 1, "pattern": "^[a-z0-9][a-z0-9-]*$", "description": "The owning tool or project, e.g. \"researchassistant\". Namespacing is what lets two tools define an \"org-type\" codebook without collision." },
+    "slug": { "type": "string", "minLength": 1, "pattern": "^[a-z0-9][a-z0-9-]*$", "description": "Stable machine name within the namespace, e.g. \"org-type\". Renaming the human title never changes identity; changing the slug mints a new codebook." },
+    "title": { "type": "string", "minLength": 1, "description": "Human-readable name, shown in a browsing surface." },
+    "question": { "type": "string", "description": "The question this codebook answers, e.g. \"What kind of organization published this source?\"" },
+    "description": { "type": "string" },
+    "closed": { "type": "boolean", "default": true, "description": "true: a coding MUST carry a `code` drawn from codes[]. false: a coding MUST carry a free-text `value` instead (an open/emergent scheme). Enforced by coding_code_unknown / coding_open_closed_mismatch (§08)." },
+    "multi_label": { "type": "boolean", "default": false, "description": "Whether one coder may apply more than one code from this codebook to the same target. Advisory: it informs a UI and the coding_disagreement advisory, and is never a hard error." },
+    "unit": { "$ref": "../vocab/vocab.json#/$defs/codebook_unit" },
+    "revision": { "type": "integer", "minimum": 1, "description": "Monotonic revision of codes[]. Advisory; deliberately NOT in the cbk- identity recipe and NOT in the cod- recipe, so editing a codebook never re-mints its codings." },
+    "revision_digest": { "type": "string", "description": "\"sha256:\" + sha256(JCS(codes)). A coding records the revision it was made under; a mismatch raises the advisory coding_codebook_drift (§08), exactly as input_digest raises stale_input." },
+    "codes": {
+      "type": "array",
+      "minItems": 1,
+      "description": "The codes themselves. For an open codebook (closed:false) this MAY be a seed list that codings are not restricted to.",
+      "items": {
+        "type": "object",
+        "required": ["code", "label"],
+        "properties": {
+          "code": { "type": "string", "minLength": 1, "description": "Stable machine token, used in the cod- identity recipe. Renaming `label` is free; changing `code` mints new codings." },
+          "label": { "type": "string", "minLength": 1, "description": "Human-readable name." },
+          "definition": { "type": "string", "description": "What this code means and when to apply it. §09 requires a browsing surface to make this reachable in one interaction — an undefined code is uninterpretable jargon." },
+          "parent": { "type": ["string", "null"], "description": "Another `code` in this same codebook, forming a hierarchy. Rollups are computed by a reader (the projection rule, §09) and MUST NOT be stored." },
+          "examples": { "type": "array", "items": { "type": "string" } },
+          "deprecated": { "type": "boolean", "default": false, "description": "Retained so existing codings stay resolvable, but not offered for new coding." },
+          "color": { "type": "string", "description": "Advisory display hint." },
+          "ext": { "type": "object", "additionalProperties": true }
+        },
+        "additionalProperties": true
+      }
+    },
+    "provenance": { "$ref": "provenance-stamp.schema.json" },
+    "ext": { "type": "object", "description": "Tool-private extension data, namespaced by tool.", "additionalProperties": true }
+  },
+  "additionalProperties": true
+}

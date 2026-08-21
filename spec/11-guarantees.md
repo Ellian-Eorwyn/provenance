@@ -58,9 +58,33 @@ it, and — where applicable — the §08 rule code and gate hop that enforce it
 | An exported Web Annotation selector resolves identically in another tool | No — interop projection only | flagged `upc:interopOnly`, `upc:unit` |
 | A transcript correctly represents the speech/audio | No — inference (§05) | recorded via `produced_by.method` |
 | An extracted PDF text layer correctly represents the PDF's own rendering | No — inference (§05); badged `verified-to-transcript`, not `verified` | derivation recorded via `parent_representation_ref` |
+| A model-rewritten text preserves its parent's wording | **No — inference**; badged `verified-to-rewrite`, not `verified` (§09) | derivation recorded via `produced_by` + `parent_representation_ref` |
+| A code applied to a passage is the *right* code | No — a coding is a recorded judgement, never a gate result (§12) | coder, codebook revision and provenance recorded; disagreement surfaced as `coding_disagreement` |
+| Two coders who agree are therefore correct | No — agreement is a statistic, not a proof (§12) | both judgements retained; κ is a projection, never stored |
 | A model selected the right evidence for a query | No | — |
+| A coded passage is real text from its source | **Yes** — a span-level coding must target an extraction, which has already passed hop B (§12) | `dangling_coding_target` (error); a later break is surfaced as `coding_targets_failed_gate` |
 | A synthesis's inference is logically sound | No | — |
 | The web server actually authored the captured bytes | No — fixity ≠ authenticity | — |
+
+### Why a model rewrite needed its own badge
+
+Through 1.5.0 the badge was decided from the derivation's *media types* alone, so a
+text-to-text step counted as fidelity-preserving and a model-rewritten Markdown
+badged plain **verified**. Measured against a real 106-source corpus, that was not
+safe: 68% of substantive lines in the model-"cleaned" copies were not verbatim in
+the deterministic extraction they came from. One source read
+
+> Virtual Power Plants are cloud-based system that integrates multiple power sources
+
+in the extracted text, and
+
+> Virtual Power Plants are cloud-based systems that integrate multiple power sources
+
+in the model's copy — the grammar silently corrected. A quotation anchored in the
+rewrite passes hop B honestly (the bytes are exactly what the rewrite says) and yet
+attributes to the source a sentence the source never wrote. The gate was doing its
+job; the *badge* was overclaiming. `verified-to-rewrite` restores the distinction
+between "these are the bytes we checked" and "this is what the source said."
 
 ## Verification scope: not every "verified" is the same claim
 

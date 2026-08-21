@@ -1,0 +1,6 @@
+{
+  "fixture": "codebook-code-duplicate",
+  "expect": [
+    "codebook_code_duplicate"
+  ]
+}

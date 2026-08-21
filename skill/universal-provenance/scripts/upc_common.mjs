@@ -204,6 +204,41 @@ export function mintGenId(gen) {
   return shortId("gen-", "gen\n" + gen.type + "\n" + jcs(ids) + "\n" + digest);
 }
 
+/**
+ * cbk-<12hex> over (namespace, slug) ONLY — deliberately not over codes[] (spec/06, spec/12).
+ * A controlled vocabulary must keep a stable identity while its contents evolve; hashing the
+ * code list would dangle every codebook_ref on every edit. Same reasoning as src-, which is
+ * addressed over the canonical URL rather than the page bytes.
+ */
+export function mintCbkId(cbk) {
+  return shortId("cbk-", "cbk\n" + (cbk.namespace || "") + "\n" + (cbk.slug || ""));
+}
+
+/**
+ * cod-<12hex> over (codebook_ref, target.kind, target.id, coder, {code}|{value}) (spec/06, spec/12).
+ * What is excluded is load-bearing: created_at, confidence, rationale, query and status are all
+ * out, so re-running an unchanged coding pass is idempotent; `coder` is in, so two raters who
+ * agree still produce two records and inter-rater agreement stays computable.
+ */
+export function mintCodId(cod) {
+  const t = cod.target || {};
+  const label = cod.code !== undefined && cod.code !== null && cod.code !== ""
+    ? { code: cod.code }
+    : { value: cod.value };
+  const key =
+    "cod\n" + (cod.codebook_ref || "") +
+    "\n" + (t.kind || "") +
+    "\n" + (t.id || "") +
+    "\n" + (cod.coder || "") +
+    "\n" + jcs(label);
+  return shortId("cod-", key);
+}
+
+/** "sha256:" + sha256(JCS(codes)) — the advisory codebook revision digest (spec/12). */
+export function codebookRevisionDigest(codes) {
+  return "sha256:" + sha256Hex(Buffer.from(jcs(codes || []), "utf8"));
+}
+
 export function mintSynId(syn) {
   const ids = collectInputIds(syn.provenance && syn.provenance.derived_from);
   return shortId("syn-", "syn\n" + syn.type + "\n" + (syn.question || "") + "\n" + jcs(ids));
@@ -429,6 +464,30 @@ export function isTranscriptRole(role) {
  *  boundary: §11 counts that as "exact in the cleaned representation".
  *
  *  `lookupRep(id)` resolves a representation_ref to its record, or null. */
+/**
+ * A textual representation is MODEL-REWRITTEN when a model produced it from another
+ * textual representation (spec/05, spec/09). Rewriting is inference, exactly like OCR
+ * or transcription: the model may silently normalise, correct or re-word its parent,
+ * so a quotation gated against it is verified TO THE REWRITE and not to the source.
+ * Deciding this from `produced_by` rather than from the role name is the whole point —
+ * a model-cleaned Markdown carries the same `clean_markdown` role as a deterministic
+ * conversion, and only the derivation tells them apart.
+ */
+export function isModelRewrittenText(repObj, lookupRep) {
+  if (!repObj) return false;
+  const method =
+    (repObj.produced_by && (repObj.produced_by.method || repObj.produced_by)) ||
+    (repObj.provenance && repObj.provenance.produced_by && repObj.provenance.produced_by.method) ||
+    null;
+  if (method !== "model") return false;
+  const parentRef = repObj.parent_representation_ref;
+  if (!parentRef || typeof lookupRep !== "function") return false;
+  const parent = lookupRep(parentRef);
+  // Only a text->text rewrite lands here; a model reading a non-textual parent is
+  // already covered by isDerivedText (transcription / vision), which badges first.
+  return !!(parent && isTextualMedia(parent.media_type));
+}
+
 export function isDerivedText(repObj, lookupRep) {
   if (!repObj) return false;
   if (isTranscriptRole(repObj.role)) return true;
@@ -816,6 +875,48 @@ export function loadCorpus(root) {
     if (fs.existsSync(base)) for (const name of fs.readdirSync(base)) pushSyn(path.join(sections.syntheses, name).replace(/\\/g, "/"));
   }
 
+  // --- Codebooks (1.6.0, spec/12): flat directory of cbk-*.json ---
+  const codebooks = [];
+  if (sections.codebooks) {
+    const { abs: base, contained } = resolveInside(absRoot, sections.codebooks);
+    if (contained && fs.existsSync(base) && fs.statSync(base).isDirectory()) {
+      for (const name of fs.readdirSync(base).sort()) {
+        if (!name.endsWith(".json")) continue;
+        const rel = path.join(sections.codebooks, name).replace(/\\/g, "/");
+        try {
+          const obj = readJSON(path.join(base, name));
+          if (obj && obj.codebook_id) codebooks.push({ obj, from: rel });
+        } catch (e) { diagnostics.push({ code: "schema_invalid", object: name, detail: "codebook parse: " + e.message }); }
+      }
+    }
+  }
+
+  // --- Coding sets (1.6.0, spec/12): codings/<set-id>/{manifest.json,items.jsonl} ---
+  const codings = [];
+  const codingSets = [];
+  if (sections.codings) {
+    const { abs: base, contained } = resolveInside(absRoot, sections.codings);
+    if (contained && fs.existsSync(base) && fs.statSync(base).isDirectory()) {
+      for (const name of fs.readdirSync(base).sort()) {
+        const setDir = path.join(base, name);
+        if (!fs.statSync(setDir).isDirectory()) continue;
+        const manifestAbs = path.join(setDir, "manifest.json");
+        let itemsRel = path.join(sections.codings, name, "items.jsonl").replace(/\\/g, "/");
+        if (fs.existsSync(manifestAbs)) {
+          try {
+            const man = readJSON(manifestAbs);
+            codingSets.push({ obj: man, dirRel: path.join(sections.codings, name).replace(/\\/g, "/") });
+            if (man.items_path) itemsRel = man.items_path;
+          } catch (e) { diagnostics.push({ code: "schema_invalid", object: name, detail: "coding set manifest: " + e.message }); }
+        } else {
+          diagnostics.push({ code: "missing_file", object: name, detail: "coding set manifest.json" });
+        }
+        const { abs: itemsAbs, contained: ic } = resolveInside(absRoot, itemsRel);
+        if (ic && fs.existsSync(itemsAbs)) codings.push(...collectJSONL(itemsRel, itemsAbs, "set:" + name));
+      }
+    }
+  }
+
   // --- Activity journal ---
   let events = [];
   const provRel = sections.provenance || "provenance/events.jsonl";
@@ -829,7 +930,7 @@ export function loadCorpus(root) {
     }
   }
 
-  return { root: absRoot, corpus, sections, sources, representations, extractions, extractionSets, generations, syntheses, events, diagnostics };
+  return { root: absRoot, corpus, sections, sources, representations, extractions, extractionSets, generations, syntheses, codebooks, codings, codingSets, events, diagnostics };
 }
 
 // ---------------------------------------------------------------------------

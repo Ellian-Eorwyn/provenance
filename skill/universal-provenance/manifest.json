@@ -1,8 +1,8 @@
 {
   "name": "universal-provenance",
   "type": "provenance-skill",
-  "version": "1.5.0",
-  "upc_spec_version": "1.5.0",
+  "version": "1.6.0",
+  "upc_spec_version": "1.6.0",
   "description": "Read, write, validate, verify, browse, and export a Universal Provenance Corpus (UPC) with byte-exact quotation gates.",
   "skill_file": "SKILL.md",
   "scripts_dir": "scripts",
@@ -75,8 +75,43 @@
     {
       "name": "upc_mint",
       "command": "node scripts/upc.mjs mint",
-      "args_hint": "<src|ext|gen|syn>  (JSON object on stdin)",
+      "args_hint": "[--batch] <src|rep|ext|gen|syn|cod|cbk>  (JSON object, or JSONL with --batch, on stdin)",
       "description": "Compute a content-addressed id (spec/06 recipe) for an object read from stdin. Deterministic across implementations.",
+      "destructive": false
+    },
+    {
+      "name": "upc_anchor",
+      "command": "node scripts/upc.mjs anchor",
+      "args_hint": "--corpus <corpus-dir> --rep <rep-id> [--set <id>] [--type <t>] [--query <q>] [--dry-run]  (JSONL candidates on stdin)",
+      "description": "Byte-exact-anchor candidate quotations proposed by a model. Each stdin line is {quote, type?, query?, note?}. A quote occurring EXACTLY ONCE in the representation mints an active char_range extraction that passes the hop-B gate by construction; zero or multiple occurrences return not_found/ambiguous and are never written as verified. The model chooses what to extract; this decides what is real. Writes only unique hits and journals one extract event.",
+      "destructive": true
+    },
+    {
+      "name": "upc_code",
+      "command": "node scripts/upc.mjs code",
+      "args_hint": "--corpus <corpus-dir> --set <cds-id> [--coder-kind model|human] [--tool <t>] [--model <m>] [--dry-run]  (JSONL codings on stdin)",
+      "description": "Batch-apply codings (spec/12). Each stdin line is {codebook_ref, code|value, target:{kind,id}, coder, confidence?, rationale?}. Validates each against its codebook (closed vs open, code membership, target resolution), mints the cod- id, supersedes any prior judgement by the same coder on the same target, and updates the set manifest. Re-running an unchanged pass writes nothing.",
+      "destructive": true
+    },
+    {
+      "name": "upc_codebook",
+      "command": "node scripts/upc.mjs codebook",
+      "args_hint": "<corpus-dir> [<cbk-id>]",
+      "description": "List the coding schemes in a corpus, or inspect one: its codes, definitions, hierarchy, and how many times each code has actually been applied (computed, never stored). Read-only.",
+      "destructive": false
+    },
+    {
+      "name": "upc_batch",
+      "command": "node scripts/upc.mjs batch",
+      "args_hint": "--corpus <corpus-dir>  (NDJSON commands on stdin)",
+      "description": "Run many read-only queries over ONE corpus load. Each stdin line is {cmd: locate|verify|quote|codebook, ...}; results stream back as NDJSON. Use this instead of invoking upc once per passage: locate is O(whole corpus) per call, so per-passage shelling out is quadratic.",
+      "destructive": false
+    },
+    {
+      "name": "upc_version",
+      "command": "node scripts/upc.mjs version",
+      "args_hint": "[--json]",
+      "description": "Report the spec version this build implements, the hash of its schema set, and the available commands. Pair with `upc check-compat --requires \"^1.6\"` (exit 1 on mismatch) so an embedding tool fails loudly on a version skew instead of drifting silently.",
       "destructive": false
     }
   ],

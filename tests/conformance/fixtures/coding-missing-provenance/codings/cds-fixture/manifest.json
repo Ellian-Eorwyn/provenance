@@ -1,0 +1,22 @@
+{
+  "set_id": "cds-fixture",
+  "title": "Fixture coding pass",
+  "items_path": "codings/cds-fixture/items.jsonl",
+  "codebook_refs": [
+    "cbk-01f12e947ba3"
+  ],
+  "coders": [
+    {
+      "coder": "coder-a",
+      "kind": "model",
+      "model": "m"
+    }
+  ],
+  "provenance": {
+    "produced_by": {
+      "tool": "t",
+      "method": "model"
+    },
+    "created_at": "2026-08-17T12:00:00Z"
+  }
+}

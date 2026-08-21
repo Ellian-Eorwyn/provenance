@@ -6,7 +6,8 @@
 //    build time (never reconstructed from the extraction's own stored strings),
 //    so a drifted quote is visible, not self-confirmed;
 //  * every quotation carries a verification badge computed by running the hop-B
-//    gate at build time (verified / failed / verified-to-transcript / unverifiable);
+//    gate at build time (verified / failed / verified-to-transcript /
+//    verified-to-rewrite / unverifiable);
 //  * a paraphrase (text-only extraction) is labeled and never styled as a quote;
 //  * a banner surfaces any gate failure so a broken corpus never looks clean.
 //
@@ -18,7 +19,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadCorpus, getRepFile, verifyHopB, bareHash, atomicWriteFile,
-  resolveLocator, lineRangeForCharRange, isDerivedText, textLines, isTextualMedia as U_TEXTUAL } from "./upc_common.mjs";
+  resolveLocator, lineRangeForCharRange, isDerivedText, isModelRewrittenText, textLines, isTextualMedia as U_TEXTUAL } from "./upc_common.mjs";
 
 const TEXTUAL = U_TEXTUAL; // shared predicate (upc_common), kept as a local alias
 const CTX = 90; // codepoints of context on each side
@@ -43,6 +44,45 @@ export function buildModel(loaded) {
     repStatus.set(r.obj.representation_id, ok);
   }
 
+  // Codes (spec/12). A code is a JUDGEMENT, so it travels with its coder and its
+  // definition: §09 forbids showing one without the other, and forbids a surface
+  // resolving a disagreement on the reader's behalf.
+  const cbkById = new Map((loaded.codebooks || []).map((c) => [c.obj.codebook_id, c.obj]));
+  const codebooks = (loaded.codebooks || []).map((c) => ({
+    id: c.obj.codebook_id, namespace: c.obj.namespace, slug: c.obj.slug,
+    title: c.obj.title || c.obj.slug, question: c.obj.question || "",
+    closed: c.obj.closed !== false, unit: c.obj.unit || "", multi_label: c.obj.multi_label === true,
+    codes: (c.obj.codes || []).map((cd) => ({
+      code: cd.code, label: cd.label || cd.code, definition: cd.definition || "",
+      parent: cd.parent || null, deprecated: !!cd.deprecated,
+    })),
+  }));
+  const coderKind = new Map();
+  for (const cs of loaded.codingSets || []) {
+    for (const c of cs.obj.coders || []) if (c && c.coder) coderKind.set(c.coder, c.kind || "");
+  }
+  const codingsByTarget = new Map();
+  for (const c of loaded.codings || []) {
+    const o = c.obj, t = o.target || {};
+    if (!t.id) continue;
+    const cbk = cbkById.get(o.codebook_ref);
+    const cd = cbk && (cbk.codes || []).find((x) => x && x.code === o.code);
+    const rec = {
+      id: o.coding_id, codebook_ref: o.codebook_ref,
+      codebook_title: cbk ? (cbk.title || cbk.slug) : o.codebook_ref,
+      code: o.code || "", value: o.value || "",
+      label: cd ? (cd.label || cd.code) : (o.code || ""),
+      definition: cd ? (cd.definition || "") : "",
+      open: !!(cbk && cbk.closed === false),
+      coder: o.coder || "", coder_kind: coderKind.get(o.coder) || "",
+      status: o.status || "active", confidence: o.confidence || "", rationale: o.rationale || "",
+      target_kind: t.kind || "",
+    };
+    if (!codingsByTarget.has(t.id)) codingsByTarget.set(t.id, []);
+    codingsByTarget.get(t.id).push(rec);
+  }
+  const codingsFor = (id) => codingsByTarget.get(id) || [];
+
   const extractions = loaded.extractions.map((e) => {
     const o = e.obj;
     const rep = repById.get(o.representation_ref);
@@ -55,7 +95,9 @@ export function buildModel(loaded) {
       const res = verifyHopB(o, repRec);
       if (res.ok) {
         verified = true;
-        badge = isDerivedText(rep.obj, lookupRep) ? "verified-to-transcript" : "verified";
+        badge = isDerivedText(rep.obj, lookupRep)
+          ? "verified-to-transcript"
+          : isModelRewrittenText(rep.obj, lookupRep) ? "verified-to-rewrite" : "verified";
         const v = o.locator.value;
         const len = repRec.cps.length;
         contextBefore = repRec.cps.slice(Math.max(0, v.start - CTX), v.start).join("");
@@ -102,6 +144,7 @@ export function buildModel(loaded) {
       badge, verified, contextBefore, contextAfter, actualSpan,
       locator: o.locator, lineRange, anchors,
       query: o.query || "", interpretation: o.interpretation || "", confidence: o.confidence || "", confidence_score: o.confidence_score,
+      codings: codingsFor(o.extraction_id),
     };
   });
 
@@ -122,6 +165,7 @@ export function buildModel(loaded) {
         isImage: /^image\//.test(r.media_type || ""),
       })),
       aliases: o.aliases || {}, provenance: o.provenance || {},
+      codings: codingsFor(o.source_id),
     };
   });
 
@@ -179,8 +223,8 @@ export function buildModel(loaded) {
 
   return {
     title: loaded.corpus.title || "UPC corpus", spec: loaded.corpus.upc_spec_version || "",
-    counts: { sources: sources.length, representations: loaded.representations.length, extractions: extractions.length, generations: generations.length, syntheses: syntheses.length },
-    failCount, hashFailCount, sources, extractions, generations, syntheses, reps,
+    counts: { sources: sources.length, representations: loaded.representations.length, extractions: extractions.length, generations: generations.length, syntheses: syntheses.length, codebooks: codebooks.length, codings: (loaded.codings || []).length },
+    failCount, hashFailCount, sources, extractions, generations, syntheses, reps, codebooks,
     embed: { embedded, skipped, bytes: spent },
   };
 }
@@ -255,7 +299,12 @@ input.search{width:100%;padding:9px 12px;border:1px solid var(--line);border-rad
 h1,h2,h3{font-weight:600}h2{margin-top:0}h3{color:var(--copper);font-size:14px;text-transform:uppercase;letter-spacing:.05em;margin:22px 0 8px}
 .chip{display:inline-block;background:var(--chip);border-radius:20px;padding:2px 10px;font-size:12px;font-family:var(--mono);margin:2px 4px 2px 0}
 .badge{display:inline-block;border-radius:6px;padding:1px 8px;font-size:11px;font-family:var(--mono);font-weight:600;white-space:nowrap}
-.badge.verified{background:#e0f0e6;color:var(--ok)}.badge.failed{background:#fbe1de;color:var(--bad)}.badge.paraphrase{background:var(--chip);color:var(--muted)}.badge.unverifiable{background:#f3ecdd;color:var(--warn)}.badge.transcript{background:#eef0e0;color:var(--warn)}
+.badge.verified{background:#e0f0e6;color:var(--ok)}.badge.failed{background:#fbe1de;color:var(--bad)}.badge.paraphrase{background:var(--chip);color:var(--muted)}.badge.unverifiable{background:#f3ecdd;color:var(--warn)}.badge.transcript{background:#eef0e0;color:var(--warn)}.badge.rewrite{background:#f0eae0;color:var(--warn)}
+.code{display:inline-block;border:1px dashed var(--line);border-radius:10px;padding:1px 8px;margin:0 2px;font-size:12px;background:transparent}
+.code.open{font-style:italic}
+.coder{color:var(--muted);margin-right:10px;font-size:11px}
+.codes{margin-top:8px}
+.disagree{color:var(--warn);margin-top:4px}
 :root[data-theme=dark] .badge.verified{background:#1e3a2a}:root[data-theme=dark] .badge.failed{background:#3a201c}
 blockquote{margin:0;padding:12px 16px;border-left:3px solid var(--copper);background:var(--chip);border-radius:0 8px 8px 0;font-size:16px}
 .reader{font-size:15px;line-height:1.7}.reader .ctx{color:var(--muted)}.reader mark{background:#f6e0b6;color:inherit;padding:0 2px;border-radius:3px}
@@ -303,7 +352,7 @@ const DATA = JSON.parse(document.getElementById("upc-data").textContent);
 const $ = (s,r=document)=>r.querySelector(s);
 const el = (t,a={},...k)=>{const n=document.createElement(t);for(const[x,v]of Object.entries(a)){if(x==="class")n.className=v;else if(x==="html")n.innerHTML=v;else if(x.startsWith("on"))n.addEventListener(x.slice(2),v);else n.setAttribute(x,v);}for(const c of k.flat())n.append(c?.nodeType?c:document.createTextNode(c??""));return n;};
 const esc=s=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
-const BADGE=b=>'<span class="badge '+(b==="verified-to-transcript"?"transcript":b)+'">'+ (b==="verified"?"✓ verified":b==="failed"?"✗ gate failed":b==="verified-to-transcript"?"≈ to derived text":b==="paraphrase"?"paraphrase":"unverifiable")+'</span>';
+const BADGE=b=>'<span class="badge '+(b==="verified-to-transcript"?"transcript":b==="verified-to-rewrite"?"rewrite":b)+'">'+ (b==="verified"?"✓ verified":b==="failed"?"✗ gate failed":b==="verified-to-transcript"?"≈ to derived text":b==="verified-to-rewrite"?"≈ to AI-rewritten text":b==="paraphrase"?"paraphrase":"unverifiable")+'</span>';
 const FRAG=a=>a&&a.fragment?a.fragment:"";
 // A region overlay positioned in PERCENT of its reference frame, so it stays
 // correct however the image is scaled (a pixel bbox is resolution-dependent).
@@ -325,7 +374,7 @@ function figureFor(a){
 }
 // The §05 trust boundary, stated wherever a region is drawn on an image.
 function trustNote(a,badge){
-  const verifiedTo=badge==="verified-to-transcript"?"verified to the derived text (OCR / transcript / extracted layer)":badge==="verified"?"verified to the source text":"not gated";
+  const verifiedTo=badge==="verified-to-transcript"?"verified to the derived text (OCR / transcript / extracted layer)":badge==="verified-to-rewrite"?"verified to a model-rewritten copy — the wording may differ from the source":badge==="verified"?"verified to the source text":"not gated";
   return el("div",{class:"trust",html:"<b>Recorded, not gated.</b> The quotation is "+esc(verifiedTo)+
     "; the region drawn on the image is an <i>inference</i> from that text back to the picture, not something UPC verifies (\u00a705)."});
 }
@@ -553,6 +602,34 @@ function sources(sel,st){
   right.append(d);
 }
 
+// Codes are judgements, not gate results (§09): they get their own visual channel,
+// they always name their coder, their definition is one hover away, and when two
+// coders disagree BOTH are shown — the surface never picks a winner.
+function codeChips(codings){
+  const act=(codings||[]).filter(c=>c.status==="active");
+  if(!act.length)return null;
+  const wrap=el("div",{class:"codes"});
+  const byBook=new Map();
+  for(const c of act){if(!byBook.has(c.codebook_ref))byBook.set(c.codebook_ref,[]);byBook.get(c.codebook_ref).push(c);}
+  for(const [,group] of byBook){
+    const row=el("div",{style:"margin-top:6px"});
+    row.append(el("span",{class:"small muted"},group[0].codebook_title+": "));
+    const labels=new Set(group.map(c=>c.open?"value:"+c.value:"code:"+c.code));
+    const coders=new Set(group.map(c=>c.coder));
+    for(const c of group){
+      const chip=el("span",{class:"code"+(c.open?" open":""),title:c.definition||(c.open?"Free-text label (open codebook) \u2014 not a quotation":"")},
+        c.open?c.value:c.label);
+      row.append(chip);
+      row.append(el("span",{class:"coder small",title:c.coder_kind?("coder kind: "+c.coder_kind):""},c.coder));
+      if(c.rationale)row.append(el("span",{class:"small muted"}," "+c.rationale));
+    }
+    if(labels.size>1&&coders.size>1)
+      row.append(el("div",{class:"small disagree"},"\u26a0 Coders disagree \u2014 both judgements are shown; neither has been adjudicated."));
+    wrap.append(row);
+  }
+  return wrap;
+}
+
 function evidenceCard(e){
   const c=el("div",{style:"margin:14px 0;padding-bottom:14px;border-bottom:1px solid var(--line)"});
   c.append(el("div",{html:BADGE(e.badge)+' <span class="chip">'+esc(e.type)+'</span>'+(e.status!=="active"?' <span class="chip">'+esc(e.status)+'</span>':"")+(e.confidence?' <span class="muted small">'+esc(e.confidence)+'</span>':"")}));
@@ -581,6 +658,8 @@ function evidenceCard(e){
     if(meta.length)c.append(el("div",{class:"figcap"},meta.join(" \u00b7 ")));
     c.append(trustNote(a,e.badge));
   }
+  const codes=codeChips(e.codings);
+  if(codes)c.append(codes);
   const chips=anchorChips(e);
   if(chips)c.append(chips);
   if(e.query)c.append(el("div",{class:"small muted",style:"margin-top:6px"},"query: "+e.query));

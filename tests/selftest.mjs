@@ -13,12 +13,13 @@ import {
   writeCsv, parseCsv,
   loadCorpus, clearRepCache, sha256Hex, bareHash,
   charToLine, lineRangeForCharRange, textLines, resolveLocator, isTranscriptRole,
-  isDerivedText, isTextualMedia,
+  isDerivedText, isTextualMedia, isModelRewrittenText,
+  mintCbkId, mintCodId, codebookRevisionDigest, mintRepId, canonicalUrl as _cu,
 } from "../skill/universal-provenance/scripts/upc_common.mjs";
 import { buildRoCrateGraph, fragmentForLocator, selectorsForLocator, buildAnnotationTargets } from "../skill/universal-provenance/scripts/ro-crate.mjs";
 import { buildModel as buildBrowserModel } from "../skill/universal-provenance/scripts/build-index.mjs";
 import { buildProvGraph } from "../skill/universal-provenance/scripts/prov.mjs";
-import { validateCorpus } from "../skill/universal-provenance/scripts/upc.mjs";
+import { validateCorpus, anchorCmd, codeCmd, codebookCmd, batchCmd, mintBatchCmd, locateCmd, satisfiesRequirement, specVersion } from "../skill/universal-provenance/scripts/upc.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
@@ -938,6 +939,301 @@ ok("filename rejects reserved", !checkFilename("sources/con/x.md").ok);
   eq("prov: extraction supersedes -> wasRevisionOf", ext["prov:wasRevisionOf"] && ext["prov:wasRevisionOf"]["@id"], "#ext-000000000002");
   eq("prov: direct_quote -> wasQuotedFrom the representation", ext["prov:wasQuotedFrom"] && ext["prov:wasQuotedFrom"]["@id"], "#rep-aaaaaaaaaaaa");
   ok("prov: representation duplicate_of is NOT a wasRevisionOf", !rep["prov:wasRevisionOf"]);
+}
+
+// ---------------------------------------------------------------------------
+// 1.6.0 — codebooks, codings, anchoring, and the model-rewrite badge (spec/12)
+// ---------------------------------------------------------------------------
+
+// --- cbk-/cod- identity recipes: what is IN the key, and what is deliberately OUT ---
+{
+  const cbk = { namespace: "researchassistant", slug: "org-type" };
+  const id = mintCbkId(cbk);
+  ok("cbk- id shape", /^cbk-[0-9a-f]{12}$/.test(id));
+  eq("cbk- is deterministic", mintCbkId({ ...cbk }), id);
+  // Identity is over (namespace, slug) ONLY: a codebook must keep a stable id while
+  // its contents evolve, or every edit would dangle every codebook_ref.
+  eq("cbk- ignores codes[]", mintCbkId({ ...cbk, codes: [{ code: "a", label: "A" }] }), id);
+  eq("cbk- ignores title/revision", mintCbkId({ ...cbk, title: "Renamed", revision: 9 }), id);
+  ok("cbk- differs by namespace", mintCbkId({ ...cbk, namespace: "pi-forge" }) !== id);
+  ok("cbk- differs by slug", mintCbkId({ ...cbk, slug: "sector" }) !== id);
+
+  const base = { codebook_ref: id, target: { kind: "extraction", id: "ext-10aaf6c96053" }, coder: "ra-column-v1", code: "utility" };
+  const cid = mintCodId(base);
+  ok("cod- id shape", /^cod-[0-9a-f]{12}$/.test(cid));
+  // OUT of the key -> re-running an unchanged coding pass is idempotent.
+  eq("cod- ignores confidence", mintCodId({ ...base, confidence: "high", confidence_score: 0.9 }), cid);
+  eq("cod- ignores rationale/query", mintCodId({ ...base, rationale: "because", query: "q?" }), cid);
+  eq("cod- ignores status", mintCodId({ ...base, status: "superseded" }), cid);
+  eq("cod- ignores provenance", mintCodId({ ...base, provenance: { created_at: "2026-01-01T00:00:00Z" } }), cid);
+  eq("cod- ignores codebook revision", mintCodId({ ...base, codebook_revision: 7, codebook_revision_digest: "sha256:x" }), cid);
+  // IN the key -> disagreement, multi-label and re-coding are all representable.
+  ok("cod- differs by coder (so agreement is computable)", mintCodId({ ...base, coder: "ellie" }) !== cid);
+  ok("cod- differs by code (so multi-label is representable)", mintCodId({ ...base, code: "ngo" }) !== cid);
+  ok("cod- differs by target", mintCodId({ ...base, target: { kind: "extraction", id: "ext-000000000001" } }) !== cid);
+  ok("cod- differs by target kind", mintCodId({ ...base, target: { kind: "source", id: "ext-10aaf6c96053" } }) !== cid);
+  ok("cod- differs by codebook", mintCodId({ ...base, codebook_ref: mintCbkId({ namespace: "demo", slug: "x" }) }) !== cid);
+  // A code and a free-text value are distinct even when the strings coincide.
+  const asValue = { codebook_ref: id, target: base.target, coder: base.coder, value: "utility" };
+  ok("cod- code != value with the same string", mintCodId(asValue) !== cid);
+
+  const codes = [{ code: "a", label: "A" }];
+  ok("codebook revision digest shape", /^sha256:[0-9a-f]{64}$/.test(codebookRevisionDigest(codes)));
+  ok("codebook revision digest changes with codes", codebookRevisionDigest(codes) !== codebookRevisionDigest(codes.concat([{ code: "b", label: "B" }])));
+}
+
+// --- isModelRewrittenText: decided by DERIVATION, never by the role name ---
+{
+  const md = { representation_id: "rep-aaaaaaaaaaaa", role: "clean_markdown", media_type: "text/markdown" };
+  const pdf = { representation_id: "rep-bbbbbbbbbbbb", role: "document_pdf", media_type: "application/pdf" };
+  const look = (id) => ({ "rep-aaaaaaaaaaaa": md, "rep-bbbbbbbbbbbb": pdf }[id]);
+  const rewrite = { role: "clean_markdown", media_type: "text/markdown", produced_by: "model", parent_representation_ref: "rep-aaaaaaaaaaaa" };
+  const conv = { role: "clean_markdown", media_type: "text/markdown", produced_by: "conversion", parent_representation_ref: "rep-aaaaaaaaaaaa" };
+  const modelOnPdf = { role: "text", media_type: "text/plain", produced_by: "model", parent_representation_ref: "rep-bbbbbbbbbbbb" };
+  ok("model rewrite of TEXT is a rewrite", isModelRewrittenText(rewrite, look));
+  ok("deterministic conversion is NOT a rewrite", !isModelRewrittenText(conv, look));
+  // Identical role strings, opposite answers: only the derivation separates them.
+  eq("rewrite and conversion share a role", rewrite.role, conv.role);
+  ok("model over a NON-text parent is derived text, not a rewrite", !isModelRewrittenText(modelOnPdf, look));
+  ok("...and isDerivedText claims that case", isDerivedText(modelOnPdf, look));
+  ok("a rewrite is not 'derived text'", !isDerivedText(rewrite, look));
+  ok("no parent means no rewrite claim", !isModelRewrittenText({ produced_by: "model", role: "clean_markdown" }, look));
+  ok("stamp-shaped produced_by is also honoured", isModelRewrittenText({ role: "text", media_type: "text/plain", provenance: { produced_by: { method: "model" } }, parent_representation_ref: "rep-aaaaaaaaaaaa" }, look));
+}
+
+// --- version requirement parsing (the packaging handshake) ---
+{
+  ok("^1.5 satisfied by 1.6.0", satisfiesRequirement("1.6.0", "^1.5").ok);
+  ok("^1.6 satisfied by 1.6.0", satisfiesRequirement("1.6.0", "^1.6").ok);
+  ok("^1.7 NOT satisfied by 1.6.0", !satisfiesRequirement("1.6.0", "^1.7").ok);
+  ok("^2.0 NOT satisfied by 1.6.0", !satisfiesRequirement("1.6.0", "^2.0").ok);
+  ok("~1.6 satisfied by 1.6.2", satisfiesRequirement("1.6.2", "~1.6").ok);
+  ok("~1.6 NOT satisfied by 1.7.0", !satisfiesRequirement("1.7.0", "~1.6").ok);
+  ok("garbage requirement is refused, not assumed ok", !satisfiesRequirement("1.6.0", "banana").ok);
+  ok("VERSION file is the source of truth", /^\d+\.\d+\.\d+$/.test(specVersion()));
+}
+
+// --- end-to-end over a real corpus on disk: anchor, code, validate, locate ---
+{
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "upc-coding-"));
+  const slug = "s1";
+  fs.mkdirSync(path.join(dir, "sources", slug, "representations"), { recursive: true });
+  fs.mkdirSync(path.join(dir, "provenance"), { recursive: true });
+  fs.mkdirSync(path.join(dir, "codebooks"), { recursive: true });
+
+  const cleanText = "Alpha beta gamma.\nA utility runs the plant.\nAlpha beta gamma.\n";
+  const rewriteText = "Alpha beta gamma.\nA utility operates the plant.\nAlpha beta gamma.\n";
+  const w = (rel, t) => { fs.writeFileSync(path.join(dir, rel), t); return { rel, sha: sha256Hex(Buffer.from(t, "utf8")), buf: Buffer.from(t, "utf8") }; };
+  const A = w(`sources/${slug}/representations/clean.md`, cleanText);
+  const B = w(`sources/${slug}/representations/rewrite.md`, rewriteText);
+  const repA = mintRepId(A.buf), repB = mintRepId(B.buf);
+  const srcId = mintSrcId({ canonicalUrl: "https://example.org/a" });
+  const stamp = { produced_by: { tool: "t", method: "import" }, created_at: "2026-01-01T00:00:00Z" };
+  fs.writeFileSync(path.join(dir, "sources", slug, "source.json"), JSON.stringify({
+    source_id: srcId, source_kind: "url", title: "T",
+    retrieval: { original_url: "https://example.org/a", fetch_status: "success" },
+    extractions_path: `sources/${slug}/extractions.jsonl`,
+    representations: [
+      { representation_id: repA, role: "clean_markdown", media_type: "text/markdown", path: A.rel, sha256: A.sha, produced_by: "conversion", provenance: stamp },
+      { representation_id: repB, role: "clean_markdown", media_type: "text/markdown", path: B.rel, sha256: B.sha, parent_representation_ref: repA, produced_by: "model", provenance: stamp },
+    ],
+    provenance: stamp,
+  }, null, 2));
+  fs.writeFileSync(path.join(dir, "sources", slug, "extractions.jsonl"), "");
+  fs.writeFileSync(path.join(dir, "provenance", "events.jsonl"), "");
+  fs.writeFileSync(path.join(dir, "corpus.json"), JSON.stringify({
+    upc_spec_version: "1.6.0", corpus_id: "cor-000000000001",
+    sections: { sources: "sources/", codebooks: "codebooks/", codings: "codings/", provenance: "provenance/events.jsonl" },
+  }, null, 2));
+
+  const codes = [
+    { code: "operator", label: "Operator", definition: "Runs the plant." },
+    { code: "utility", label: "Utility", definition: "A regulated utility.", parent: "operator" },
+  ];
+  const cbk = { codebook_id: "", namespace: "demo", slug: "actor", title: "Actor", closed: true, revision: 1, revision_digest: codebookRevisionDigest(codes), codes, provenance: stamp };
+  cbk.codebook_id = mintCbkId(cbk);
+  fs.writeFileSync(path.join(dir, "codebooks", cbk.codebook_id + ".json"), JSON.stringify(cbk, null, 2));
+  const open = { codebook_id: "", namespace: "demo", slug: "theme", title: "Theme", closed: false, codes: [{ code: "seed", label: "Seed" }], provenance: stamp };
+  open.codebook_id = mintCbkId(open);
+  fs.writeFileSync(path.join(dir, "codebooks", open.codebook_id + ".json"), JSON.stringify(open, null, 2));
+
+  // anchor: the gate is the arbiter, not the model.
+  const res = anchorCmd(dir, repA, [
+    { quote: "A utility runs the plant.", type: "evidence" },
+    { quote: "A utility operates the plant.", type: "evidence" },   // exists only in the REWRITE
+    { quote: "Alpha beta gamma.", type: "passage" },                // twice -> ambiguous
+    { quote: "", type: "evidence" },
+  ], { tool: "selftest" });
+  eq("anchor: one byte-exact hit is anchored", res.results[0].status, "anchored");
+  eq("anchor: a quote absent from the target is not_found", res.results[1].status, "not_found");
+  eq("anchor: a repeated span is ambiguous, never active", res.results[2].status, "ambiguous");
+  eq("anchor: an empty candidate is invalid", res.results[3].status, "invalid");
+  eq("anchor: only unique hits are written", res.wrote, 1);
+  const anchored = res.results[0].extraction_id;
+
+  // Re-anchoring the same candidate must not duplicate it.
+  const again = anchorCmd(dir, repA, [{ quote: "A utility runs the plant.", type: "evidence" }], { tool: "selftest" });
+  eq("anchor: re-running is idempotent", again.results[0].status, "exists");
+  eq("anchor: nothing new written on a repeat", again.wrote, 0);
+
+  // The same claim anchored in the model-rewritten copy gates fine but badges differently.
+  const rew = anchorCmd(dir, repB, [{ quote: "A utility operates the plant.", type: "evidence" }], { tool: "selftest" });
+  eq("anchor: the rewritten wording anchors in the rewrite", rew.results[0].status, "anchored");
+  clearRepCache();
+  eq("locate: source text badges verified", locateCmd(anchored, dir).badge, "verified");
+  eq("locate: model-rewritten text badges verified-to-rewrite", locateCmd(rew.results[0].extraction_id, dir).badge, "verified-to-rewrite");
+
+  // code: closed/open enforcement, resolution, and supersession.
+  const T = { kind: "extraction", id: anchored };
+  const c1 = codeCmd(dir, "cds-1", [
+    { codebook_ref: cbk.codebook_id, code: "utility", target: T, coder: "model-a", confidence: "high" },
+    { codebook_ref: cbk.codebook_id, code: "operator", target: T, coder: "ellie" },
+    { codebook_ref: open.codebook_id, value: "framing", target: T, coder: "model-a" },
+    { codebook_ref: cbk.codebook_id, code: "nope", target: T, coder: "model-a" },
+    { codebook_ref: cbk.codebook_id, code: "utility", target: { kind: "extraction", id: "ext-000000000000" }, coder: "model-a" },
+    { codebook_ref: cbk.codebook_id, value: "freetext", target: T, coder: "model-a" },
+    { codebook_ref: open.codebook_id, code: "seed", target: T, coder: "model-a" },
+  ], { tool: "selftest" });
+  eq("code: valid closed coding lands", c1.results[0].status, "coded");
+  eq("code: a second coder lands separately", c1.results[1].status, "coded");
+  eq("code: open codebook takes a value", c1.results[2].status, "coded");
+  eq("code: unknown code is refused", c1.results[3].status, "error");
+  eq("code: unresolvable target is refused", c1.results[4].status, "error");
+  eq("code: a value against a CLOSED codebook is refused", c1.results[5].status, "error");
+  eq("code: a code against an OPEN codebook is refused", c1.results[6].status, "error");
+  eq("code: only the valid rows are written", c1.wrote, 3);
+
+  const c2 = codeCmd(dir, "cds-1", [{ codebook_ref: cbk.codebook_id, code: "utility", target: T, coder: "model-a", confidence: "high" }], { tool: "selftest" });
+  eq("code: an unchanged re-run is idempotent", c2.results[0].status, "unchanged");
+  eq("code: an unchanged re-run writes nothing new", c2.wrote, 0);
+
+  {
+    clearRepCache();
+    const mid = validateCorpus(dir);
+    const codes0 = mid.warnings.map((x) => x.code);
+    ok("validate: two coders with different codes raise coding_disagreement",
+      codes0.includes("coding_disagreement") && !mid.errors.map((x) => x.code).includes("coding_disagreement"));
+    eq("validate: disagreement does not fail the corpus", mid.status, "passed");
+  }
+
+  const c3 = codeCmd(dir, "cds-1", [{ codebook_ref: cbk.codebook_id, code: "operator", target: T, coder: "model-a" }], { tool: "selftest" });
+  eq("code: a changed answer supersedes rather than mutating", c3.results[0].status, "coded");
+  ok("code: the superseded id is linked", !!c3.results[0].supersedes);
+  {
+    const items = fs.readFileSync(path.join(dir, "codings", "cds-1", "items.jsonl"), "utf8").trim().split("\n").map((l) => JSON.parse(l));
+    const old = items.find((o) => o.coding_id === c3.results[0].supersedes);
+    eq("code: the old judgement is retained, not deleted", old.status, "superseded");
+    eq("code: and points forward", old.superseded_by, c3.results[0].coding_id);
+    const man = JSON.parse(fs.readFileSync(path.join(dir, "codings", "cds-1", "manifest.json"), "utf8"));
+    ok("code: coders are declared in the set manifest", man.coders.some((c) => c.coder === "model-a") && man.coders.some((c) => c.coder === "ellie"));
+    ok("code: codebook_refs are indexed", man.codebook_refs.includes(cbk.codebook_id));
+  }
+
+  clearRepCache();
+  const rep1 = validateCorpus(dir);
+  eq("validate: a coded corpus passes", rep1.status, "passed");
+  eq("validate: codings do not change the conformance level", rep1.level, "L1");
+  eq("validate: codebooks are counted", rep1.counts.codebooks, 2);
+  const codeOf = (arr) => arr.map((x) => x.code);
+  // model-a has since revised to "operator", so the two coders now agree and the
+  // advisory must clear on its own rather than lingering as stale noise.
+  ok("validate: the disagreement advisory clears once coders agree", !codeOf(rep1.warnings).includes("coding_disagreement"));
+  ok("validate: an unapplied code is flagged for hygiene", codeOf(rep1.warnings).includes("codebook_code_unused"));
+
+  // A tampered coding id must be caught, exactly like every other object id.
+  {
+    const f = path.join(dir, "codings", "cds-1", "items.jsonl");
+    const orig = fs.readFileSync(f, "utf8");
+    const lines = orig.trim().split("\n").map((l) => JSON.parse(l));
+    lines[0].coding_id = "cod-000000000000";
+    fs.writeFileSync(f, lines.map((o) => JSON.stringify(o)).join("\n") + "\n");
+    clearRepCache();
+    ok("validate: a hand-typed coding id is caught by recompute", codeOf(validateCorpus(dir).errors).includes("id_mismatch"));
+    fs.writeFileSync(f, orig);
+  }
+
+  // A code on a span that later breaks is an advisory, never an error: the coding
+  // remains a faithful record of a judgement; the SPAN is what broke.
+  {
+    const f = path.join(dir, "sources", slug, "extractions.jsonl");
+    const orig = fs.readFileSync(f, "utf8");
+    const lines = orig.trim().split("\n").map((l) => JSON.parse(l));
+    lines[0].locator.value = { start: 0, end: 5 };   // drift the offsets, keep the quote
+    fs.writeFileSync(f, lines.map((o) => JSON.stringify(o)).join("\n") + "\n");
+    clearRepCache();
+    const r = validateCorpus(dir);
+    ok("validate: the drifted span fails its gate", codeOf(r.errors).includes("quote_gate_failed"));
+    ok("validate: the coding on it is only an advisory", codeOf(r.warnings).includes("coding_targets_failed_gate"));
+    ok("validate: coding_targets_failed_gate is never an error", !codeOf(r.errors).includes("coding_targets_failed_gate"));
+    fs.writeFileSync(f, orig);
+  }
+
+  // Codebook hierarchy integrity.
+  {
+    const bad = { codebook_id: "", namespace: "demo", slug: "cycle", title: "C", closed: true, provenance: stamp,
+      codes: [{ code: "a", label: "A", parent: "b" }, { code: "b", label: "B", parent: "a" }] };
+    bad.codebook_id = mintCbkId(bad);
+    const f = path.join(dir, "codebooks", bad.codebook_id + ".json");
+    fs.writeFileSync(f, JSON.stringify(bad, null, 2));
+    clearRepCache();
+    ok("validate: a parent cycle is an error", codeOf(validateCorpus(dir).errors).includes("codebook_parent_cycle"));
+    bad.codes = [{ code: "a", label: "A", parent: "ghost" }];
+    fs.writeFileSync(f, JSON.stringify(bad, null, 2));
+    clearRepCache();
+    ok("validate: a dangling parent is an error", codeOf(validateCorpus(dir).errors).includes("codebook_parent_dangling"));
+    bad.codes = [{ code: "a", label: "A" }, { code: "a", label: "Again" }];
+    fs.writeFileSync(f, JSON.stringify(bad, null, 2));
+    clearRepCache();
+    ok("validate: a duplicate code token is an error", codeOf(validateCorpus(dir).errors).includes("codebook_code_duplicate"));
+    fs.rmSync(f);
+  }
+
+  // batch: many reads, one corpus load.
+  clearRepCache();
+  {
+    const out = batchCmd(dir, [
+      JSON.stringify({ cmd: "locate", ext: anchored }),
+      JSON.stringify({ cmd: "verify", ext: anchored }),
+      JSON.stringify({ cmd: "codebook" }),
+      JSON.stringify({ cmd: "nonsense" }),
+    ].join("\n"));
+    eq("batch: locate answers", out[0].result.badge, "verified");
+    eq("batch: verify answers", out[1].result.verified, true);
+    eq("batch: codebook answers", out[2].result.codebooks.length, 2);
+    ok("batch: an unknown command errors per-line, not fatally", !!out[3].error);
+  }
+  eq("mint --batch returns one id per line", mintBatchCmd("cbk", '{"namespace":"a","slug":"b"}\n{"namespace":"a","slug":"c"}').length, 2);
+  {
+    const inspected = codebookCmd(dir, cbk.codebook_id);
+    ok("codebook: applied counts are computed, never stored", inspected.codes.every((c) => typeof c.applied === "number"));
+  }
+
+  fs.rmSync(dir, { recursive: true, force: true });
+}
+
+// --- the compatibility claim, stated as the code states it ---
+// A relaxed rule is minor-safe (no previously valid corpus breaks) but it is NOT
+// forward-compatible: a corpus using the new laxity needs a >= 1.6.0 reader. This
+// asymmetry is documented in CHANGELOG/§00 and pinned here so it cannot drift into
+// an unqualified "1.5 reads 1.6" claim.
+{
+  const spec = fs.readFileSync(path.join(HERE, "..", "spec", "00-overview.md"), "utf8");
+  ok("§00 records that a relaxation raises the minimum reader version", /minimum reader version/.test(spec));
+  const chg = fs.readFileSync(path.join(HERE, "..", "CHANGELOG.md"), "utf8");
+  ok("CHANGELOG states the loosening is not forward-compatible", /not\s*\*\*?forward-compatible|is \*not\* forward-compatible/.test(chg));
+}
+
+// --- a coding never carries a locator: the schema forbids the back door ---
+{
+  const sch = JSON.parse(fs.readFileSync(path.join(HERE, "..", "schemas", "coding.schema.json"), "utf8"));
+  ok("coding schema has no locator property", !("locator" in sch.properties) && !("secondary_locators" in sch.properties));
+  ok("coding schema requires a target", sch.required.includes("target"));
+  ok("coding schema requires a coder", sch.required.includes("coder"));
+  ok("coding schema makes code/value exclusive", Array.isArray(sch.oneOf) && sch.oneOf.length === 2);
+  const ext = JSON.parse(fs.readFileSync(path.join(HERE, "..", "schemas", "extraction.schema.json"), "utf8"));
+  // Codes live beside extractions, never on them: adding a member to the extraction
+  // object would trip unknown_field under --strict for every 1.5.0 reader.
+  ok("extraction schema gained no codes[] member", !("codes" in ext.properties) && !("codings" in ext.properties));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

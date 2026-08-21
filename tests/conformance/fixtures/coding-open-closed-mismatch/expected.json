@@ -1,0 +1,6 @@
+{
+  "fixture": "coding-open-closed-mismatch",
+  "expect": [
+    "coding_open_closed_mismatch"
+  ]
+}

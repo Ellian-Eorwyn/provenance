@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://provenance.dev/upc/1.6.0/schemas/coding.schema.json",
+  "title": "UPC Coding",
+  "description": "One coder's judgement that one code applies to one target (§12). A coding is deliberately a separate object from the extraction it labels: an extraction is the SPAN (content-addressed, so two coders selecting the same sentence converge on one id) and a coding is the JUDGEMENT about it (so two coders may agree, disagree, or multi-label without colliding). A coding MUST NOT carry its own locator — a span-level coding targets an extraction that has already passed the hop-B gate, which is what stops a code from becoming a back door for an unanchored span.",
+  "type": "object",
+  "required": ["coding_id", "codebook_ref", "target", "coder"],
+  "oneOf": [
+    { "required": ["code"], "not": { "required": ["value"] } },
+    { "required": ["value"], "not": { "required": ["code"] } }
+  ],
+  "properties": {
+    "coding_id": { "type": "string", "pattern": "^cod-[0-9a-f]{12}$", "description": "cod-<12hex> (§06), content-addressed over codebook_ref + target.kind + target.id + coder + JCS({code}|{value}). What is OUT of that key matters as much as what is in: created_at, confidence, rationale, query and status are excluded, so re-running an unchanged coding pass is idempotent." },
+    "aliases": { "type": "object", "additionalProperties": { "type": "string" } },
+    "codebook_ref": { "type": "string", "pattern": "^cbk-[0-9a-f]{12}$", "description": "The codebook this code is drawn from. Must resolve (dangling_codebook, §08)." },
+    "code": { "type": "string", "minLength": 1, "description": "A `code` token from the referenced codebook. Required for a closed codebook; forbidden for an open one." },
+    "value": { "type": "string", "minLength": 1, "description": "Free-text label for an OPEN codebook (closed:false). This is model or human prose and, like extraction.text, MUST NOT be styled as a quotation (§09)." },
+    "target": {
+      "type": "object",
+      "required": ["kind", "id"],
+      "description": "What is being coded. A coding never carries a locator of its own.",
+      "properties": {
+        "kind": { "$ref": "../vocab/vocab.json#/$defs/coding_target_kind" },
+        "id": { "type": "string", "minLength": 1, "description": "ext-/src-/rep- id matching `kind`. Must resolve (dangling_coding_target, §08)." }
+      },
+      "additionalProperties": true
+    },
+    "coder": { "type": "string", "minLength": 1, "description": "STABLE handle for who made this judgement — e.g. \"ra-column-v1\", \"ellie\", \"adjudicator\". Deliberately not a model string: if the model version were embedded here, every model upgrade would re-mint every coding id and destroy agreement history. The volatile identity (model, version, prompt) lives in the coding-set manifest's coders[] and in provenance.produced_by. To compare two models as two raters, declare two handles — a deliberate act, not an accident." },
+    "status": { "$ref": "../vocab/vocab.json#/$defs/extraction_status", "description": "Lifecycle, reusing §03's vocabulary. A changed answer on re-run mints a new coding and supersedes the old one rather than mutating a content-addressed id. Defaults to active." },
+    "codebook_revision": { "type": "integer", "minimum": 1, "description": "The codebook revision this judgement was made under. Advisory, and out of the identity recipe." },
+    "codebook_revision_digest": { "type": "string", "description": "The codebook's revision_digest at coding time; a mismatch raises the advisory coding_codebook_drift (§08)." },
+    "confidence": { "$ref": "../vocab/vocab.json#/$defs/confidence" },
+    "confidence_score": { "$ref": "../vocab/vocab.json#/$defs/confidence_score" },
+    "rationale": { "type": "string", "description": "Why this code applies. Prose, never verified." },
+    "query": { "type": "string", "description": "The question or task that prompted this coding pass." },
+    "supersedes": { "type": "string", "pattern": "^cod-[0-9a-f]{12}$" },
+    "superseded_by": { "type": "string", "pattern": "^cod-[0-9a-f]{12}$" },
+    "provenance": { "$ref": "provenance-stamp.schema.json" },
+    "ext": { "type": "object", "description": "Tool-private extension data, namespaced by tool.", "additionalProperties": true }
+  },
+  "additionalProperties": true
+}

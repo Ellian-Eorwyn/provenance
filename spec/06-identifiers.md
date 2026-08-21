@@ -60,6 +60,8 @@ id is `prefix + first 12 hex of sha256(UTF-8 key)`:
 | Extraction | `ext-` | `"ext\n" + source_id + "\n" + representation_ref + "\n" + JCS(locator) + "\n" + Q` |
 | Generation | `gen-` | `"gen\n" + type + "\n" + JCS(sorted_input_ids) + "\n" + input_digest` |
 | Synthesis | `syn-` | `"syn\n" + type + "\n" + question + "\n" + JCS(sorted_input_ids)` |
+| Codebook | `cbk-` | `"cbk\n" + namespace + "\n" + slug` |
+| Coding | `cod-` | `"cod\n" + codebook_ref + "\n" + target.kind + "\n" + target.id + "\n" + coder + "\n" + JCS({"code": code} \| {"value": value})` |
 | Activity event | `evt-` | sequential per journal (`evt-000001`); a content hash is also permitted |
 
 Definitions used above:
@@ -69,6 +71,19 @@ Definitions used above:
   re-normalized. `secondary_locators`, `context_*`, `query`, and confidence are
   **excluded** from identity, so adding context or re-running the same extraction
   yields the same id.
+- **`cbk-` is addressed over `(namespace, slug)` only.** A codebook's `codes[]`,
+  `title`, `revision`, and `revision_digest` are all **excluded**, because a
+  controlled vocabulary must keep one identity while its contents evolve —
+  hashing the code list would dangle every `codebook_ref` on every edit. This is
+  the same trade `src-` makes by hashing the canonical URL rather than the page
+  bytes (§12).
+- **`cod-` includes the coder and the label, and excludes everything mutable.**
+  `created_at`, `confidence`, `confidence_score`, `rationale`, `query`, `status`,
+  and the recorded codebook revision are **not** in the key, so re-running an
+  unchanged coding pass is idempotent. `coder` **is** in the key, so two raters who
+  agree still produce two records and inter-rater agreement stays computable
+  (§12). Exactly one of `code` / `value` is present; the JCS wrapper keeps a code
+  and a free-text value distinct even when the strings coincide.
 - **`JCS(locator)`** is the canonical serialization of the primary `locator`
   object (`{type, representation_ref, value}`), so `{"start":247,"end":306}`
   hashes identically regardless of member order or spacing in the source file.

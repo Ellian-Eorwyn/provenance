@@ -9,8 +9,14 @@
 //   upc regen <dir>
 //   upc build-index <dir>
 //   upc export <dir> --format bibtex|ris|csl-json|jsonl|markdown|ro-crate|prov [-o <file>] [--copy]
-//   upc mint <src|ext|gen|syn|rep> [--corpus <dir>]        (JSON object on stdin)
+//   upc anchor --corpus <dir> --rep <rep-id> [--set <id>] [--dry-run]  (JSONL candidates on stdin)
+//   upc code --corpus <dir> --set <cds-id> [--dry-run]     (JSONL codings on stdin)
+//   upc codebook <dir> [<cbk-id>]
+//   upc mint [--batch] <src|rep|ext|gen|syn|cod|cbk>       (JSON object / JSONL on stdin)
+//   upc batch --corpus <dir>                               (NDJSON commands on stdin)
 //   upc reanchor <ext-id>|--all --corpus <dir> [--to <rep-id>]
+//   upc version [--json]
+//   upc check-compat --requires "^1.6" [--schema-hash <sha256:...>]
 //
 // The validator implements the spec/08 rule registry exactly; conformance level
 // is computed from rules passed, not object counts.
@@ -48,6 +54,49 @@ function findSpecDirs() {
   return { schemaDir, vocabDir, specRoot: schemaDir ? path.dirname(schemaDir) : null };
 }
 
+// The VERSION file at the spec root is the single source of truth for the spec
+// version; the fallback exists only so a detached scripts/ copy still reports.
+const FALLBACK_SPEC_VERSION = "1.5.0";
+function specVersion() {
+  try {
+    const { specRoot } = findSpecDirs();
+    if (specRoot) {
+      const f = path.join(specRoot, "VERSION");
+      if (fs.existsSync(f)) {
+        const v = fs.readFileSync(f, "utf8").trim();
+        if (/^[0-9]+\.[0-9]+\.[0-9]+$/.test(v)) return v;
+      }
+    }
+  } catch { /* fall through */ }
+  return FALLBACK_SPEC_VERSION;
+}
+
+const COMMANDS = [
+  "validate", "verify-quotes", "verify", "quote", "locate", "anchor", "code",
+  "codebook", "regen", "build-index", "export", "mint", "batch", "reanchor",
+  "version", "check-compat",
+];
+
+/** Parse a "^1.6" / "~1.6.0" / "1.6.0" / ">=1.5" requirement against a version. */
+function satisfiesRequirement(version, requirement) {
+  const req = String(requirement || "").trim();
+  const m = /^(\^|~|>=|=)?\s*([0-9]+)(?:\.([0-9]+))?(?:\.([0-9]+))?$/.exec(req);
+  if (!m) return { ok: false, reason: `unparseable requirement ${JSON.stringify(requirement)}` };
+  const op = m[1] || "=";
+  const [rMaj, rMin, rPat] = [Number(m[2]), m[3] === undefined ? null : Number(m[3]), m[4] === undefined ? null : Number(m[4])];
+  const v = /^([0-9]+)\.([0-9]+)\.([0-9]+)$/.exec(version);
+  if (!v) return { ok: false, reason: `unparseable version ${version}` };
+  const [maj, min, pat] = [Number(v[1]), Number(v[2]), Number(v[3])];
+  const atLeast = () => maj > rMaj || (maj === rMaj && (rMin === null || min > rMin || (min === rMin && (rPat === null || pat >= rPat))));
+  switch (op) {
+    // ^1.6 — same major, at least this minor. This is the UPC compatibility promise.
+    case "^": return { ok: maj === rMaj && atLeast(), reason: `${version} vs ^${rMaj}.${rMin ?? 0}` };
+    case "~": return { ok: maj === rMaj && (rMin === null || min === rMin) && atLeast(), reason: `${version} vs ~${req.slice(1)}` };
+    case ">=": return { ok: atLeast(), reason: `${version} vs >=${req.slice(2).trim()}` };
+    default: return { ok: maj === rMaj && (rMin === null || min === rMin) && (rPat === null || pat === rPat), reason: `${version} vs ==${req}` };
+  }
+}
+
 const SCHEMA_FILE = {
   corpus: "corpus.schema.json",
   source: "source.schema.json",
@@ -57,6 +106,9 @@ const SCHEMA_FILE = {
   event: "event.schema.json",
   bibliographic: "bibliographic.schema.json",
   "extraction-set": "extraction-set.schema.json",
+  codebook: "codebook.schema.json",
+  coding: "coding.schema.json",
+  "coding-set": "coding-set.schema.json",
 };
 
 function schemaTopProps(schemaDir, file) {
@@ -137,6 +189,19 @@ function buildModel(loaded) {
     for (const sid of df.source_ids || []) genBySource.set(sid, (genBySource.get(sid) || 0) + 1);
   }
 
+  const cbkById = new Map();
+  for (const c of loaded.codebooks || []) cbkById.set(c.obj.codebook_id, c.obj);
+  const codById = new Map();
+  for (const c of loaded.codings || []) codById.set(c.obj.coding_id, c.obj);
+  // Codings indexed by what they are about, so a reader can go target -> codes in O(1).
+  const codByTarget = new Map();
+  for (const c of loaded.codings || []) {
+    const t = c.obj.target || {};
+    if (!t.id) continue;
+    if (!codByTarget.has(t.id)) codByTarget.set(t.id, []);
+    codByTarget.get(t.id).push(c.obj);
+  }
+
   const counts = {
     sources: loaded.sources.filter((s) => s.obj).length,
     representations: loaded.representations.length,
@@ -144,8 +209,12 @@ function buildModel(loaded) {
     generations: loaded.generations.length,
     syntheses: loaded.syntheses.length,
   };
+  // Only advertise the coding counts when the corpus actually has a coding scheme,
+  // so an existing corpus regenerates byte-identically.
+  if ((loaded.codebooks || []).length) counts.codebooks = loaded.codebooks.length;
+  if ((loaded.codings || []).length) counts.codings = loaded.codings.length;
 
-  return { sourceById, repById, extById, genById, synById, extBySource, genBySource, counts };
+  return { sourceById, repById, extById, genById, synById, cbkById, codById, codByTarget, extBySource, genBySource, counts };
 }
 
 const SOURCES_CSV_COLS = [
@@ -197,6 +266,7 @@ const ID_PATTERNS = {
   "src-": /^src-[0-9a-f]{12}$/, "rep-": /^rep-[0-9a-f]{12}$/, "img-": /^img-[0-9a-f]{12}$/,
   "ext-": /^ext-[0-9a-f]{12}$/, "gen-": /^gen-[0-9a-f]{12}$/, "syn-": /^syn-[0-9a-f]{12}$/,
   "cor-": /^cor-[0-9a-f]{12}$/, "evt-": /^evt-.+$/,
+  "cbk-": /^cbk-[0-9a-f]{12}$/, "cod-": /^cod-[0-9a-f]{12}$/,
 };
 function idFormatOk(id) {
   const pref = String(id || "").slice(0, 4);
@@ -288,10 +358,35 @@ export function validateCorpus(root, opts = {}) {
     else seen.set(id, kind);
   };
   for (const s of loaded.sources) if (s.obj) checkId(s.obj.source_id, "source", s.obj);
-  for (const r of loaded.representations) checkId(r.obj.representation_id, "representation", r.obj);
+  // Representations are content-addressed by BYTE HASH but their records are
+  // source-scoped, so the same bytes legitimately appear more than once: a figure
+  // syndicated across sources, or one file serving two roles. Rule 1.1 therefore
+  // compares hashes before calling it a duplicate (spec/08). Agreeing hashes are a
+  // shared representation (advisory); disagreeing hashes mean a record is lying
+  // about its own bytes, which stays an error.
+  const repSeen = new Map();
+  for (const r of loaded.representations) {
+    const id = r.obj.representation_id;
+    const hash = U.bareHash(r.obj.sha256 || "");
+    if (!idFormatOk(id)) err("id_format", 1, id, "malformed representation id");
+    if (repSeen.has(id)) {
+      const prior = repSeen.get(id);
+      if (prior.hash && hash && prior.hash === hash) {
+        warn("representation_shared", id, `same bytes recorded by ${prior.sourceId} and ${r.sourceId}`, { sha256: hash.slice(0, 12) });
+      } else {
+        err("id_duplicate", 1, id, `duplicate representation id with differing sha256 (${(prior.hash || "?").slice(0, 12)}… vs ${(hash || "?").slice(0, 12)}…)`);
+      }
+    } else {
+      repSeen.set(id, { hash, sourceId: r.sourceId });
+      if (seen.has(id)) err("id_duplicate", 1, id, `duplicate id (also ${seen.get(id)})`);
+      else seen.set(id, "representation");
+    }
+  }
   for (const e of loaded.extractions) checkId(e.obj.extraction_id, "extraction", e.obj);
   for (const g of loaded.generations) checkId(g.obj.generation_id, "generation", g.obj);
   for (const y of loaded.syntheses) checkId(y.obj.synthesis_id, "synthesis", y.obj);
+  for (const c of loaded.codebooks || []) checkId(c.obj.codebook_id, "codebook", c.obj);
+  for (const c of loaded.codings || []) checkId(c.obj.coding_id, "coding", c.obj);
 
   // id_mismatch recompute
   for (const r of loaded.representations) {
@@ -338,6 +433,10 @@ export function validateCorpus(root, opts = {}) {
     }
   }
 
+  // Extractions whose hop-B gate failed, so a coding that targets one can be
+  // flagged as inheriting the break (spec/12, advisory coding_targets_failed_gate).
+  const gateFailedExtIds = new Set();
+
   // --- 1.2 dangling refs, 1.3 locator rep match, 1.4/1.5/1.6 quote gates, 1.7 flagged, 1.8 provenance ---
   const hasProvStamp = (obj) => obj.provenance && obj.provenance.produced_by && obj.provenance.produced_by.tool && obj.provenance.created_at;
   for (const r of loaded.representations) {
@@ -381,7 +480,10 @@ export function validateCorpus(root, opts = {}) {
     if (!rep.contained || !fs.existsSync(rep.abs)) continue; // already flagged
     const repRec = U.getRepFile(rep.abs);
     const res = U.verifyHopB(o, repRec);
-    if (!res.ok) err(res.code, 1, o.extraction_id, res.detail, { hop: "B", ...(res.hint ? { hint: res.hint } : {}) });
+    if (!res.ok) {
+      gateFailedExtIds.add(o.extraction_id);
+      err(res.code, 1, o.extraction_id, res.detail, { hop: "B", ...(res.hint ? { hint: res.hint } : {}) });
+    }
   }
 
   // 1.9 bibliographic valid
@@ -518,6 +620,148 @@ export function validateCorpus(root, opts = {}) {
               if (!known) warn("event_dangling_ref", ev.event_id, `${k} ${rid}`);
             }
           }
+        }
+      }
+    }
+  }
+
+  // --- 1.9 codebooks & codings (spec/12) ---
+  // Every rule here is vacuous on a corpus with no codings, so L1 is unchanged for
+  // every corpus that predates 1.6.0. A bad coding pass must never make a corpus
+  // report "failed" — the conformance level is about provenance integrity, not
+  // about whether a rater was any good.
+  const declaredCoders = new Set();
+  for (const cs of loaded.codingSets || []) {
+    if (schemaDir) {
+      const e = U.validateWithSchema(schemaDir, SCHEMA_FILE["coding-set"], cs.obj, cs.dirRel);
+      for (const m of e) err("schema_invalid", 0, cs.obj.set_id || cs.dirRel, m);
+    }
+    for (const c of cs.obj.coders || []) if (c && c.coder) declaredCoders.add(c.coder);
+    for (const ref of cs.obj.codebook_refs || []) {
+      if (!model.cbkById.has(ref)) warn("dangling_codebook", cs.obj.set_id || cs.dirRel, `codebook_refs ${ref}`);
+    }
+  }
+
+  for (const c of loaded.codebooks || []) {
+    const o = c.obj;
+    if (schemaDir) {
+      const e = U.validateWithSchema(schemaDir, SCHEMA_FILE.codebook, o, c.from);
+      for (const m of e) err("schema_invalid", 0, o.codebook_id || c.from, m);
+    }
+    if (o.namespace && o.slug) {
+      const expect = U.mintCbkId(o);
+      if (o.codebook_id !== expect) err("id_mismatch", 1, o.codebook_id, `expected ${expect}`);
+    }
+    if (!o.provenance || !o.provenance.produced_by || !o.provenance.produced_by.tool) {
+      err("missing_provenance", 1, o.codebook_id, "codebook has no provenance.produced_by.tool");
+    }
+    // Hierarchy integrity: duplicate tokens make a code ambiguous, and a parent
+    // cycle makes rollup non-terminating for any reader that walks it.
+    const byCode = new Map();
+    for (const cd of o.codes || []) {
+      if (!cd || !cd.code) continue;
+      if (byCode.has(cd.code)) err("codebook_code_duplicate", 1, o.codebook_id, `code ${cd.code} defined more than once`);
+      else byCode.set(cd.code, cd);
+    }
+    for (const cd of byCode.values()) {
+      if (cd.parent == null || cd.parent === "") continue;
+      if (!byCode.has(cd.parent)) { err("codebook_parent_dangling", 1, o.codebook_id, `code ${cd.code} parent ${cd.parent} is not defined`); continue; }
+      const path0 = new Set([cd.code]);
+      let cur = byCode.get(cd.parent);
+      while (cur) {
+        if (path0.has(cur.code)) { err("codebook_parent_cycle", 1, o.codebook_id, `parent cycle at ${cur.code}`); break; }
+        path0.add(cur.code);
+        cur = cur.parent ? byCode.get(cur.parent) : null;
+      }
+    }
+    if (o.revision_digest) {
+      const actual = U.codebookRevisionDigest(o.codes || []);
+      if (actual !== o.revision_digest) warn("codebook_revision_stale", o.codebook_id, `revision_digest ${o.revision_digest.slice(0, 19)}… != actual ${actual.slice(0, 19)}…`);
+    }
+  }
+
+  {
+    const usedCodes = new Set();
+    // (codebook, target, coder) -> the active single-label judgement, for disagreement detection.
+    const byTargetCoder = new Map();
+    for (const c of loaded.codings || []) {
+      const o = c.obj;
+      if (schemaDir) {
+        const e = U.validateWithSchema(schemaDir, SCHEMA_FILE.coding, o, c.from);
+        for (const m of e) err("schema_invalid", 0, o.coding_id || c.from, m);
+      }
+      const expect = U.mintCodId(o);
+      if (o.coding_id !== expect) err("id_mismatch", 1, o.coding_id, `expected ${expect}`);
+      if (!o.provenance || !o.provenance.produced_by || !o.provenance.produced_by.tool) {
+        err("missing_provenance", 1, o.coding_id, "coding has no provenance.produced_by.tool");
+      }
+
+      const cbk = model.cbkById.get(o.codebook_ref);
+      if (!cbk) err("dangling_codebook", 1, o.coding_id, `codebook_ref ${o.codebook_ref}`);
+      else {
+        const closed = cbk.closed !== false;
+        const hasCode = o.code !== undefined && o.code !== null && o.code !== "";
+        const hasValue = o.value !== undefined && o.value !== null && o.value !== "";
+        if (hasCode === hasValue) {
+          err("coding_open_closed_mismatch", 1, o.coding_id, hasCode ? "carries both code and value" : "carries neither code nor value");
+        } else if (closed && hasValue) {
+          err("coding_open_closed_mismatch", 1, o.coding_id, `codebook ${cbk.codebook_id} is closed but the coding carries a free-text value`);
+        } else if (!closed && hasCode) {
+          err("coding_open_closed_mismatch", 1, o.coding_id, `codebook ${cbk.codebook_id} is open but the coding carries a code`);
+        } else if (closed && hasCode) {
+          const known = (cbk.codes || []).some((cd) => cd && cd.code === o.code);
+          if (!known) err("coding_code_unknown", 1, o.coding_id, `code ${JSON.stringify(o.code)} is not in codebook ${cbk.codebook_id}`);
+          else usedCodes.add(cbk.codebook_id + "\u0000" + o.code);
+        }
+        if (o.codebook_revision_digest && cbk.revision_digest && o.codebook_revision_digest !== cbk.revision_digest) {
+          warn("coding_codebook_drift", o.coding_id, `coded under ${o.codebook_revision_digest.slice(0, 19)}…, codebook is now ${cbk.revision_digest.slice(0, 19)}…`);
+        }
+      }
+
+      // Target must resolve, and must resolve as the KIND it claims to be.
+      const t = o.target || {};
+      const resolver = { extraction: model.extById, source: model.sourceById, representation: model.repById }[t.kind];
+      if (!resolver) err("dangling_coding_target", 1, o.coding_id, `unknown target kind ${JSON.stringify(t.kind)}`);
+      else if (!resolver.has(t.id)) err("dangling_coding_target", 1, o.coding_id, `target ${t.kind} ${t.id} does not resolve`);
+      else if (t.kind === "extraction") {
+        // A code on a broken span is NOT an error: the coding remains a faithful
+        // record of a judgement; the span is what broke (spec/12). Advisory only,
+        // and §09 requires a surface to show the break rather than the code.
+        const target = model.extById.get(t.id);
+        const st = target.status || "active";
+        if (st !== "active") warn("coding_targets_failed_gate", o.coding_id, `target ${t.id} has status ${st}`);
+        else if (gateFailedExtIds.has(t.id)) warn("coding_targets_failed_gate", o.coding_id, `target ${t.id} fails the hop-B gate`);
+      }
+
+      if (o.coder && declaredCoders.size && !declaredCoders.has(o.coder)) {
+        warn("coding_coder_undeclared", o.coding_id, `coder ${JSON.stringify(o.coder)} is not declared in any coding set manifest`);
+      }
+
+      if ((o.status || "active") === "active" && cbk && cbk.multi_label !== true && t.id && o.coder) {
+        const k = o.codebook_ref + "\u0000" + t.id;
+        if (!byTargetCoder.has(k)) byTargetCoder.set(k, []);
+        byTargetCoder.get(k).push(o);
+      }
+    }
+
+    // Disagreement is informational: it is the inter-rater signal, recorded as data.
+    // §09 forbids a surface from resolving it silently, so the validator must not
+    // treat it as a defect either.
+    for (const [k, group] of byTargetCoder) {
+      if (group.length < 2) continue;
+      const labels = new Set(group.map((g) => (g.code !== undefined && g.code !== "" ? "code:" + g.code : "value:" + g.value)));
+      const coders = new Set(group.map((g) => g.coder));
+      if (labels.size > 1 && coders.size > 1) {
+        const [cbkId, targetId] = k.split("\u0000");
+        warn("coding_disagreement", targetId, `${coders.size} coders disagree on ${cbkId}: ${[...labels].join(" vs ")}`, { codebook_ref: cbkId });
+      }
+    }
+
+    for (const c of loaded.codebooks || []) {
+      for (const cd of c.obj.codes || []) {
+        if (!cd || !cd.code || cd.deprecated) continue;
+        if (!usedCodes.has(c.obj.codebook_id + "\u0000" + cd.code)) {
+          warn("codebook_code_unused", c.obj.codebook_id, `code ${cd.code} is defined but never applied`);
         }
       }
     }
@@ -733,11 +977,15 @@ function locateCmd(extId, corpusRoot, opts = {}) {
   else if (repRec && TEXTUAL(rep.obj.media_type) && ext.locator && ext.locator.type === "char_range") {
     const res = U.verifyHopB(ext, repRec);
     const lookupRep = (id) => { const r = model.repById.get(id); return r ? r.obj : null; };
-    badge = res.ok ? (U.isDerivedText(rep.obj, lookupRep) ? "verified-to-transcript" : "verified") : "failed";
+    badge = res.ok
+      ? (U.isDerivedText(rep.obj, lookupRep)
+          ? "verified-to-transcript"
+          : U.isModelRewrittenText(rep.obj, lookupRep) ? "verified-to-rewrite" : "verified")
+      : "failed";
   }
 
   const primary = U.resolveLocator(loaded, ext.locator, ctxOpt);
-  primary.verified = badge === "verified" || badge === "verified-to-transcript";
+  primary.verified = badge === "verified" || badge === "verified-to-transcript" || badge === "verified-to-rewrite";
 
   const secondary = (ext.secondary_locators || []).map((loc) => {
     const r = U.resolveLocator(loaded, loc, ctxOpt);
@@ -961,16 +1209,72 @@ function exportCmd(root, format) {
 // ---------------------------------------------------------------------------
 // mint <kind>: read a JSON object on stdin, print the content-addressed id.
 // ---------------------------------------------------------------------------
-function mintCmd(kind, stdinText) {
-  const obj = JSON.parse(stdinText);
+function mintOne(kind, obj) {
   if (kind === "ext") return U.mintExtId(obj);
   if (kind === "gen") return U.mintGenId(obj);
   if (kind === "syn") return U.mintSynId(obj);
+  if (kind === "cod") return U.mintCodId(obj);
+  if (kind === "cbk") return U.mintCbkId(obj);
+  if (kind === "rep") {
+    // A rep-/img- id is the byte hash, so mint from a path, raw bytes, or a hash.
+    if (obj.path) return U.mintRepId(fs.readFileSync(path.resolve(obj.path)));
+    if (obj.sha256) return "rep-" + U.bareHash(obj.sha256).slice(0, 12);
+    throw new Error("mint rep: need { path } or { sha256 }");
+  }
   if (kind === "src") {
     if (obj.canonical_url || obj.url) return U.mintSrcId({ canonicalUrl: U.canonicalUrl(obj.canonical_url || obj.url) });
     return U.mintSrcId({ primaryBytesSha256: obj.sha256 });
   }
-  throw new Error(`mint: unknown kind ${kind} (expected src|ext|gen|syn)`);
+  throw new Error(`mint: unknown kind ${kind} (expected src|rep|ext|gen|syn|cod|cbk)`);
+}
+
+function mintCmd(kind, stdinText) {
+  return mintOne(kind, JSON.parse(stdinText));
+}
+
+/** JSONL in, {i,id} JSONL out. One process for a whole coding pass. */
+function mintBatchCmd(kind, stdinText) {
+  const objs = readJsonlText(stdinText);
+  return objs.map((o, i) => {
+    try { return { i, id: mintOne(kind, o) }; }
+    catch (e) { return { i, error: e.message }; }
+  });
+}
+
+/**
+ * upc batch — NDJSON commands in, NDJSON results out, over ONE loadCorpus with a warm
+ * representation cache. `locate` is O(whole corpus) per invocation, so a reader that
+ * shells out per passage is quadratic; this is the fix. Deliberately not a server:
+ * no port, no auth, no dependency in a zero-dependency repo.
+ */
+function batchCmd(root, stdinText) {
+  const cmds = readJsonlText(stdinText);
+  U.clearRepCache();
+  const out = [];
+  for (let i = 0; i < cmds.length; i++) {
+    const c = cmds[i] || {};
+    try {
+      switch (c.cmd) {
+        case "locate":
+          out.push({ i, cmd: c.cmd, result: locateCmd(c.ext, root, { format: c.format || "json", context: c.context }) });
+          break;
+        case "verify":
+          out.push({ i, cmd: c.cmd, result: verifyExtractionCmd(c.ext, root) });
+          break;
+        case "quote":
+          out.push({ i, cmd: c.cmd, result: quoteCmd(c.ext, root, c.narrow || null) });
+          break;
+        case "codebook":
+          out.push({ i, cmd: c.cmd, result: codebookCmd(root, c.id) });
+          break;
+        default:
+          out.push({ i, error: `unknown cmd ${JSON.stringify(c.cmd)} (expected locate|verify|quote|codebook)` });
+      }
+    } catch (e) {
+      out.push({ i, cmd: c.cmd, error: e.message });
+    }
+  }
+  return out;
 }
 
 // ---------------------------------------------------------------------------
@@ -1001,6 +1305,287 @@ function reanchorOne(loaded, model, ext, toRepId) {
     return { extraction: ext.extraction_id, result: "reanchored", to: child.extraction_id, child, mark_superseded: true };
   }
   return { extraction: ext.extraction_id, result: "needs_review", candidates: hits.length, detail: hits.length === 0 ? "quote not found in target" : `${hits.length} matches (ambiguous)` };
+}
+
+// ---------------------------------------------------------------------------
+// 1.6.0 — anchoring, coding, and batch entry points (spec/03 re-extraction, spec/12)
+// ---------------------------------------------------------------------------
+
+/** Append one activity event to the journal, minting the next sequential evt- id. */
+function appendEvent(loaded, ev) {
+  const rel = (loaded.sections && loaded.sections.provenance) || "provenance/events.jsonl";
+  const { abs, contained } = U.resolveInside(loaded.root, rel);
+  if (!contained) return null;
+  const prior = fs.existsSync(abs) ? U.readJSONL(abs) : [];
+  let max = 0;
+  for (const e of prior) {
+    const m = /^evt-(\d+)$/.exec(e.event_id || "");
+    if (m) max = Math.max(max, Number(m[1]));
+  }
+  const rec = { event_id: "evt-" + String(max + 1).padStart(6, "0"), ...ev };
+  fs.mkdirSync(path.dirname(abs), { recursive: true });
+  U.atomicWriteFile(abs, prior.concat([rec]).map((o) => JSON.stringify(o)).join("\n") + "\n");
+  return rec.event_id;
+}
+
+function readJsonlText(text) {
+  const out = [];
+  const lines = String(text || "").split("\n");
+  for (let i = 0; i < lines.length; i++) {
+    const t = lines[i].trim();
+    if (!t) continue;
+    try { out.push(JSON.parse(t)); }
+    catch (e) { throw new Error(`stdin line ${i + 1}: ${e.message}`); }
+  }
+  return out;
+}
+
+/**
+ * upc anchor — the implementation of the re-extraction protocol (spec/03, spec/09).
+ * A model proposes candidate quotations as data; THIS decides whether each one is
+ * real. Exactly one byte-exact occurrence mints an active char_range extraction that
+ * passes hop B by construction. Zero or several occurrences never produce an active
+ * quotation. The model chooses WHAT to extract; the tool guarantees THAT IT IS REAL.
+ */
+function anchorCmd(root, repId, candidates, opts = {}) {
+  const loaded = U.loadCorpus(root);
+  const model = buildModel(loaded);
+  const rep = model.repById.get(repId);
+  if (!rep) throw new Error(`no representation ${repId}`);
+  if (!TEXTUAL(rep.obj.media_type)) throw new Error(`representation ${repId} is not textual (${rep.obj.media_type})`);
+  if (!rep.contained || !fs.existsSync(rep.abs)) throw new Error(`representation ${repId} bytes unavailable`);
+
+  const repRec = U.getRepFile(rep.abs);
+  if (!repRec.utf8ok) throw new Error(`representation ${repId} is not valid UTF-8`);
+  if (U.bareHash(rep.obj.sha256 || "") !== repRec.sha256) {
+    throw new Error(`representation ${repId} fails hop A: stored sha256 does not match its bytes`);
+  }
+  const whole = repRec.text;
+  const sourceId = rep.sourceId;
+  const existing = new Set(loaded.extractions.map((e) => e.obj.extraction_id));
+
+  const results = [];
+  const minted = [];
+  for (let i = 0; i < candidates.length; i++) {
+    const c = candidates[i] || {};
+    const q = c.quote;
+    if (typeof q !== "string" || q === "") { results.push({ i, status: "invalid", detail: "no quote" }); continue; }
+    const hits = [];
+    let from = 0, idx;
+    while ((idx = whole.indexOf(q, from)) !== -1) { hits.push(idx); from = idx + 1; }
+    if (hits.length !== 1) {
+      results.push({ i, status: hits.length === 0 ? "not_found" : "ambiguous", quote: q, candidates: hits.length });
+      continue;
+    }
+    const start = U.codepointLength(whole.slice(0, hits[0]));
+    const ext = {
+      source_id: sourceId,
+      representation_ref: repId,
+      type: c.type || opts.type || "evidence",
+      status: "active",
+      direct_quote: q,
+      locator: { type: "char_range", representation_ref: repId, value: { start, end: start + U.codepointLength(q) } },
+      provenance: {
+        produced_by: { tool: opts.tool || "upc", method: "model", ...(opts.model ? { model: opts.model } : {}), ...(opts.promptVersion ? { prompt_version: opts.promptVersion } : {}) },
+        created_at: nowStamp(),
+        derived_from: { source_ids: [sourceId], representation_refs: [repId] },
+        input_digest: "sha256:" + repRec.sha256,
+      },
+    };
+    if (c.text) ext.text = c.text;
+    if (c.query || opts.query) ext.query = c.query || opts.query;
+    if (c.note) ext.rationale = c.note;
+    if (c.interpretation) ext.interpretation = c.interpretation;
+    if (c.confidence) ext.confidence = c.confidence;
+    ext.extraction_id = U.mintExtId(ext);
+    const dup = existing.has(ext.extraction_id);
+    if (!dup) minted.push(ext);
+    existing.add(ext.extraction_id);
+    results.push({ i, status: dup ? "exists" : "anchored", extraction_id: ext.extraction_id, char_range: ext.locator.value });
+  }
+
+  if (!opts.dryRun && minted.length) {
+    let targetRel;
+    if (opts.set) {
+      const base = loaded.sections.extractions || "extractions/";
+      targetRel = path.join(base, opts.set, "items.jsonl").replace(/\\/g, "/");
+      const manRel = path.join(base, opts.set, "manifest.json").replace(/\\/g, "/");
+      const { abs: manAbs } = U.resolveInside(loaded.root, manRel);
+      fs.mkdirSync(path.dirname(manAbs), { recursive: true });
+      if (!fs.existsSync(manAbs)) {
+        U.atomicWriteFile(manAbs, JSON.stringify({
+          set_id: opts.set, title: opts.title || opts.set, query: opts.query || "", items_path: targetRel,
+          provenance: { produced_by: { tool: opts.tool || "upc", method: "model" }, created_at: nowStamp() },
+        }, null, 2) + "\n");
+      }
+    } else {
+      const src = model.sourceById.get(sourceId);
+      targetRel = (src && src.obj.extractions_path) || path.join(src ? src.dirRel : "sources", "extractions.jsonl").replace(/\\/g, "/");
+    }
+    const { abs, contained } = U.resolveInside(loaded.root, targetRel);
+    if (!contained) throw new Error(`refusing to write outside the corpus: ${targetRel}`);
+    fs.mkdirSync(path.dirname(abs), { recursive: true });
+    const prior = fs.existsSync(abs) ? U.readJSONL(abs) : [];
+    U.atomicWriteFile(abs, prior.concat(minted).map((o) => JSON.stringify(o)).join("\n") + "\n");
+    appendEvent(loaded, {
+      activity_type: "extract",
+      tool: opts.tool || "upc",
+      started_at: nowStamp(),
+      status: "success",
+      inputs: { representation_refs: [repId] },
+      outputs: { extraction_ids: minted.map((m) => m.extraction_id) },
+      notes: `anchored ${minted.length}/${candidates.length} candidate(s)`,
+    });
+  }
+
+  const tally = { anchored: 0, exists: 0, not_found: 0, ambiguous: 0, invalid: 0 };
+  for (const r of results) tally[r.status] = (tally[r.status] || 0) + 1;
+  return { status: "ok", representation_ref: repId, source_id: sourceId, wrote: opts.dryRun ? 0 : minted.length, tally, results };
+}
+
+/**
+ * upc code — batch-apply codings (spec/12). Batch only, deliberately: a per-object
+ * form would invite one process per coding, which is what made `mint` unusable at scale.
+ */
+function codeCmd(root, setId, records, opts = {}) {
+  const loaded = U.loadCorpus(root);
+  const model = buildModel(loaded);
+  const base = loaded.sections.codings || "codings/";
+  const setDirRel = path.join(base, setId).replace(/\\/g, "/");
+  const itemsRel = path.join(setDirRel, "items.jsonl").replace(/\\/g, "/");
+  const manRel = path.join(setDirRel, "manifest.json").replace(/\\/g, "/");
+  const { abs: itemsAbs, contained: ic } = U.resolveInside(loaded.root, itemsRel);
+  const { abs: manAbs, contained: mc } = U.resolveInside(loaded.root, manRel);
+  if (!ic || !mc) throw new Error(`refusing to write outside the corpus: ${setDirRel}`);
+
+  const prior = fs.existsSync(itemsAbs) ? U.readJSONL(itemsAbs) : [];
+  const byId = new Map(prior.map((o) => [o.coding_id, o]));
+  const results = [];
+  const fresh = [];
+  const coders = new Set();
+
+  for (let i = 0; i < records.length; i++) {
+    const r = records[i] || {};
+    const t = r.target || {};
+    if (!r.codebook_ref || !t.kind || !t.id || !r.coder) { results.push({ i, status: "invalid", detail: "need codebook_ref, target.{kind,id}, coder" }); continue; }
+    const cbk = model.cbkById.get(r.codebook_ref);
+    if (!cbk) { results.push({ i, status: "error", detail: `unknown codebook ${r.codebook_ref}` }); continue; }
+    const closed = cbk.closed !== false;
+    const hasCode = r.code !== undefined && r.code !== null && r.code !== "";
+    const hasValue = r.value !== undefined && r.value !== null && r.value !== "";
+    if (hasCode === hasValue) { results.push({ i, status: "error", detail: hasCode ? "carries both code and value" : "carries neither code nor value" }); continue; }
+    if (closed && !hasCode) { results.push({ i, status: "error", detail: `codebook ${cbk.codebook_id} is closed; a code is required` }); continue; }
+    if (!closed && !hasValue) { results.push({ i, status: "error", detail: `codebook ${cbk.codebook_id} is open; a value is required` }); continue; }
+    if (closed && !(cbk.codes || []).some((cd) => cd && cd.code === r.code)) {
+      results.push({ i, status: "error", detail: `code ${JSON.stringify(r.code)} is not in codebook ${cbk.codebook_id}` });
+      continue;
+    }
+    const resolver = { extraction: model.extById, source: model.sourceById, representation: model.repById }[t.kind];
+    if (!resolver || !resolver.has(t.id)) { results.push({ i, status: "error", detail: `target ${t.kind} ${t.id} does not resolve` }); continue; }
+
+    const cod = {
+      codebook_ref: r.codebook_ref,
+      ...(hasCode ? { code: r.code } : { value: r.value }),
+      target: { kind: t.kind, id: t.id },
+      coder: r.coder,
+      status: "active",
+      ...(cbk.revision ? { codebook_revision: cbk.revision } : {}),
+      ...(cbk.revision_digest ? { codebook_revision_digest: cbk.revision_digest } : {}),
+      ...(r.confidence ? { confidence: r.confidence } : {}),
+      ...(r.confidence_score != null ? { confidence_score: r.confidence_score } : {}),
+      ...(r.rationale ? { rationale: r.rationale } : {}),
+      ...(r.query || opts.query ? { query: r.query || opts.query } : {}),
+      provenance: r.provenance || {
+        produced_by: { tool: opts.tool || "upc", method: opts.method || "model", ...(opts.model ? { model: opts.model } : {}), ...(opts.promptVersion ? { prompt_version: opts.promptVersion } : {}) },
+        created_at: nowStamp(),
+        derived_from: t.kind === "extraction" ? { extraction_ids: [t.id] } : t.kind === "source" ? { source_ids: [t.id] } : { representation_refs: [t.id] },
+      },
+    };
+    cod.coding_id = U.mintCodId(cod);
+    coders.add(r.coder);
+
+    if (byId.has(cod.coding_id)) {
+      // Same judgement, same rater: the id is stable by construction, so refresh the
+      // mutable fields in place rather than writing a second record. This is what
+      // makes re-running an unchanged coding pass idempotent.
+      const existingRec = byId.get(cod.coding_id);
+      const keepProv = existingRec.provenance;
+      Object.assign(existingRec, cod);
+      existingRec.provenance = keepProv;
+      existingRec.status = "active";
+      results.push({ i, status: "unchanged", coding_id: cod.coding_id });
+      continue;
+    }
+    // A DIFFERENT answer from the same rater about the same target supersedes the old
+    // one (spec/03's lifecycle, reused) rather than mutating a content-addressed id.
+    for (const o of prior) {
+      if ((o.status || "active") !== "active") continue;
+      if (o.codebook_ref !== cod.codebook_ref || o.coder !== cod.coder) continue;
+      if (!o.target || o.target.id !== t.id || o.target.kind !== t.kind) continue;
+      if (cbk.multi_label === true) continue;
+      o.status = "superseded";
+      o.superseded_by = cod.coding_id;
+      cod.supersedes = o.coding_id;
+    }
+    fresh.push(cod);
+    byId.set(cod.coding_id, cod);
+    results.push({ i, status: "coded", coding_id: cod.coding_id, ...(cod.supersedes ? { supersedes: cod.supersedes } : {}) });
+  }
+
+  if (!opts.dryRun) {
+    fs.mkdirSync(path.dirname(itemsAbs), { recursive: true });
+    let man = fs.existsSync(manAbs) ? U.readJSON(manAbs) : null;
+    if (!man) {
+      man = { set_id: setId, title: opts.title || setId, ...(opts.query ? { query: opts.query } : {}), items_path: itemsRel, codebook_refs: [], coders: [],
+        provenance: { produced_by: { tool: opts.tool || "upc", method: opts.method || "model" }, created_at: nowStamp() } };
+    }
+    man.items_path = itemsRel;
+    const refs = new Set(man.codebook_refs || []);
+    for (const c of prior.concat(fresh)) if (c.codebook_ref) refs.add(c.codebook_ref);
+    man.codebook_refs = [...refs].sort();
+    const declared = new Map((man.coders || []).map((c) => [c.coder, c]));
+    for (const c of coders) {
+      if (!declared.has(c)) declared.set(c, { coder: c, kind: opts.coderKind || "model", ...(opts.model ? { model: opts.model } : {}), ...(opts.promptVersion ? { prompt_version: opts.promptVersion } : {}), ...(opts.tool ? { tool: opts.tool } : {}) });
+    }
+    man.coders = [...declared.values()];
+    U.atomicWriteFile(manAbs, JSON.stringify(man, null, 2) + "\n");
+    U.atomicWriteFile(itemsAbs, prior.concat(fresh).map((o) => JSON.stringify(o)).join("\n") + "\n");
+    if (fresh.length) {
+      appendEvent(loaded, {
+        activity_type: "generate", tool: opts.tool || "upc", started_at: nowStamp(), status: "success",
+        outputs: { coding_ids: fresh.map((c) => c.coding_id) },
+        notes: `coded ${fresh.length} judgement(s) into ${setId}`,
+      });
+    }
+  }
+
+  const tally = {};
+  for (const r of results) tally[r.status] = (tally[r.status] || 0) + 1;
+  return { status: "ok", set: setId, wrote: opts.dryRun ? 0 : fresh.length, tally, results };
+}
+
+/** upc codebook — read-only inspection of the coding schemes in a corpus. */
+function codebookCmd(root, id) {
+  const loaded = U.loadCorpus(root);
+  const model = buildModel(loaded);
+  const used = new Map();
+  for (const c of loaded.codings || []) {
+    const k = c.obj.codebook_ref + " " + (c.obj.code !== undefined ? c.obj.code : "");
+    used.set(k, (used.get(k) || 0) + 1);
+  }
+  if (id) {
+    const o = model.cbkById.get(id);
+    if (!o) throw new Error(`no codebook ${id}`);
+    return { ...o, codes: (o.codes || []).map((cd) => ({ ...cd, applied: used.get(o.codebook_id + " " + cd.code) || 0 })) };
+  }
+  return {
+    status: "ok",
+    codebooks: (loaded.codebooks || []).map((c) => ({
+      codebook_id: c.obj.codebook_id, namespace: c.obj.namespace, slug: c.obj.slug, title: c.obj.title,
+      closed: c.obj.closed !== false, unit: c.obj.unit, codes: (c.obj.codes || []).length,
+      codings: (loaded.codings || []).filter((x) => x.obj.codebook_ref === c.obj.codebook_id).length,
+    })),
+  };
 }
 
 function reanchorCmd(root, target, toRepId) {
@@ -1131,11 +1716,50 @@ async function main() {
         break;
       }
       case "mint": {
-        const kind = rest[0];
-        const corpus = arg(rest, "--corpus");
+        const batch = rest.includes("--batch");
+        const kind = rest.filter((a) => !a.startsWith("--"))[0];
         const stdin = fs.readFileSync(0, "utf8");
-        void corpus;
-        print(mintCmd(kind, stdin));
+        if (batch) { for (const r of mintBatchCmd(kind, stdin)) process.stdout.write(JSON.stringify(r) + "\n"); }
+        else print(mintCmd(kind, stdin));
+        break;
+      }
+      case "anchor": {
+        const corpus = arg(rest, "--corpus");
+        const repId = arg(rest, "--rep");
+        if (!corpus || !repId) { process.stderr.write("usage: upc anchor --corpus <dir> --rep <rep-id> [--set <id>] [--type <t>] [--query <q>] [--tool <t>] [--model <m>] [--dry-run] < candidates.jsonl\n"); process.exit(2); }
+        const cands = readJsonlText(fs.readFileSync(0, "utf8"));
+        const out = anchorCmd(corpus, repId, cands, {
+          set: arg(rest, "--set"), type: arg(rest, "--type"), query: arg(rest, "--query"),
+          tool: arg(rest, "--tool"), model: arg(rest, "--model"), promptVersion: arg(rest, "--prompt-version"),
+          dryRun: rest.includes("--dry-run"),
+        });
+        print(out);
+        break;
+      }
+      case "code": {
+        const corpus = arg(rest, "--corpus");
+        const set = arg(rest, "--set");
+        if (!corpus || !set) { process.stderr.write("usage: upc code --corpus <dir> --set <cds-id> [--coder-kind model|human] [--tool <t>] [--model <m>] [--dry-run] < codings.jsonl\n"); process.exit(2); }
+        const recs = readJsonlText(fs.readFileSync(0, "utf8"));
+        const out = codeCmd(corpus, set, recs, {
+          query: arg(rest, "--query"), tool: arg(rest, "--tool"), model: arg(rest, "--model"),
+          method: arg(rest, "--method"), coderKind: arg(rest, "--coder-kind"), promptVersion: arg(rest, "--prompt-version"),
+          dryRun: rest.includes("--dry-run"),
+        });
+        print(out);
+        process.exit(Object.keys(out.tally).some((k) => k === "error" || k === "invalid") ? 1 : 0);
+      }
+      case "codebook": {
+        const corpus = arg(rest, "--corpus") || rest.find((a) => !a.startsWith("--") && !a.startsWith("cbk-"));
+        const id = rest.find((a) => a.startsWith("cbk-"));
+        if (!corpus) { process.stderr.write("usage: upc codebook <dir> [<cbk-id>]\n"); process.exit(2); }
+        print(codebookCmd(corpus, id));
+        break;
+      }
+      case "batch": {
+        const corpus = arg(rest, "--corpus") || rest.find((a) => !a.startsWith("--"));
+        if (!corpus) { process.stderr.write("usage: upc batch --corpus <dir> < commands.ndjson\n"); process.exit(2); }
+        for (const r of batchCmd(corpus, fs.readFileSync(0, "utf8"))) process.stdout.write(JSON.stringify(r) + "\n");
         break;
       }
       case "reanchor": {
@@ -1146,8 +1770,27 @@ async function main() {
         print(reanchorCmd(corpus, target, to));
         break;
       }
+      case "version": {
+        const info = { spec_version: specVersion(), schema_hash: computeSchemaHash(), commands: COMMANDS, node: process.version };
+        if (rest.includes("--json")) print(info);
+        else print(`upc ${info.spec_version}\n${info.schema_hash || "(schemas not found)"}\n`);
+        break;
+      }
+      case "check-compat": {
+        const requires = arg(rest, "--requires");
+        if (!requires) { process.stderr.write('usage: upc check-compat --requires "^1.6" [--schema-hash <sha256:...>]\n'); process.exit(2); }
+        const version = specVersion();
+        const { ok, reason } = satisfiesRequirement(version, requires);
+        const wantHash = arg(rest, "--schema-hash");
+        const gotHash = computeSchemaHash();
+        const hashOk = wantHash === undefined ? null : wantHash === gotHash;
+        const out = { status: ok && hashOk !== false ? "ok" : "incompatible", spec_version: version, requires, reason, schema_hash: gotHash };
+        if (hashOk !== null) { out.schema_hash_expected = wantHash; out.schema_hash_match = hashOk; }
+        print(out);
+        process.exit(out.status === "ok" ? 0 : 1);
+      }
       default:
-        process.stderr.write("UPC 1.5.0 — commands: validate, verify-quotes, verify, quote, locate, regen, build-index, export, mint, reanchor\n");
+        process.stderr.write(`UPC ${specVersion()} — commands: ${COMMANDS.join(", ")}\n`);
         process.exit(cmd ? 2 : 0);
     }
   } catch (e) {
@@ -1158,7 +1801,7 @@ async function main() {
 
 // Exports for thin wrappers / tests; only run the CLI when invoked directly.
 // (validateCorpus is already exported at its declaration.)
-export { verifyQuotesFile, verifyExtractionCmd, quoteCmd, locateCmd, regenCmd, exportCmd, mintCmd, reanchorCmd, buildModel, sourcesCsv, extractionsCsv, computeSchemaHash };
+export { verifyQuotesFile, verifyExtractionCmd, quoteCmd, locateCmd, regenCmd, exportCmd, mintCmd, mintBatchCmd, anchorCmd, codeCmd, codebookCmd, batchCmd, appendEvent, reanchorCmd, buildModel, sourcesCsv, extractionsCsv, computeSchemaHash, specVersion, satisfiesRequirement, COMMANDS };
 
 const _isDirect = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
 if (_isDirect) main();

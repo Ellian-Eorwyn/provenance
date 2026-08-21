@@ -1,0 +1,6 @@
+{
+  "fixture": "representation-id-conflict",
+  "expect": [
+    "id_duplicate"
+  ]
+}

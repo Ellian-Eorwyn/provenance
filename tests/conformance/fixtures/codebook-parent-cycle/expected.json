@@ -1,0 +1,6 @@
+{
+  "fixture": "codebook-parent-cycle",
+  "expect": [
+    "codebook_parent_cycle"
+  ]
+}

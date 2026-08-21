@@ -55,7 +55,7 @@ or informational).
 
 | # | Rule | Code(s) | Sev | Hop | Class |
 |---|---|---|---|---|---|
-| 1.1 | Every object id is well-formed, unique, and equals its recomputed content-addressed value (§06) | `id_format`, `id_duplicate`, `id_mismatch` | E | — | Mech |
+| 1.1 | Every object id is well-formed, unique, and equals its recomputed content-addressed value (§06). **Exception for shared representations:** when two representation records carry the same `representation_id`, the validator compares their `sha256`. Equal hashes are the *same bytes* legitimately recorded by more than one source (a syndicated figure, a shared document) or in more than one role; that is the advisory `representation_shared`, not a duplicate. Unequal hashes remain `id_duplicate` — the id **is** the byte hash, so disagreeing hashes mean one record is misdescribing its own bytes. | `id_format`, `id_duplicate`, `id_mismatch` | E | — | Mech |
 | 1.2 | Every referenced `source_id` / `representation_ref` / `extraction_id` / `generation_id` / `synthesis_id` exists | `dangling_source`, `dangling_representation`, `dangling_extraction`, `dangling_generation`, `dangling_synthesis` | E | — | Mech |
 | 1.3 | Each extraction's `locator.representation_ref` equals its `representation_ref` | `locator_rep_mismatch` | E | — | Mech |
 | 1.4 | Each locator's `value` matches its type's shape and is in range (`0 ≤ start ≤ end ≤ len` for `char_range`) | `locator_range_invalid` | E | B | Mech |
@@ -64,6 +64,16 @@ or informational).
 | 1.7 | Non-active extractions (needs_review / superseded / retracted) are surfaced | `flagged_extraction` | W | B | Advis |
 | 1.8 | Every derived object (representation, extraction, generation, synthesis) carries a `provenance` stamp with `produced_by` and `created_at` | `missing_provenance` | E | — | Oblig |
 | 1.9 | Where bibliographic metadata is present, it is valid CSL-aligned JSON | `bibliographic_invalid` | E | — | Mech |
+| 1.10 | Every coding resolves its codebook and its target, and uses the form its codebook declares (§12) | `dangling_codebook`, `dangling_coding_target`, `coding_code_unknown`, `coding_open_closed_mismatch` | E | — | Mech |
+| 1.11 | Every codebook's `codes[]` are uniquely tokenized and its `parent` hierarchy is acyclic and resolvable (§12) | `codebook_code_duplicate`, `codebook_parent_cycle`, `codebook_parent_dangling` | E | — | Mech |
+
+Rules 1.10–1.11 are **vacuous on a corpus with no codings**, so L1 is unchanged
+for every corpus written before 1.6.0, and adding codings never changes a corpus's
+conformance level. A poor coding pass must not make a corpus report `failed`: the
+level describes provenance integrity, not whether a rater was any good. What is an
+error is a *structurally incoherent* coding — one naming a codebook or target that
+does not exist, using a code its codebook does not define, or mixing the open and
+closed forms.
 
 ### L2 — Synthesized
 
@@ -94,6 +104,13 @@ or informational).
 | A `secondary_locators[]` entry addresses a representation of a *different source* | `secondary_locator_cross_source` | Advis | crossing *representations* within one source is legitimate and expected (§03, §05); crossing sources is not |
 | A secondary `bbox` falls outside its reference frame | `bbox_out_of_bounds` | Advis | checked against the locator's `reference`, else the target image's `dimensions`; skipped when neither is recorded (§05) |
 | A secondary `line_range` starts below 1 or ends past the representation's last line | `line_range_out_of_bounds` | Advis | line numbers are 1-based and inclusive (§03) |
+| The same bytes are recorded as a representation by more than one source or role | `representation_shared` | Advis | rule 1.1's exception; legitimate content-addressed convergence, not a defect (§12) |
+| A coding targets an extraction that fails hop B, or is not `active` | `coding_targets_failed_gate` | Advis | **never an error**: the coding remains a faithful record of a judgement; the *span* is what broke. Repair belongs to the extraction (§12) |
+| A coding records a codebook revision that no longer matches | `coding_codebook_drift` | Advis | the codebook was edited after the judgement; the same shape as `stale_input` (§12) |
+| A coding's `coder` is not declared in any coding-set manifest | `coding_coder_undeclared` | Advis | coder identity is declared in the manifest so a model upgrade does not re-mint ids (§12) |
+| Two coders assign different labels to one target under one single-label codebook | `coding_disagreement` | Advis | informational; inter-rater disagreement is data, and a surface MUST NOT resolve it silently (§09, §12) |
+| A codebook defines a code that is never applied | `codebook_code_unused` | Advis | codebook hygiene |
+| A codebook's `revision_digest` does not match its `codes[]` | `codebook_revision_stale` | Advis | regenerate the digest (§12) |
 
 ## Rule classes
 
@@ -137,7 +154,7 @@ error-severity finding:
 {
   "status": "failed",
   "corpus": "/path/to/corpus",
-  "upc_spec_version": "1.5.0",
+  "upc_spec_version": "1.6.0",
   "level": "L1",
   "counts": { "sources": 12, "representations": 34, "extractions": 88, "generations": 12, "syntheses": 1 },
   "errors": [

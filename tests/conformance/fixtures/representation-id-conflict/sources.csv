@@ -1,0 +1,3 @@
+source_id,title,source_kind,item_type,authors,issued,primary_url,final_url,fetch_status,sha256,path,tags,n_representations,n_extractions,n_generations
+src-bacbb80a8fa2,Conflicting copy,url,,,,https://example.org/conflict,,success,sha256:f1c4aec913ad23e765ee17c7de1ea8bfb30de232c5efa131625bbfcbc904ad9c,sources/note-conflict,,1,0,0
+src-c76847068a0a,Note,document,document,,2026,,,,sha256:8389412e9ea792add58bb528fff88b6d201eb0573272bfc144091c01d365dabd,sources/note-migration,,1,1,0

@@ -12,6 +12,7 @@ import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
 import {
   sha256Hex, mintRepId, mintSrcId, mintExtId, mintGenId, mintSynId,
+  mintCbkId, mintCodId, codebookRevisionDigest,
   computeInputDigest, codepointLength, atomicWriteFile,
 } from "../../skill/universal-provenance/scripts/upc_common.mjs";
 
@@ -71,7 +72,7 @@ function seed(dir, { withL2 } = {}) {
       { event_id: "evt-000002", activity_type: "synthesize", tool: "t", started_at: TS, ended_at: TS, inputs: { extraction_ids: [ext.extraction_id] }, outputs: { synthesis_ids: [syn.synthesis_id] }, status: "success", notes: null },
     ]);
   }
-  wJSON(path.join(dir, "corpus.json"), { upc_spec_version: "1.5.0", corpus_id: "cor-" + sha256Hex(Buffer.from(dir, "utf8")).slice(0, 12), title: "Fixture", readme: "fixture", created: TS, modified: TS, sections });
+  wJSON(path.join(dir, "corpus.json"), { upc_spec_version: "1.6.0", corpus_id: "cor-" + sha256Hex(Buffer.from(dir, "utf8")).slice(0, 12), title: "Fixture", readme: "fixture", created: TS, modified: TS, sections });
   regen(dir);
   return { slug, sd, repId, srcId, ext, gen, syn };
 }
@@ -181,4 +182,143 @@ make("paraphrase-as-quote", ["cited_extraction_not_quotable"], (d) => {
   s.output.sha256 = sha(md); saveJSON(sp, s); regen(d);
 });
 
+// -- 1.6.0 codebooks & codings (spec/12) --------------------------------------
+// A coding pass layered onto the L1 base. `seedCoded` returns the ids so each
+// mutation below can corrupt exactly one thing.
+function seedCoded(dir, { closed = true, codes = null } = {}) {
+  const base = seed(dir);
+  const theCodes = codes || [
+    { code: "operator", label: "Operator", definition: "Runs the system." },
+    { code: "utility", label: "Utility", definition: "A regulated utility.", parent: "operator" },
+  ];
+  const cbk = {
+    codebook_id: "", namespace: "fixture", slug: closed ? "actor" : "theme",
+    title: "Actor", closed, unit: "passage", revision: 1,
+    revision_digest: codebookRevisionDigest(theCodes), codes: theCodes,
+    provenance: { produced_by: { tool: "t", method: "manual" }, created_at: TS },
+  };
+  cbk.codebook_id = mintCbkId(cbk);
+  wJSON(path.join(dir, "codebooks", cbk.codebook_id + ".json"), cbk);
+
+  const cod = {
+    codebook_ref: cbk.codebook_id,
+    ...(closed ? { code: "utility" } : { value: "an emergent theme" }),
+    target: { kind: "extraction", id: base.ext.extraction_id },
+    coder: "coder-a", status: "active",
+    codebook_revision: 1, codebook_revision_digest: cbk.revision_digest,
+    provenance: { produced_by: { tool: "t", model: "m", method: "model" }, created_at: TS, derived_from: { extraction_ids: [base.ext.extraction_id] } },
+  };
+  cod.coding_id = mintCodId(cod);
+  const man = {
+    set_id: "cds-fixture", title: "Fixture coding pass", items_path: "codings/cds-fixture/items.jsonl",
+    codebook_refs: [cbk.codebook_id], coders: [{ coder: "coder-a", kind: "model", model: "m" }],
+    provenance: { produced_by: { tool: "t", method: "model" }, created_at: TS },
+  };
+  wJSON(path.join(dir, "codings", "cds-fixture", "manifest.json"), man);
+  wJSONL(path.join(dir, "codings", "cds-fixture", "items.jsonl"), [cod]);
+
+  const cj = path.join(dir, "corpus.json");
+  const corpus = loadJSON(cj);
+  corpus.sections.codebooks = "codebooks/";
+  corpus.sections.codings = "codings/";
+  saveJSON(cj, corpus);
+  regen(dir);
+  return { ...base, cbk, cod, man };
+}
+const itemsPath = (d) => path.join(d, "codings", "cds-fixture", "items.jsonl");
+const cbkPath = (d, cbk) => path.join(d, "codebooks", cbk.codebook_id + ".json");
+
+// A coded corpus is still a clean corpus. `codebook_code_unused` is a warning, and
+// warnings never appear in `expect`, which lists the codes that MUST fire as errors.
+make("pass-coded", [], (d) => { seedCoded(d); });
+
+make("coding-dangling-codebook", ["dangling_codebook"], (d) => {
+  const { cod, cbk } = seedCoded(d);
+  fs.rmSync(cbkPath(d, cbk));
+  wJSONL(itemsPath(d), [cod]); regen(d);
+});
+make("coding-dangling-target", ["dangling_coding_target"], (d) => {
+  const { cod } = seedCoded(d);
+  cod.target = { kind: "extraction", id: "ext-000000000000" }; cod.coding_id = mintCodId(cod);
+  wJSONL(itemsPath(d), [cod]); regen(d);
+});
+make("coding-code-unknown", ["coding_code_unknown"], (d) => {
+  const { cod } = seedCoded(d);
+  cod.code = "no-such-code"; cod.coding_id = mintCodId(cod);
+  wJSONL(itemsPath(d), [cod]); regen(d);
+});
+make("coding-open-closed-mismatch", ["coding_open_closed_mismatch"], (d) => {
+  // A free-text value against a CLOSED codebook: the scheme says pick from the list.
+  const { cod } = seedCoded(d);
+  delete cod.code; cod.value = "freehand"; cod.coding_id = mintCodId(cod);
+  wJSONL(itemsPath(d), [cod]); regen(d);
+});
+make("coding-id-mismatch", ["id_mismatch"], (d) => {
+  const { cod } = seedCoded(d);
+  cod.coding_id = "cod-000000000000";
+  wJSONL(itemsPath(d), [cod]); regen(d);
+});
+make("coding-missing-provenance", ["missing_provenance"], (d) => {
+  const { cod } = seedCoded(d);
+  delete cod.provenance;
+  wJSONL(itemsPath(d), [cod]); regen(d);
+});
+make("codebook-code-duplicate", ["codebook_code_duplicate"], (d) => {
+  const { cbk } = seedCoded(d);
+  cbk.codes = [{ code: "dup", label: "One" }, { code: "dup", label: "Two" }];
+  cbk.revision_digest = codebookRevisionDigest(cbk.codes);
+  saveJSON(cbkPath(d, cbk), cbk); regen(d);
+});
+make("codebook-parent-cycle", ["codebook_parent_cycle"], (d) => {
+  const { cbk } = seedCoded(d);
+  cbk.codes = [{ code: "utility", label: "U", parent: "operator" }, { code: "operator", label: "O", parent: "utility" }];
+  cbk.revision_digest = codebookRevisionDigest(cbk.codes);
+  saveJSON(cbkPath(d, cbk), cbk); regen(d);
+});
+make("codebook-parent-dangling", ["codebook_parent_dangling"], (d) => {
+  const { cbk } = seedCoded(d);
+  cbk.codes = [{ code: "utility", label: "U", parent: "ghost" }];
+  cbk.revision_digest = codebookRevisionDigest(cbk.codes);
+  saveJSON(cbkPath(d, cbk), cbk); regen(d);
+});
+
+// -- 1.6.0 shared representations ---------------------------------------------
+// The SAME bytes recorded by two sources is legitimate (a syndicated figure), so
+// rule 1.1 demotes it to an advisory. Disagreeing hashes on one id stays an error.
+make("representation-shared", [], (d) => {
+  const { slug, repId } = seed(d);
+  const slug2 = "note-copy";
+  const sd2 = path.join(d, "sources", slug2);
+  wText(path.join(sd2, "representations", "clean.md"), CLEAN);
+  const srcId2 = mintSrcId({ canonicalUrl: "https://example.org/syndicated" });
+  wJSON(path.join(sd2, "source.json"), {
+    source_id: srcId2, source_kind: "url", title: "Syndicated copy",
+    retrieval: { original_url: "https://example.org/syndicated", fetch_status: "success" },
+    representations: [{ representation_id: repId, role: "clean_markdown", media_type: "text/markdown", path: `sources/${slug2}/representations/clean.md`, sha256: sha(CLEAN), produced_by: "manual", provenance: { produced_by: { tool: "t", method: "manual" }, created_at: TS } }],
+    provenance: { produced_by: { tool: "t", method: "manual" }, created_at: TS },
+  });
+  void slug;
+  const cj1 = path.join(d, "corpus.json"); const c1 = loadJSON(cj1); delete c1.sources; saveJSON(cj1, c1);
+  regen(d);
+});
+make("representation-id-conflict", ["id_duplicate"], (d) => {
+  // Same id, DIFFERENT bytes: one of the two records is lying about its own hash.
+  const { repId } = seed(d);
+  const slug2 = "note-conflict";
+  const sd2 = path.join(d, "sources", slug2);
+  const other = CLEAN + "\nA different document entirely.\n";
+  wText(path.join(sd2, "representations", "clean.md"), other);
+  const srcId2 = mintSrcId({ canonicalUrl: "https://example.org/conflict" });
+  wJSON(path.join(sd2, "source.json"), {
+    source_id: srcId2, source_kind: "url", title: "Conflicting copy",
+    retrieval: { original_url: "https://example.org/conflict", fetch_status: "success" },
+    representations: [{ representation_id: repId, role: "clean_markdown", media_type: "text/markdown", path: `sources/${slug2}/representations/clean.md`, sha256: sha(other), produced_by: "manual", provenance: { produced_by: { tool: "t", method: "manual" }, created_at: TS } }],
+    provenance: { produced_by: { tool: "t", method: "manual" }, created_at: TS },
+  });
+  const cj2 = path.join(d, "corpus.json"); const c2 = loadJSON(cj2); delete c2.sources; saveJSON(cj2, c2);
+  regen(d);
+});
+
+
+// -- write the fixture list --
 console.log(JSON.stringify({ status: "ok", fixtures }));

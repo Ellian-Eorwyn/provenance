@@ -3,6 +3,141 @@
 All notable changes to the Universal Provenance Corpus (UPC) standard.
 Versioning is semantic (§00 Versioning policy).
 
+## 1.6.0 — 2026-08-21
+
+**Backward-compatible (additive) minor release: codes & codings, plus two
+correctness fixes the coding work exposed.** No id recipe and no quotation gate
+changed; hop B is still codepoint-exact, `char_range`-only, and unnormalized. The
+schema `$id`s bump to `1.6.0` (which changes `integrity.schema_hash` — regenerate
+projections with `upc regen`). **Every 1.5.0 corpus remains valid under 1.6.0.**
+
+Forward compatibility, stated precisely rather than generally, because the two
+changes below behave differently and only one of them is fully forward-compatible:
+
+- **Codings are invisible to an older reader.** A 1.5.0 validator reads a 1.6.0
+  corpus containing codebooks and codings and reports `passed` at the same level,
+  because they live under `sections` keys it never looks for. Tested, not asserted:
+  the `pass-coded` conformance fixture is run under the pinned 1.5.0 script.
+- **The shared-representation loosening is *not* forward-compatible, by
+  construction.** 1.6.0 accepts corpora that 1.5.0 rejects — that is what a
+  loosening *is*. A corpus that records the same bytes under one `rep-` id for two
+  sources is valid at 1.6.0 and still fails `id_duplicate` at 1.5.0. Nothing that
+  was valid becomes invalid, so no existing corpus breaks; but a corpus exploiting
+  the new laxity requires a ≥ 1.6.0 reader. This is the same class of one-way skew
+  the 1.5.0 release flagged for `role: "ocr"`, and it is the reason
+  `upc check-compat --requires "^1.6"` exists.
+
+### Added — codes & codings (§12)
+
+- **`codebook`** (`codebooks/<cbk-id>.json`, `sections.codebooks`) — a named
+  coding scheme. Identity is `cbk-` over `(namespace, slug)` **only**: a
+  controlled vocabulary must keep one id while its contents evolve, so hashing
+  `codes[]` would dangle every reference on every edit. Evolution rides on the
+  advisory `revision` / `revision_digest` pair instead, which means **editing a
+  codebook never re-mints a coding**. Supports `closed` (pick from the list) vs
+  open schemes, `multi_label`, a `parent` hierarchy, and per-code `definition`s.
+- **`coding`** (`codings/<set-id>/items.jsonl`, `sections.codings`) — one coder's
+  judgement that one code applies to one target. Identity is `cod-` over
+  `(codebook_ref, target.kind, target.id, coder, code|value)`.
+- **The span is not the judgement.** An extraction is content-addressed over its
+  location and text, so two coders who select the same sentence converge on one
+  `ext-` id — which is why the verdict cannot live on the extraction. Putting the
+  coder and the code in the `cod-` key makes agreement, disagreement, and
+  multi-labelling representable without collision, while leaving `created_at`,
+  `confidence`, `rationale`, `query` and `status` *out* of the key so re-running
+  an unchanged coding pass **writes nothing**.
+- **A coding MUST NOT carry a locator.** A span-level coding targets an `ext-` id
+  that has already passed hop B, so a code can never become a second, ungated way
+  to point at text. Every coded passage is proved real before it can be labelled.
+- **Disagreement is data.** Two coders disagreeing raises the advisory
+  `coding_disagreement`; there is deliberately no `gold` / `resolved` /
+  `final_code` member, because an adjudication is just another coding by a coder
+  whose handle says so. Agreement statistics are projections and are never stored.
+- **`coder` is a stable handle, not a model string.** The volatile detail (model,
+  prompt version, person) lives in the coding-set manifest's `coders[]`, so a
+  model upgrade does not re-mint every coding id and destroy the agreement history.
+
+### Added — commands
+
+- **`upc anchor --corpus <dir> --rep <rep-id> [--set <id>] [--dry-run]`** — the
+  first *implementation* of the re-extraction protocol, which had been normative
+  prose in §03/§09 with no code behind it. Reads candidate quotations as JSONL,
+  byte-exact-searches the representation, and mints an `active` `char_range`
+  extraction **only** for a unique hit; zero or several hits return `not_found` /
+  `ambiguous` and are never written as verified. This is what makes a model-driven
+  coding pass safe: the model chooses what to select, the tool decides what is real.
+- **`upc code --corpus <dir> --set <cds-id>`** — batch-apply codings, validating
+  each against its codebook and superseding any prior judgement by the same coder
+  on the same target. Batch-only by design; a per-object form invites one process
+  per coding, which is what made `mint` unusable at scale.
+- **`upc codebook <dir> [<cbk-id>]`** — read-only inspection, with applied counts
+  computed (never stored).
+- **`upc batch --corpus <dir>`** — NDJSON commands in, NDJSON out, over one
+  `loadCorpus` with a warm representation cache. `locate` is O(whole corpus) per
+  call, so a reader rendering 50 passages cannot shell out 50 times. Deliberately
+  not a server: no port, no auth, no dependency.
+- **`upc mint --batch <kind>`** — JSONL in, `{i, id}` out; `cod` and `cbk` added.
+- **`upc version [--json]`** and **`upc check-compat --requires "^1.6"`** — the
+  version handshake for embedding tools.
+- **`upc mint rep`** now works. It was documented in the `upc.mjs` header and
+  rejected by `mintCmd`.
+
+### Fixed — a duplicate shared representation is not a defect
+
+`rep-`/`img-` ids are pure byte hashes but representation *records* are
+source-scoped, so the same bytes legitimately appear more than once: a figure
+syndicated across sources, or one file serving two roles. Rule 1.1 previously
+called every such pair `id_duplicate`, an L1 error. It now compares hashes first:
+**equal hashes are the advisory `representation_shared`; unequal hashes remain
+`id_duplicate`**, because the id *is* the hash, so disagreeing hashes mean a record
+is misdescribing its own bytes. This is a pure loosening — it accepts strictly more
+corpora — and is therefore minor-safe. Measured on a real 106-source corpus this
+was the difference between 181 spurious errors and a clean L1.
+
+### Fixed — a model rewrite no longer badges as `verified`
+
+Through 1.5.0 the badge was decided from the derivation's *media types*, so any
+text-to-text step counted as fidelity-preserving and a model-"cleaned" Markdown
+badged plain **verified**. On a real corpus, 68% of substantive lines in the
+model-cleaned copies were not verbatim in the deterministic extraction they came
+from — including a source whose "cloud-based system that integrates" the model
+silently corrected to "cloud-based systems that integrate". A quotation anchored
+there passes hop B honestly and still attributes to the source a sentence it never
+wrote. §09 gains a fourth badge scope, **`verified-to-rewrite`**, decided from
+`produced_by` plus the parent's media type rather than from the role name (a
+model-cleaned Markdown and a deterministic conversion share the `clean_markdown`
+role; only the derivation separates them), and §11 gains the matching non-guarantee
+row. No schema change.
+
+### Added — validation
+
+Errors (all **vacuous on a corpus with no codings**, so L1 is unchanged for every
+pre-1.6.0 corpus, and codings never move a conformance level): `dangling_codebook`,
+`dangling_coding_target`, `coding_code_unknown`, `coding_open_closed_mismatch`,
+`codebook_code_duplicate`, `codebook_parent_cycle`, `codebook_parent_dangling`,
+plus `id_format` / `id_duplicate` / `id_mismatch` / `missing_provenance` extended
+to `cbk-` and `cod-`.
+
+Advisories: `representation_shared`, `coding_targets_failed_gate` (**never an
+error** — a coding stays a faithful record of a judgement; the *span* is what
+broke), `coding_codebook_drift`, `coding_coder_undeclared`, `coding_disagreement`,
+`codebook_code_unused`, `codebook_revision_stale`.
+
+### Added — packaging
+
+The repository is now an installable, versioned artifact (`@ellian-eorwyn/upc`,
+`bin: upc`, zero dependencies, Node ≥ 18) shipping the scripts, schemas, vocab,
+spec, profiles, and crosswalks. Consumers pin a version and verify it with
+`upc check-compat` instead of vendoring by absolute path and silently drifting.
+`VERSION` is now the single source of truth the CLI reads, rather than a string
+duplicated in the code.
+
+### Interface
+
+`index.html` renders codes as chips that are visually distinct from verification
+badges, always name their coder, carry the code's definition, and show **both**
+sides of a disagreement without picking a winner (§09).
+
 ## 1.5.0 — 2026-08-21
 
 **Backward-compatible (additive) minor release: anchored context navigation and

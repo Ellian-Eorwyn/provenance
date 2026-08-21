@@ -1,0 +1,6 @@
+{
+  "fixture": "codebook-parent-dangling",
+  "expect": [
+    "codebook_parent_dangling"
+  ]
+}

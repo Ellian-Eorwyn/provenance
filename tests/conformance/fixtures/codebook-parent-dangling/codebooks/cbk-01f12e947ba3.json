@@ -1,0 +1,24 @@
+{
+  "codebook_id": "cbk-01f12e947ba3",
+  "namespace": "fixture",
+  "slug": "actor",
+  "title": "Actor",
+  "closed": true,
+  "unit": "passage",
+  "revision": 1,
+  "revision_digest": "sha256:28e27c3f71510921ebb50841cc7f82b52b11ef87ddb57edc5714df1205323b8b",
+  "codes": [
+    {
+      "code": "utility",
+      "label": "U",
+      "parent": "ghost"
+    }
+  ],
+  "provenance": {
+    "produced_by": {
+      "tool": "t",
+      "method": "manual"
+    },
+    "created_at": "2026-08-17T12:00:00Z"
+  }
+}

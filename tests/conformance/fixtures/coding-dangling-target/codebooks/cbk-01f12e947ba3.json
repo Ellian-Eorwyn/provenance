@@ -1,0 +1,30 @@
+{
+  "codebook_id": "cbk-01f12e947ba3",
+  "namespace": "fixture",
+  "slug": "actor",
+  "title": "Actor",
+  "closed": true,
+  "unit": "passage",
+  "revision": 1,
+  "revision_digest": "sha256:703a84ce3d0897e528373bc080957d01cad8badf210ff252ec216c37d7df3c26",
+  "codes": [
+    {
+      "code": "operator",
+      "label": "Operator",
+      "definition": "Runs the system."
+    },
+    {
+      "code": "utility",
+      "label": "Utility",
+      "definition": "A regulated utility.",
+      "parent": "operator"
+    }
+  ],
+  "provenance": {
+    "produced_by": {
+      "tool": "t",
+      "method": "manual"
+    },
+    "created_at": "2026-08-17T12:00:00Z"
+  }
+}

@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://provenance.dev/upc/1.6.0/schemas/coding-set.schema.json",
+  "title": "UPC Coding Set Manifest",
+  "description": "manifest.json for a coding pass (codings/<set-id>/manifest.json), whose items.jsonl lines each validate against coding.schema.json. The manifest is where coder identity is DECLARED: coding.coder is a stable handle, and the volatile detail behind it (which model, which prompt version, which person) lives here, so a model upgrade does not re-mint coding ids or destroy inter-rater history.",
+  "type": "object",
+  "required": ["set_id", "items_path", "coders"],
+  "properties": {
+    "set_id": { "type": "string", "minLength": 1, "description": "Set identifier, e.g. cds-<slug> or a content id." },
+    "aliases": { "type": "object", "additionalProperties": { "type": "string" } },
+    "title": { "type": "string" },
+    "query": { "type": "string", "description": "The question or task that defines this coding pass." },
+    "items_path": { "type": "string", "description": "Corpus-relative path to items.jsonl for this set." },
+    "codebook_refs": { "type": "array", "items": { "type": "string", "pattern": "^cbk-[0-9a-f]{12}$" }, "description": "Codebooks this set draws on (advisory index)." },
+    "coders": {
+      "type": "array",
+      "minItems": 1,
+      "description": "Every coder handle used by this set. A coding whose coder is not declared here raises the advisory coding_coder_undeclared (§08).",
+      "items": {
+        "type": "object",
+        "required": ["coder"],
+        "properties": {
+          "coder": { "type": "string", "minLength": 1, "description": "The stable handle, matching coding.coder." },
+          "kind": { "type": "string", "enum": ["model", "human", "ensemble", "adjudicator"], "description": "What sort of rater this is. §09 requires a code never to be shown without its coder, so a reader can tell one model's guess from a human's judgement." },
+          "display_name": { "type": "string" },
+          "model": { "type": "string", "description": "Volatile: the model behind a model coder. Lives here, not in the coding id." },
+          "tool": { "type": "string" },
+          "tool_version": { "type": "string" },
+          "prompt_version": { "type": "string" },
+          "person": { "type": "string" },
+          "ext": { "type": "object", "additionalProperties": true }
+        },
+        "additionalProperties": true
+      }
+    },
+    "provenance": { "$ref": "provenance-stamp.schema.json" },
+    "ext": { "type": "object", "additionalProperties": true }
+  },
+  "additionalProperties": true
+}

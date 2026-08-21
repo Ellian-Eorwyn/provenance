@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://provenance.dev/upc/1.5.0/schemas/field-evidence.schema.json",
+  "$id": "https://provenance.dev/upc/1.6.0/schemas/field-evidence.schema.json",
   "title": "UPC Field Evidence Map",
   "description": "Per-field provenance: maps a field name to the evidence that justifies its value. A source-level sibling of `bibliographic`. manual_override:true records a human correction and MUST be preserved across regeneration.",
   "type": "object",

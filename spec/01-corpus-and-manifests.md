@@ -30,7 +30,7 @@ folder alone:
 
 ```json
 {
-  "upc_spec_version": "1.5.0",
+  "upc_spec_version": "1.6.0",
   "corpus_id": "cor-3f9a1c2e7b40",
   "title": "Migration downtime research",
   "readme": "Universal Provenance Corpus. Work ONLY from ids resolved through the manifests; do not infer meaning from paths. Sources are immutable; derived objects link back via provenance.derived_from. Quotations are verified byte-for-byte — see spec/03.",
@@ -62,8 +62,9 @@ folder alone:
 ### `sections`
 
 `sections` is the resolution table. Recognized keys: `sources`, `extractions`,
-`generations`, `syntheses`, `provenance`, `sources_csv`, `extractions_csv`,
-`index_html`. A value ending in `/` is a directory; otherwise a file. In the
+`generations`, `syntheses`, `codebooks`, `codings`, `provenance`, `sources_csv`,
+`extractions_csv`, `index_html`. `codebooks` and `codings` locate the coding
+objects of §12 and are absent from a corpus that has no coding scheme. A value ending in `/` is a directory; otherwise a file. In the
 canonical per-source layout, `generations` may be omitted because generations
 live inside each source folder (`<source>/generated/`); a per-media-type layout
 that groups generations centrally MUST declare `generations`. Any key absent

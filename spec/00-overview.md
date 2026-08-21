@@ -1,6 +1,6 @@
 # UPC 00 — Overview
 
-**Universal Provenance Corpus (UPC), version 1.5.0**
+**Universal Provenance Corpus (UPC), version 1.6.0**
 
 A UPC corpus is a portable, tool-independent collection of research materials in
 which both humans and software can always answer: *What is this object? Where did
@@ -83,6 +83,15 @@ SOURCE ──▶ REPRESENTATION ──▶ EXTRACTION ──▶ GENERATION ──
 - **Synthesis** — multi-source derived material that combines evidence across
   sources: a literature review, comparative analysis, research memo, or answer.
 
+Two further objects record *judgements about* the graph rather than material
+derived from it (§12):
+
+- **Codebook** — a named coding scheme: the controlled vocabulary of codes a
+  coder may apply.
+- **Coding** — one coder's judgement that one code applies to one target. A
+  span-level coding targets an **extraction**, never a raw position, so every
+  coded passage has already passed the quotation gate before it can be labelled.
+
 Every non-source object records what it was *derived from* and how, so any
 synthesis is inspectable backward all the way to the original source bytes.
 
@@ -139,6 +148,8 @@ These are normative; each later spec section elaborates one or more.
 | Extraction | `sources/<slug>/extractions.jsonl`; `extractions/<set>/items.jsonl` | §03 |
 | Generation | `sources/<slug>/generated/<id>.json` | §04 |
 | Synthesis | `syntheses/<id>/synthesis.json` (+ `synthesis.md`) | §04 |
+| Codebook | `codebooks/<cbk-id>.json` | §12 |
+| Coding | `codings/<set-id>/items.jsonl` | §12 |
 | Activity journal | `provenance/events.jsonl` | §07 |
 | Identifiers & hashing | — | §06 |
 | Conformance & validation | — | §08 |
@@ -162,7 +173,7 @@ internal schema version, and follows semantic versioning:
 - **Major** (`2.0.0`) — a breaking change: a removed or renamed field, a tighter
   constraint that can reject a previously valid corpus, or a changed identifier
   or gate recipe.
-- **Minor** (`1.5.0`) — a backward-compatible addition: a new optional field, a
+- **Minor** (`1.6.0`) — a backward-compatible addition: a new optional field, a
   new enum value, a new object kind or section. A reader for `1.x` MUST accept a
   `1.y` corpus for any `y ≥ x`.
 - **Patch** (`1.1.1`) — editorial clarification only, no schema effect.
@@ -180,12 +191,32 @@ Two rules make additive minor versions actually compatible:
   tools room to extend.
 
 Each schema's `$id` embeds the minor version
-(`https://provenance.dev/upc/1.5.0/schemas/...`). The corpus records
+(`https://provenance.dev/upc/1.6.0/schemas/...`). The corpus records
 `integrity.schema_hash` (§01) so a reader can detect a schema skew even within a
 minor version. This document supersedes UPC 1.0.0 wholesale; see `CHANGELOG.md`.
 
+Two changes in 1.6.0 illustrate the boundary, and they are not equivalent.
+
+Codebooks and codings are a **new object kind under new `sections` keys**, which an
+older reader never looks for: purely additive, and forward-compatible in the full
+sense above.
+
+Relaxing a rule — 1.6.0 demoting a duplicate representation id with *matching
+bytes* to an advisory (§08 rule 1.1) — is minor-safe in the sense that matters
+most, **no previously valid corpus becomes invalid**, but it is honest to record
+that it is *not* forward-compatible: a corpus that exploits the new laxity will
+fail under the older, stricter validator. A relaxation therefore raises the
+*minimum reader version* for corpora that use it, which is what
+`upc check-compat --requires` is for. This is a permitted minor change; silently
+assuming older readers will cope is not.
+
+What a minor version must never do is change an identity recipe or add a value to a
+closed enum: either would make a corpus that is *conforming under both versions*
+fail under the previous minor's validator, which no amount of version-pinning can
+repair.
+
 ## Status of this document
 
-Version 1.5.0. Reference implementation: the zero-dependency Node ≥18 skill under
+Version 1.6.0. Reference implementation: the zero-dependency Node ≥18 skill under
 `skill/universal-provenance/`. The spec is normative; where the reference code
 and this document disagree, the document governs and the code is the bug.
