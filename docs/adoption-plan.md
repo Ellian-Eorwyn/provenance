@@ -1,6 +1,6 @@
 # Adoption plan — UPC as the storage substrate for ResearchAssistant and pi-forge
 
-**Status: phases 0–1 shipped in 1.6.0. Phase 2 in progress.**
+**Status: phases 0–1 shipped in 1.6.0. Phase 2 complete (in the ResearchAssistant repo, `backend/upc/`). Phase 3 next.**
 
 This is the living program document for putting UPC underneath real applications.
 It records not just what to build but *why the shape is what it is*, because most
@@ -10,8 +10,8 @@ of the design was forced by things measured in a real corpus rather than chosen.
 |---|---|---|
 | 0 | Package UPC so consumers can pin a version | **done** (1.6.0) |
 | 1 | UPC 1.6.0 — codes & codings, `representation_shared`, `verified-to-rewrite` | **done** (1.6.0) |
-| 2 | Read-only converter for an existing RA repository | **in progress** |
-| 3 | Read-only UPC projection inside RA | not started |
+| 2 | Read-only converter for an existing RA repository | **done** — L2, 0 errors on the 106-source corpus |
+| 3 | Read-only UPC projection inside RA | **next** |
 | 4 | The reader UI (`/read`, `/codes`) | not started |
 | 5 | The LLM coding pass — the actual goal | not started |
 | 6 | Dual-write, human coding | not started |
@@ -113,7 +113,7 @@ corpus using the new laxity needs a ≥ 1.6.0 reader. That asymmetry is document
 
 ---
 
-## Phase 2 — The converter *(in progress)*
+## Phase 2 — The converter *(complete)*
 
 `python -m backend.upc.convert_repo --in <ra-repo> --out <new-dir>`
 
@@ -216,10 +216,24 @@ minted as `type:"entity"` with a `css_selector` secondary, **never** as a `quote
 `--allow-rewrite-anchors`, and anything anchored there badges `verified-to-rewrite`);
 multi-match and not-found are never `active`.
 
-Expect ~106 sources, ~380 non-image + ~716 image representations, ~75 generations,
-8 codebooks, ~900 codings, and **~10 gate-passing extractions**. That number is small
-on purpose, and it is exactly why the coding pass in phase 5 is a separate
-deliverable: converting alone does not demonstrate the goal.
+**Measured result** on the 106-source corpus: 106 sources, 1,419 representations,
+73 generations, 8 codebooks, 817 codings, 143 journal events, and **8 gate-passing
+extractions** (6 anchored in the deterministic markdown, 2 as `entity` in the raw
+HTML). `upc validate --strict` reports **L2, status passed, 0 errors**, above the
+L1 contractual bar — L2 falls out once real `input_digest`s are computed and the
+journal is reconstructed from `phase_metadata`.
+
+Warnings are 150 `representation_shared`, 316 `output_quote_uncited` (double-quoted
+spans inside the legacy catalog JSONs and image-description markdown — correct
+warnings on legacy artifacts), and 6 `codebook_code_unused`.
+
+Hardlinking means the corpus occupies **13 MB beside a 679 MB repository**. Two
+independent runs produce byte-identical corpora apart from the conversion's own
+journal timestamp, and deleting a third of the source directories and re-running
+converges back to the same corpus — that is the resume path.
+
+Eight extractions is small on purpose, and it is exactly why the coding pass in
+phase 5 is a separate deliverable: converting alone does not demonstrate the goal.
 
 **Contractual bar: L1, status `passed`, zero errors.** Accept and document
 `representation_shared` (~181) and a few `stale_input`; `output_quote_uncited`
