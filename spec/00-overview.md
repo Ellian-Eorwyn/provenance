@@ -1,6 +1,6 @@
 # UPC 00 — Overview
 
-**Universal Provenance Corpus (UPC), version 1.6.0**
+**Universal Provenance Corpus (UPC), version 1.7.0**
 
 A UPC corpus is a portable, tool-independent collection of research materials in
 which both humans and software can always answer: *What is this object? Where did
@@ -217,6 +217,6 @@ repair.
 
 ## Status of this document
 
-Version 1.6.0. Reference implementation: the zero-dependency Node ≥18 skill under
+Version 1.7.0. Reference implementation: the zero-dependency Node ≥18 skill under
 `skill/universal-provenance/`. The spec is normative; where the reference code
 and this document disagree, the document governs and the code is the bug.

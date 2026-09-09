@@ -17,6 +17,10 @@ import {
 } from "../skill/universal-provenance/scripts/upc_common.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
+// Read from VERSION rather than repeated as a literal: the examples sat at 1.5.0
+// through the whole 1.6.0 release because two copies of a version number is one
+// copy too many.
+const SPEC_VERSION = fs.readFileSync(path.join(HERE, "..", "VERSION"), "utf8").trim();
 const UPC = path.join(HERE, "..", "skill", "universal-provenance", "scripts", "upc.mjs");
 const TS = "2026-08-17T12:00:00Z";
 
@@ -118,7 +122,7 @@ function buildMinimal() {
   writeJSONL(path.join(srcDir, "extractions.jsonl"), [ext]);
 
   writeJSON(path.join(root, "corpus.json"), {
-    upc_spec_version: "1.5.0", corpus_id: "cor-" + sha256Hex(Buffer.from("corpus\nminimal", "utf8")).slice(0, 12),
+    upc_spec_version: SPEC_VERSION, corpus_id: "cor-" + sha256Hex(Buffer.from("corpus\nminimal", "utf8")).slice(0, 12),
     title: "Minimal UPC corpus", readme: "Universal Provenance Corpus. Work only from ids resolved through the manifests. Quotations are verified byte-for-byte (spec/03).",
     rules_note: "spec/00-overview.md", created: TS, modified: TS, generated_by: { tool: "pi-forge", tool_version: "0.2.0" },
     sections: { sources: "sources/", provenance: "provenance/events.jsonl", sources_csv: "sources.csv", extractions_csv: "extractions.csv", index_html: "index.html" },
@@ -402,7 +406,7 @@ function buildWebResearch() {
   ]);
 
   writeJSON(path.join(root, "corpus.json"), {
-    upc_spec_version: "1.5.0", corpus_id: "cor-" + sha256Hex(Buffer.from("corpus\nweb-research", "utf8")).slice(0, 12),
+    upc_spec_version: SPEC_VERSION, corpus_id: "cor-" + sha256Hex(Buffer.from("corpus\nweb-research", "utf8")).slice(0, 12),
     title: "Migration downtime research", readme: "Universal Provenance Corpus. Work only from ids resolved through the manifests; sources are immutable; derived objects link back via provenance.derived_from. Quotations are verified byte-for-byte (spec/03).",
     rules_note: "spec/00-overview.md", created: TS, modified: TS, generated_by: { tool: "pi-forge", tool_version: "0.2.0" },
     sections: { sources: "sources/", extractions: "extractions/", syntheses: "syntheses/", provenance: "provenance/events.jsonl", sources_csv: "sources.csv", extractions_csv: "extractions.csv", index_html: "index.html" },

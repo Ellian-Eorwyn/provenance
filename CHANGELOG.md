@@ -3,6 +3,87 @@
 All notable changes to the Universal Provenance Corpus (UPC) standard.
 Versioning is semantic (§00 Versioning policy).
 
+## 1.7.0 — 2026-08-28
+
+**Backward-compatible (additive) minor release: an Obsidian vault export.** No
+object field, vocabulary, id recipe, or quotation gate changed; the schema `$id`s
+bump to `1.7.0` (which changes `integrity.schema_hash` — regenerate projections with
+`upc regen`). Every 1.6.0 corpus remains valid.
+
+### Added — Obsidian vault export
+
+- **`upc export <corpus> --format obsidian -o <dir>`** — a deterministic,
+  zero-dependency projection of a corpus into a readable **Obsidian vault**: one
+  Markdown note per source, generation and synthesis, images copied into the
+  vault's attachment folder with their `description` as a folded caption, a
+  `## Codes` section for any codings, and each note's origin in a folded
+  `> [!provenance]-` callout. `--into <vault>` writes into an existing vault's
+  inbox instead.
+- **Codes display under §09's rules, not as decoration.** A chip is plain text so it
+  cannot be mistaken for a gate badge, it is never shown without its coder, a
+  codebook becomes a note so every code's definition is one click away, and where
+  two coders disagree **both judgements are shown and neither wins**. Source-level
+  and span-level codings are labelled separately rather than merged, because §09
+  requires a count to state its unit.
+- **This is the first LOSSY export, and deliberately so.** RO-Crate, PROV, CSL-JSON
+  and the CSV mirrors are faithful re-encodings; this one removes navigation,
+  running heads and page numbers, because a converted document is unreadable until
+  that furniture is gone. §09 gains three normative rules that keep the loss honest:
+  quotations are rendered from **representation bytes at the locator** (never from
+  the stripped body, whose offsets are no longer the corpus's), **what was removed
+  is reported by class** in every note, and a **model-rewritten representation is
+  not used as a body** unless asked for, with the note saying so when it is.
+- **The vault's conventions are a profile, not code** (`profiles/obsidian/`):
+  frontmatter vocabulary and order, callout registry, block order, folder routes,
+  and the source-kind mapping. `--profile <file>` replaces it. A standard must not
+  compile one vault's private schema into its tooling.
+- **A vault is also somewhere a person writes**, so the export is byte-idempotent
+  and remembers what it wrote: a note edited by hand is **left alone and reported**
+  rather than overwritten (`status: "partial"`, exit 1), an owner-authored `## Notes`
+  section is carried across a `--force` rewrite, and an attachment already matching
+  the corpus is not rewritten.
+- Boilerplate removal is deterministic and model-free. Page numbers and running
+  heads are only stripped **at a page boundary** the document actually declares —
+  measured against real converted documents, an unconditional rule ate a map
+  legend's `0.0`/`10.5` and a wiring manual's `C`/`L1` terminal labels. Repository
+  coversheets are **detected and never removed**: a false positive would delete the
+  opening of an article.
+- New crosswalk [`crosswalks/obsidian.md`](crosswalks/obsidian.md) and profile
+  [`profiles/obsidian/profile.md`](profiles/obsidian/profile.md).
+
+### Changed — one badge implementation, not three
+
+- **`badgeForExtraction(ext, repObj, repRec, lookupRep)`** and `VERIFIED_BADGES`
+  move into `upc_common.mjs`. The §09 badge taxonomy was implemented twice — in
+  `locateCmd` and in the browser — and the Obsidian export would have made a third.
+  It is normative, and three copies of a normative rule is three chances to drift.
+  Both existing callers now use the helper; `index.html` regenerates byte-identically.
+
+### Fixed
+
+- **The examples declared `upc_spec_version: "1.5.0"` throughout the 1.6.0 release**,
+  and the conformance fixtures hardcoded their own copy. Both generators now read
+  `VERSION`, so the version cannot drift from the release again.
+- **`profiles/ro-crate/`** still declared `1.5.0` at 1.6.0; the profile id is emitted
+  into every exported crate's `conformsTo`, so the drift was user-visible.
+- **`upc export` argument parsing** read a flag's value as the corpus directory when
+  the flag came before the positional. Harmless with two options; not with nine.
+
+### Not carried into the vault (by design)
+
+- **The vault cannot re-verify anything.** A note's body is stripped, so its offsets
+  are not the corpus's offsets; a quotation's footnote names the *representation* it
+  was checked against, and the check itself lives in the corpus. There is no
+  importer, and the export is lossy precisely so that there cannot usefully be one.
+- **A paraphrase is never rendered inside the evidence callout.** §09 forbids a
+  blockquote for an ungated `text` extraction, and an Obsidian callout is one, so
+  ungated readings sit under a plain `## Extractions` heading instead.
+- **No `bbox` overlay is drawn**, so the export cannot imply a verified position on
+  an image; a region reading is labelled "recorded not gated" wherever it appears.
+- **`ocr_text` is never rendered as a quotation** (§05 makes it advisory).
+- **`--into` never guesses a `domain`.** An unclassifiable note waits in the inbox at
+  `status: raw` rather than being filed somewhere plausible and wrong.
+
 ## 1.6.0 — 2026-08-21
 
 **Backward-compatible (additive) minor release: codes & codings, plus two

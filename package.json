@@ -1,6 +1,6 @@
 {
   "name": "@ellian-eorwyn/upc",
-  "version": "1.6.0",
+  "version": "1.7.0",
   "description": "Universal Provenance Corpus — a tool-independent research-corpus standard with byte-exact quotation gates. Spec, JSON Schemas, controlled vocabularies, and a zero-dependency reference implementation.",
   "license": "SEE LICENSE IN LICENSE.md",
   "type": "module",
@@ -12,6 +12,7 @@
     "./common": "./skill/universal-provenance/scripts/upc_common.mjs",
     "./ro-crate": "./skill/universal-provenance/scripts/ro-crate.mjs",
     "./prov": "./skill/universal-provenance/scripts/prov.mjs",
+    "./obsidian": "./skill/universal-provenance/scripts/obsidian.mjs",
     "./build-index": "./skill/universal-provenance/scripts/build-index.mjs",
     "./schemas/*": "./schemas/*",
     "./vocab/vocab.json": "./vocab/vocab.json",

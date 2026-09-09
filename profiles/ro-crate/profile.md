@@ -1,6 +1,6 @@
 # UPC RO-Crate Profile
 
-- **Profile id:** `https://provenance.dev/upc/1.5.0/profiles/ro-crate`
+- **Profile id:** `https://provenance.dev/upc/1.7.0/profiles/ro-crate`
 - **Conforms to:** [RO-Crate 1.3](https://w3id.org/ro/crate/1.3)
 - **Adds:** the UPC evidence model, selector semantics, quotation-verification
   boundary, derivation constraints, and conformance levels.

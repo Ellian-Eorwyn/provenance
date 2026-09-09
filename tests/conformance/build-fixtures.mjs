@@ -17,6 +17,7 @@ import {
 } from "../../skill/universal-provenance/scripts/upc_common.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
+const SPEC_VERSION = fs.readFileSync(path.join(HERE, "..", "..", "VERSION"), "utf8").trim();
 const UPC = path.join(HERE, "..", "..", "skill", "universal-provenance", "scripts", "upc.mjs");
 const TS = "2026-08-17T12:00:00Z";
 
@@ -72,7 +73,7 @@ function seed(dir, { withL2 } = {}) {
       { event_id: "evt-000002", activity_type: "synthesize", tool: "t", started_at: TS, ended_at: TS, inputs: { extraction_ids: [ext.extraction_id] }, outputs: { synthesis_ids: [syn.synthesis_id] }, status: "success", notes: null },
     ]);
   }
-  wJSON(path.join(dir, "corpus.json"), { upc_spec_version: "1.6.0", corpus_id: "cor-" + sha256Hex(Buffer.from(dir, "utf8")).slice(0, 12), title: "Fixture", readme: "fixture", created: TS, modified: TS, sections });
+  wJSON(path.join(dir, "corpus.json"), { upc_spec_version: SPEC_VERSION, corpus_id: "cor-" + sha256Hex(Buffer.from(dir, "utf8")).slice(0, 12), title: "Fixture", readme: "fixture", created: TS, modified: TS, sections });
   regen(dir);
   return { slug, sd, repId, srcId, ext, gen, syn };
 }

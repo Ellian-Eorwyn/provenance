@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://provenance.dev/upc/1.6.0/schemas/representation.schema.json",
+  "$id": "https://provenance.dev/upc/1.7.0/schemas/representation.schema.json",
   "title": "UPC Representation",
   "description": "A typed rendering of a source. Many representations share one source. Bytes live at `path`; the record classifies them by `role` and carries role-specific extras (image description/ocr, pdf page_count, av duration). A textual representation (media_type text/*, application/json, application/xml) can carry verified quotations; char_count is in Unicode codepoints.",
   "type": "object",

@@ -321,6 +321,42 @@ export function slugifyWithCollision(basis, sourceId, existingLowerSet) {
   return base + "--" + idHex.slice(0, 12);
 }
 
+// Obsidian cannot resolve a [[wikilink]] to a note whose name contains any of
+// these, and such a file fails to sync to mobile. A note named this way is not
+// untidy, it is unreachable from the rest of the vault.
+const LINK_BREAKING_CHARS = ["[", "]", "#", "^", "|"];
+// Illegal or hostile in a path on at least one platform a vault syncs to. This is
+// the same set checkFilename() rejects, stated as characters rather than a regex
+// because safeTitle REPAIRS them where checkFilename only reports.
+const PATH_UNSAFE_CHARS = ["/", "\\", ":", "*", "?", '"', "<", ">"];
+// Chosen so a repaired name still reads as the original; the rest have no
+// readable equivalent and are dropped.
+const TITLE_REPLACEMENTS = { "[": "(", "]": ")", "|": "-" };
+
+/** A human-readable title safe both as a filename and as a wikilink target.
+ *
+ *  This is the readable counterpart to slugify(): a slug is for a directory name
+ *  a machine resolves, a safe title is for a note a person reads and links to.
+ *
+ *  It is idempotent, which is what lets it double as its own validator —
+ *  `safeTitle(x) !== x` means `x` was unsafe. A reserved Windows stem is left to
+ *  the caller to disambiguate (it is a collision problem, not a character one),
+ *  and checkFilename() still has the last word on the assembled path. */
+export function safeTitle(value) {
+  let text = String(value == null ? "" : value).replace(/\s+/g, " ").trim();
+  text = [...text].filter((ch) => ch.codePointAt(0) >= 32).join("");
+  for (const ch of LINK_BREAKING_CHARS.concat(PATH_UNSAFE_CHARS)) {
+    text = text.split(ch).join(TITLE_REPLACEMENTS[ch] || "");
+  }
+  return text.replace(/\s+/g, " ").replace(/^[ .]+|[ .]+$/g, "").slice(0, 120).replace(/[ .]+$/, "");
+}
+
+/** Is this filename stem one Windows refuses to create? Exposed because a caller
+ *  that repairs names needs to test the repaired stem, not the raw one. */
+export function isReservedStem(stem) {
+  return WIN_RESERVED.has(String(stem || "").replace(/\.[^.]*$/, "").toLowerCase());
+}
+
 /** Portable-filename check (spec/10). Returns {ok, reason}. */
 export function checkFilename(relPath) {
   if (relPath == null || relPath === "") return { ok: false, reason: "empty path" };
@@ -522,6 +558,41 @@ export function verifyHopB(ext, repRec) {
   }
   return { ok: false, code: "quote_gate_failed", detail: `codepoints[${start}:${end}] != direct_quote`, hint };
 }
+
+/** The §09 badge taxonomy for one extraction, in one place.
+ *
+ *  The taxonomy is normative and three surfaces must agree on it — the offline
+ *  browser, the `upc locate` bundle, and every export that renders a quotation —
+ *  so it is computed here rather than re-derived per surface. A surface that
+ *  badged a transcript-anchored quote plain `verified` would claim it had been
+ *  checked against the recording, which is exactly the confusion §05's trust
+ *  boundary exists to prevent.
+ *
+ *  Pure: the caller resolves the representation record (`getRepFile`) and the
+ *  `lookupRep(id) -> repObj|null` used to decide derivation. `repRec` is null
+ *  when the bytes could not be read, which is `unverifiable`, not `failed` — a
+ *  representation we cannot open has not failed a gate, it has not run one.
+ *
+ *  Returns `{ badge, hopB }`; `hopB` is the verifyHopB result when the gate
+ *  actually ran and null otherwise, so a caller can reuse the failure detail
+ *  without running the comparison twice. */
+export function badgeForExtraction(ext, repObj, repRec, lookupRep) {
+  if (!ext || ext.direct_quote == null) return { badge: "paraphrase", hopB: null };
+  if (!repObj || !repRec || !isTextualMedia(repObj.media_type) ||
+      !ext.locator || ext.locator.type !== "char_range") {
+    return { badge: "unverifiable", hopB: null };
+  }
+  const hopB = verifyHopB(ext, repRec);
+  if (!hopB.ok) return { badge: "failed", hopB };
+  const badge = isDerivedText(repObj, lookupRep)
+    ? "verified-to-transcript"
+    : isModelRewrittenText(repObj, lookupRep) ? "verified-to-rewrite" : "verified";
+  return { badge, hopB };
+}
+
+/** Badges that mean the byte-exact gate ran and passed (against SOMETHING —
+ *  which of the three it was is the badge's own business, §05/§09). */
+export const VERIFIED_BADGES = new Set(["verified", "verified-to-transcript", "verified-to-rewrite"]);
 
 /** Parse citation markers from output text (spec/04). Returns
  *  [{quote, extId, form}]. Block form first; inline on the remainder. */

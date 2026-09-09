@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://provenance.dev/upc/1.6.0/schemas/source.schema.json",
+  "$id": "https://provenance.dev/upc/1.7.0/schemas/source.schema.json",
   "title": "UPC Source",
   "description": "The primary conceptual object. Everything else references its source_id. A source is a root: it carries `retrieval` provenance rather than `derived_from`. Per-field provenance lives in the source-level `field_evidence` (a sibling of `bibliographic`, so a CSL export is `bibliographic` verbatim).",
   "type": "object",

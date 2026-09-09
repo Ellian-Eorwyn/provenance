@@ -20,6 +20,7 @@ Projections include:
 - bibliographic exports — CSL-JSON, BibTeX, RIS (below);
 - an RO-Crate 1.3 metadata graph (`ro-crate-metadata.json`) conforming to the UPC
   RO-Crate profile (`profiles/ro-crate/`; `crosswalks/ro-crate.md`);
+- an Obsidian vault of Markdown notes (`profiles/obsidian/`; `crosswalks/obsidian.md`);
 - **any format produced on demand by an LLM** — a literature review, a comparison
   table, a slide outline, a prose answer.
 
@@ -231,6 +232,39 @@ bibliography). The bibliographic mappings:
 | `publisher` | `publisher` | `PB` |
 | `abstract` | `abstract` | `AB` |
 | (anything unmapped) | `note` | `N1` |
+
+### The Obsidian vault export
+
+`upc export … --format obsidian` emits a **reading** projection: one Markdown note
+per source, generation and synthesis, with images copied into the vault's
+attachment folder and each note's origin in a folded provenance block. It exists
+because none of the other projections is a document a person reads — the browser is
+a verification surface and the bibliographic exports are citations.
+
+The export is **lossy by design**: navigational furniture, running heads and page
+numbers are removed so the note is the source's content and nothing else. Three
+rules keep that honest, and a conforming Obsidian export MUST follow all three:
+
+- **Quotations are rendered from the representation bytes at the locator**, never
+  from the stripped note body — which is no longer byte-addressable — and never
+  from the extraction's stored `context_*`. Stripping therefore cannot corrupt a
+  quotation, and the badge rules above apply unchanged.
+- **What was removed is reported**, counted by class, in the note's own provenance
+  block. A lossy transform that does not say what it dropped is indistinguishable
+  from a faithful one.
+- **A representation a model rewrote is not used as a note's body** unless the
+  caller asks for it, and a note that reads one says so. This is the badge rule of
+  §05's trust boundary applied to prose: a reader handed a rewrite without being
+  told is reading the model's words believing they are the source's.
+
+The vault's own conventions — frontmatter vocabulary, callout registry, block
+order, folder routes — are **declared in a profile**, not compiled into the
+exporter, so a vault with different conventions supplies its own. The shipped
+profile is `profiles/obsidian/profile.json`.
+
+Because a vault is also somewhere a person writes, the export is byte-idempotent
+and records what it wrote: a note edited by hand is left alone and reported rather
+than overwritten, and an owner-authored section is carried across a rewrite.
 
 `upc export … --format ro-crate` emits a research-object projection instead of a
 bibliographic one: a deterministic **RO-Crate 1.3** metadata graph

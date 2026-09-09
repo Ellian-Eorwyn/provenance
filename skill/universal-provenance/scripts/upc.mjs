@@ -8,7 +8,11 @@
 //   upc locate <ext-id> --corpus <dir> [--format json|web-annotation] [--context <n>]
 //   upc regen <dir>
 //   upc build-index <dir>
-//   upc export <dir> --format bibtex|ris|csl-json|jsonl|markdown|ro-crate|prov [-o <file>] [--copy]
+//   upc export <dir> --format bibtex|ris|csl-json|jsonl|markdown|ro-crate|prov|obsidian
+//                    [-o <file|dir>] [--copy]
+//                    obsidian: [-o <dir> | --into <vault>] [--strip none|standard|aggressive]
+//                    [--frontmatter approved|extended] [--allow-rewrite-body] [--profile <f>]
+//                    [--filenames title|citation] [--image-names id|citation] [--force]
 //   upc anchor --corpus <dir> --rep <rep-id> [--set <id>] [--dry-run]  (JSONL candidates on stdin)
 //   upc code --corpus <dir> --set <cds-id> [--dry-run]     (JSONL codings on stdin)
 //   upc codebook <dir> [<cbk-id>]
@@ -29,6 +33,7 @@ import * as U from "./upc_common.mjs";
 import { isTextualMedia as U_TEXTUAL } from "./upc_common.mjs";
 import { writeRoCrate, buildAnnotationTargets } from "./ro-crate.mjs";
 import { buildProvGraph } from "./prov.mjs";
+import { writeVault } from "./obsidian.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
@@ -77,7 +82,7 @@ const COMMANDS = [
   "version", "check-compat",
 ];
 
-/** Parse a "^1.6" / "~1.6.0" / "1.6.0" / ">=1.5" requirement against a version. */
+/** Parse a "^1.6" / "~1.7.0" / "1.7.0" / ">=1.5" requirement against a version. */
 function satisfiesRequirement(version, requirement) {
   const req = String(requirement || "").trim();
   const m = /^(\^|~|>=|=)?\s*([0-9]+)(?:\.([0-9]+))?(?:\.([0-9]+))?$/.exec(req);
@@ -627,7 +632,7 @@ export function validateCorpus(root, opts = {}) {
 
   // --- 1.9 codebooks & codings (spec/12) ---
   // Every rule here is vacuous on a corpus with no codings, so L1 is unchanged for
-  // every corpus that predates 1.6.0. A bad coding pass must never make a corpus
+  // every corpus that predates 1.7.0. A bad coding pass must never make a corpus
   // report "failed" — the conformance level is about provenance integrity, not
   // about whether a rater was any good.
   const declaredCoders = new Set();
@@ -971,21 +976,12 @@ function locateCmd(extId, corpusRoot, opts = {}) {
   const rep = model.repById.get(ext.representation_ref);
   const repRec = rep && rep.contained && fs.existsSync(rep.abs) ? U.getRepFile(rep.abs) : null;
 
-  // The §09 badge taxonomy, computed exactly as the browser computes it.
-  let badge = "unverifiable";
-  if (ext.direct_quote == null) badge = "paraphrase";
-  else if (repRec && TEXTUAL(rep.obj.media_type) && ext.locator && ext.locator.type === "char_range") {
-    const res = U.verifyHopB(ext, repRec);
-    const lookupRep = (id) => { const r = model.repById.get(id); return r ? r.obj : null; };
-    badge = res.ok
-      ? (U.isDerivedText(rep.obj, lookupRep)
-          ? "verified-to-transcript"
-          : U.isModelRewrittenText(rep.obj, lookupRep) ? "verified-to-rewrite" : "verified")
-      : "failed";
-  }
+  // The §09 badge taxonomy, shared with the browser and the exports (upc_common).
+  const lookupRep = (id) => { const r = model.repById.get(id); return r ? r.obj : null; };
+  const { badge } = U.badgeForExtraction(ext, rep ? rep.obj : null, repRec, lookupRep);
 
   const primary = U.resolveLocator(loaded, ext.locator, ctxOpt);
-  primary.verified = badge === "verified" || badge === "verified-to-transcript" || badge === "verified-to-rewrite";
+  primary.verified = U.VERIFIED_BADGES.has(badge);
 
   const secondary = (ext.secondary_locators || []).map((loc) => {
     const r = U.resolveLocator(loaded, loc, ctxOpt);
@@ -1308,7 +1304,7 @@ function reanchorOne(loaded, model, ext, toRepId) {
 }
 
 // ---------------------------------------------------------------------------
-// 1.6.0 — anchoring, coding, and batch entry points (spec/03 re-extraction, spec/12)
+// 1.7.0 — anchoring, coding, and batch entry points (spec/03 re-extraction, spec/12)
 // ---------------------------------------------------------------------------
 
 /** Append one activity event to the journal, minting the next sequential evt- id. */
@@ -1703,12 +1699,44 @@ async function main() {
         break;
       }
       case "export": {
-        const dir = rest.find((a) => !a.startsWith("--") && a !== arg(rest, "--format") && a !== arg(rest, "-o"));
+        // A positional is any token that is neither a flag nor a flag's value. The
+        // older "not the --format value and not the -o value" test was enough when
+        // export had two options; with --into/--strip/--profile it would happily
+        // read a flag's argument as the corpus directory.
+        const VALUE_FLAGS = new Set(["--format", "-o", "--into", "--profile", "--strip",
+          "--frontmatter", "--filenames", "--image-names", "--domain"]);
+        const dir = rest.find((a, i) => !a.startsWith("-") && !(i > 0 && VALUE_FLAGS.has(rest[i - 1])));
         const format = arg(rest, "--format");
         const out = arg(rest, "-o");
-        if (!dir || !format) { process.stderr.write("usage: upc export <dir> --format bibtex|ris|csl-json|jsonl|markdown|ro-crate|prov [-o <file>] [--copy]\n"); process.exit(2); }
+        if (!dir || !format) { process.stderr.write("usage: upc export <dir> --format bibtex|ris|csl-json|jsonl|markdown|ro-crate|prov|obsidian [-o <file|dir>] [--copy]\n"); process.exit(2); }
         if (format === "ro-crate") {
           print(writeRoCrate(dir, { outDir: out, copy: rest.includes("--copy") }));
+          break;
+        }
+        if (format === "obsidian") {
+          const res = writeVault(dir, {
+            outDir: out,
+            into: arg(rest, "--into"),
+            profileFile: arg(rest, "--profile"),
+            strip: arg(rest, "--strip"),
+            frontmatter: arg(rest, "--frontmatter"),
+            filenames: arg(rest, "--filenames"),
+            imageNames: arg(rest, "--image-names"),
+            domain: arg(rest, "--domain"),
+            allowRewriteBody: rest.includes("--allow-rewrite-body"),
+            force: rest.includes("--force"),
+          });
+          // A vault is hundreds of files, so the CLI prints a summary and the
+          // paths only when they are few enough to read; writeVault still returns
+          // the full lists to a programmatic caller.
+          const brief = Object.assign({}, res);
+          if (res.wrote.length > 25) { brief.wrote = res.wrote.length; brief.wrote_sample = res.wrote.slice(0, 10); }
+          if (res.warnings.length > 25) { brief.warnings = res.warnings.length; brief.warnings_sample = res.warnings.slice(0, 10); }
+          print(brief);
+          // A skipped file is a real outcome a caller must be able to branch on: the
+          // vault is now only partly the corpus's projection. Set exitCode rather
+          // than calling process.exit(), which discards buffered stdout on a pipe.
+          if (res.status === "partial") process.exitCode = 1;
           break;
         }
         const text = exportCmd(dir, format);

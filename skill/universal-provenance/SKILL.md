@@ -63,6 +63,7 @@ node scripts/upc.mjs quote <ext-id> --corpus <corpus-dir> [--narrow <start> <end
 node scripts/upc.mjs locate <ext-id> --corpus <corpus-dir> [--format json|web-annotation]
 node scripts/upc.mjs regen <corpus-dir>
 node scripts/upc.mjs export <corpus-dir> --format bibtex|ris|csl-json|jsonl|markdown|ro-crate|prov [-o <file>]
+node scripts/upc.mjs export <corpus-dir> --format obsidian -o <vault-dir> [--into <vault>] [--strip none|standard|aggressive]
 node scripts/upc.mjs reanchor <ext-id>|--all --corpus <corpus-dir> [--to <rep-id>]
 node scripts/upc.mjs build-index <corpus-dir>
 node scripts/upc.mjs mint <src|ext|gen|syn> < object.json
@@ -92,7 +93,8 @@ node scripts/upc.mjs mint <src|ext|gen|syn> < object.json
   mirrors, and `index.html` from the objects, atomically. Also the crash-recovery
   move.
 - **export** — CSL-JSON (authoritative) → BibTeX/RIS, plus `jsonl`, `markdown`,
-  `ro-crate`, and `prov`.
+  `ro-crate`, `prov`, and `obsidian` (a readable Markdown vault; lossy by design and
+  says what it stripped).
 - **reanchor** — after a representation is re-rendered, byte-exact-searches the
   successor for each quote and re-locates it (unique hit) or flags `needs_review`.
 - **build-index** — writes a self-contained, offline `index.html` browser (a

@@ -19,6 +19,8 @@ import {
 import { buildRoCrateGraph, fragmentForLocator, selectorsForLocator, buildAnnotationTargets } from "../skill/universal-provenance/scripts/ro-crate.mjs";
 import { buildModel as buildBrowserModel } from "../skill/universal-provenance/scripts/build-index.mjs";
 import { buildProvGraph } from "../skill/universal-provenance/scripts/prov.mjs";
+import { buildVaultPlan, writeVault, loadProfile, renderCallout, serializeFrontmatter,
+  stripBoilerplate, yamlScalar } from "../skill/universal-provenance/scripts/obsidian.mjs";
 import { validateCorpus, anchorCmd, codeCmd, codebookCmd, batchCmd, mintBatchCmd, locateCmd, satisfiesRequirement, specVersion } from "../skill/universal-provenance/scripts/upc.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -1234,6 +1236,291 @@ ok("filename rejects reserved", !checkFilename("sources/con/x.md").ok);
   // Codes live beside extractions, never on them: adding a member to the extraction
   // object would trip unknown_field under --strict for every 1.5.0 reader.
   ok("extraction schema gained no codes[] member", !("codes" in ext.properties) && !("codings" in ext.properties));
+}
+
+// --- Obsidian export: rendering primitives ---
+{
+  eq("callout folded marker", renderCallout("provenance", "How this note was made", ["a", "", "b"]),
+    "> [!provenance]- How this note was made\n> a\n>\n> b");
+  eq("callout unfolded, untitled", renderCallout("summary", "", ["lead"], false), "> [!summary]\n> lead");
+  // A corpus field is free text. One unsplit newline silently ends a callout and
+  // spills the rest of the block into the note as loose prose.
+  eq("callout splits embedded newlines", renderCallout("summary", "", ["a\nb\n\nc"], false),
+    "> [!summary]\n> a\n> b\n>\n> c");
+  eq("callout title cannot span lines", renderCallout("info", "Cap\ntion", ["x"], true),
+    "> [!info]- Cap tion\n> x");
+
+  eq("yaml date stays bare", yamlScalar("2024-01-01"), "2024-01-01");
+  eq("yaml wikilink is quoted", yamlScalar("[[A]]", true), '"[[A]]"');
+  eq("yaml bare wikilink would be a flow seq, so quoted", yamlScalar("[[A]]"), '"[[A]]"');
+  eq("yaml reserved word quoted", yamlScalar("no"), '"no"');
+  eq("yaml number-like quoted", yamlScalar("1.20"), '"1.20"');
+  eq("yaml plain string bare", yamlScalar("website"), "website");
+
+  const profile = loadProfile();
+  const fmText = serializeFrontmatter({
+    type: "source", status: "raw", domain: "d", people: ["[[A]]", "[[B]]"],
+    source_kind: "website", date: "2024-01-01", subdomain: "", related: [], parent: null,
+  }, profile);
+  eq("frontmatter is canonical order and drops empties", fmText,
+    '---\ntype: source\nstatus: raw\ndomain: d\npeople:\n  - "[[A]]"\n  - "[[B]]"\nsource_kind: website\ndate: 2024-01-01\n---\n');
+}
+
+// --- Obsidian export: boilerplate stripping ---
+{
+  const doc = ["# T", "", "## Page 1", "", "Acme Journal", "", "Real prose that says something substantive.", "",
+    "- [Nav](https://x.example/a)", "", "1", "", "## Page 2", "", "Acme Journal", "",
+    "Second page of genuine content follows on.", "", "2", "", "## Page 3", "", "Acme Journal", "",
+    "Third page continues the argument here.", "", "3"].join("\n");
+  const r = stripBoilerplate(doc);
+  eq("strip removes page markers", r.removed.page_marker, 3);
+  eq("strip removes running heads", r.removed.running_head, 3);
+  eq("strip removes page numbers at boundaries", r.removed.page_number, 3);
+  eq("strip removes link-only nav", r.removed.nav_line, 1);
+  ok("strip keeps prose", r.text.includes("Real prose that says something substantive."));
+  ok("strip keeps the heading", r.text.startsWith("# T"));
+
+  eq("strip level none is identity", stripBoilerplate(doc, { level: "none" }).text, doc);
+
+  // A bare number is only page furniture at a page boundary. Measured against real
+  // documents, an unconditional rule eats map legends and wiring-terminal labels.
+  const data = ["## Page 1", "", "Prose that opens the page and runs on a while.", "",
+    "0.0", "10.5", "C", "L1", "", "Closing prose for this page here.", "", "7", "",
+    "## Page 2", "", "More prose on the second page of this document.", "", "8"].join("\n");
+  const d = stripBoilerplate(data);
+  for (const kept of ["0.0", "10.5", "C", "L1"]) {
+    ok(`strip keeps mid-page data ${JSON.stringify(kept)}`, d.text.split("\n").includes(kept));
+  }
+  ok("strip still removes the page foot", !d.text.split("\n").includes("7"));
+
+  ok("strip never touches fenced code", stripBoilerplate("```\n1\n[x](https://a.example)\n```\n").text.includes("[x](https://a.example)"));
+
+  // Most converted PDFs carry no page markers, so pagination is found by its
+  // signature instead: a long ascending run of bare integers spread through the
+  // document. Data numbers are what the chain steps over, never what it collects.
+  const folioDoc = [];
+  for (let i = 1; i <= 14; i++) {
+    folioDoc.push(`Prose for page ${i} of this document, long enough to be real.`, "", `/  ${i}`, "");
+    if (i === 4) folioDoc.push("2024", "2035", "600", "400", "");     // chart data
+    if (i === 7) folioDoc.push("1", "2", "3", "");                     // figure labels
+  }
+  const folio = stripBoilerplate(folioDoc.join("\n"));
+  eq("a folio run is stripped without page markers", folio.removed.page_number, 14);
+  const folioKept = new Set(folio.text.split("\n").map((l) => l.trim()));
+  for (const keep of ["2024", "2035", "600", "400"]) {
+    ok(`folio detection steps over chart datum ${keep}`, folioKept.has(keep));
+  }
+  ok("folio detection leaves a short figure-label run alone", folioKept.has("3"));
+
+  // The guards: too few, and a run that does not span the document, are both data.
+  const shortRun = ["Opening prose that is long enough to count as real.", "", "1", "2", "3", "",
+    "Closing prose that is also long enough to count."].join("\n");
+  eq("a short ascending column is not pagination", stripBoilerplate(shortRun).removed.page_number, undefined);
+  const topTable = ["1", "2", "3", "4", "5", "6", ""].concat(
+    Array.from({ length: 60 }, (_, i) => `Body paragraph ${i} carrying real sentences of prose.`)).join("\n");
+  eq("an ascending column that does not span the document is not pagination",
+    stripBoilerplate(topTable).removed.page_number, undefined);
+
+  const cover = stripBoilerplate(["repository", "author accepted manuscript", "terms of use", "", "Body."].join("\n"));
+  eq("coversheet is detected", cover.warnings.length, 1);
+  ok("coversheet is never deleted", cover.text.includes("author accepted manuscript"));
+}
+
+// --- Obsidian export: the plan over the real example corpus ---
+{
+  const EXAMPLE = path.join(HERE, "..", "examples", "web-research-corpus");
+  const p1 = buildVaultPlan(loadCorpus(EXAMPLE));
+  const p2 = buildVaultPlan(loadCorpus(EXAMPLE));
+  eq("obsidian plan deterministic", JSON.stringify(p1), JSON.stringify(p2));
+
+  eq("one note per source", p1.counts.sources, 3);
+  eq("generations become notes", p1.counts.generations, 1);
+  eq("syntheses become notes", p1.counts.syntheses, 1);
+  eq("every image is copied", p1.counts.images, 1);
+  eq("note paths are unique", new Set(p1.notes.map((n) => n.path)).size, p1.notes.length);
+
+  const profile = loadProfile();
+  const approved = new Set(profile.frontmatter.property_order.concat(profile.frontmatter.extended_properties));
+  for (const n of p1.notes) {
+    for (const k of Object.keys(n.frontmatter)) {
+      if (n.frontmatter[k] === undefined) continue;
+      ok(`frontmatter key ${k} is approved`, approved.has(k));
+    }
+    const h1 = (n.text.match(/^# /gm) || []).length;
+    eq(`exactly one H1 in ${path.posix.basename(n.path)}`, h1, 1);
+    ok(`no tags in ${path.posix.basename(n.path)}`, !/^tags:/m.test(n.text));
+    ok(`no aliases in ${path.posix.basename(n.path)}`, !/^aliases:/m.test(n.text));
+    ok(`no inline HTML in ${path.posix.basename(n.path)}`, !/<(span|div|font)\b/i.test(n.text));
+    for (const c of n.text.match(/^> \[!([a-z-]+)\]/gm) || []) {
+      const kind = /\[!([a-z-]+)\]/.exec(c)[1];
+      ok(`callout ${kind} is registered`, kind in profile.callouts);
+    }
+    ok(`## Notes left empty in ${path.posix.basename(n.path)}`,
+      !/## Notes\n\n?[^\n[]/.test(n.text));
+  }
+
+  const wp = p1.notes.find((n) => n.objectId === "src-b95bb22d8232");
+  ok("source note filed by kind", wp.path.startsWith("10 Sources/10.09 Website/"));
+  eq("source note frontmatter type", wp.frontmatter.type, "source");
+  eq("author becomes a people wikilink", wp.frontmatter.people[0], "[[Watchdog Studio]]");
+  eq("year-only date is filled to an ISO date", wp.frontmatter.date, "2024-01-01");
+
+  // §09: an OCR-anchored quote is verified TO THE TRANSCRIPT, never plain verified.
+  ok("ocr quote badged verified-to-transcript", wp.text.includes("verified to the derived text"));
+  ok("clean-markdown quote badged plain verified", /— verified\[\^ext-d8129f9b7114\]/.test(wp.text));
+
+  // §09: a paraphrase is never styled as a quotation.
+  ok("paraphrase is under ## Extractions", wp.text.includes("## Extractions"));
+  const paraLine = wp.text.split("\n").find((l) => l.includes("ext-3f36fb2b12e5"));
+  ok("paraphrase carries no quotation marks", !/["“”]/.test(paraLine));
+  ok("paraphrase is not inside a callout", !paraLine.trimStart().startsWith(">"));
+  ok("bbox reading is labelled an inference", paraLine.includes("recorded not gated"));
+
+  // Images: embedded by bare filename with a folded caption carrying §05's triple.
+  ok("image embedded by bare filename", wp.text.includes("![[img-b26e480807a2.svg]]"));
+  ok("caption is folded", wp.text.includes("> [!info]- Figure 1."));
+  ok("caption carries the description", wp.text.includes("staging-first migration shows zero downtime"));
+  ok("has_text points at the verified reading", wp.text.includes("the verified reading is `ext-e32197281015`"));
+  ok("ocr_text is never rendered as a quotation", !wp.text.includes('"Downtime: staging-first = 0s" — ocr_text'));
+
+  // Provenance: origin, body, and what the lossy step removed.
+  ok("provenance names the source id", wp.text.includes("Source `src-b95bb22d8232`"));
+  ok("provenance carries the original url", wp.text.includes("https://watchdogstudio.example/blog/migrate-with-no-downtime"));
+  ok("provenance names the original filename", wp.text.includes("Original file: `raw.html`"));
+  ok("provenance names the body representation", wp.text.includes("Body from `rep-53de3cc48d82`"));
+  ok("provenance states what was stripped", wp.text.includes("Stripped at export:"));
+  ok("provenance block is folded", wp.text.includes("> [!provenance]- How this note was made"));
+  ok("url is in ## Sources too", /## Sources\n\n- \[[^\]]+\]\(https:\/\//.test(wp.text));
+
+  // Extended frontmatter is opt-in.
+  const ext = buildVaultPlan(loadCorpus(EXAMPLE), { frontmatter: "extended" });
+  const extWp = ext.notes.find((n) => n.objectId === "src-b95bb22d8232");
+  eq("extended frontmatter carries the source id", extWp.frontmatter.upc_source_id, "src-b95bb22d8232");
+  ok("approved-only frontmatter has no url key", !("url" in wp.frontmatter));
+
+  // Inbox mode never guesses a domain, and ships no scaffold.
+  const inbox = buildVaultPlan(loadCorpus(EXAMPLE), { inbox: true });
+  ok("inbox notes land in the inbox", inbox.notes.every((n) => n.path.startsWith("00 Inbox/")));
+  ok("inbox mode guesses no domain", inbox.notes.every((n) => !("domain" in n.frontmatter)));
+  eq("inbox mode ships no scaffold", inbox.scaffold.length, 0);
+  // A standalone vault ships the two settings its notes depend on; a live vault's
+  // config belongs to its owner and is never touched.
+  ok("standalone ships a vault config", p1.scaffold.some((f) => f.path === ".obsidian/app.json"));
+  ok("standalone turns the inline title off", p1.scaffold
+    .find((f) => f.path === ".obsidian/app.json").text.includes('"showInlineTitle": false'));
+  ok("inbox mode writes no config", !inbox.scaffold.some((f) => f.path.startsWith(".obsidian")));
+}
+
+// --- Obsidian export: writing, idempotence, and human edits ---
+{
+  const EXAMPLE = path.join(HERE, "..", "examples", "web-research-corpus");
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "upc-vault-"));
+  const first = writeVault(EXAMPLE, { outDir: dir });
+  eq("write reports ok", first.status, "ok");
+
+  const snapshot = () => {
+    const out = {};
+    const walk = (d, rel) => {
+      for (const name of fs.readdirSync(d).sort()) {
+        const abs = path.join(d, name), r = rel ? rel + "/" + name : name;
+        if (fs.statSync(abs).isDirectory()) walk(abs, r);
+        else out[r] = fs.readFileSync(abs).toString("base64");
+      }
+    };
+    walk(dir, "");
+    return out;
+  };
+  const a = snapshot();
+  writeVault(EXAMPLE, { outDir: dir });
+  eq("re-export is byte-idempotent", JSON.stringify(snapshot()), JSON.stringify(a));
+
+  const notePath = path.join(dir, "10 Sources", "10.09 Website", "Migration downtime research",
+    "How to migrate a WordPress site with no downtime.md");
+  ok("expected note exists on disk", fs.existsSync(notePath));
+
+  fs.writeFileSync(notePath, fs.readFileSync(notePath, "utf8") + "\nhand edit\n");
+  const second = writeVault(EXAMPLE, { outDir: dir });
+  eq("a hand-edited note is not overwritten", second.status, "partial");
+  eq("the edit is reported", second.skipped[0].reason, "modified_since_export");
+  ok("the hand edit survives", fs.readFileSync(notePath, "utf8").includes("hand edit"));
+
+  fs.writeFileSync(notePath, fs.readFileSync(notePath, "utf8").replace("## Notes\n", "## Notes\n\nMy annotation.\n"));
+  writeVault(EXAMPLE, { outDir: dir, force: true });
+  const forced = fs.readFileSync(notePath, "utf8");
+  ok("--force carries ## Notes across", forced.includes("My annotation."));
+  ok("--force discards the stray edit outside ## Notes", !forced.includes("\nhand edit\n"));
+
+  fs.rmSync(dir, { recursive: true, force: true });
+}
+
+// --- Obsidian export: codes are judgements, not gate results ---
+{
+  const src = path.join(HERE, "..", "examples", "web-research-corpus");
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "upc-coded-"));
+  fs.cpSync(src, dir, { recursive: true });
+
+  const cbk = { codebook_id: "cbk-000000000001", namespace: "test", slug: "stance", title: "Stance",
+    closed: true, revision: 1,
+    codes: [{ code: "for", label: "In favour", definition: "Argues for the approach." },
+            { code: "against", label: "Against", definition: "Argues against it." }] };
+  fs.mkdirSync(path.join(dir, "codebooks"), { recursive: true });
+  fs.writeFileSync(path.join(dir, "codebooks", cbk.codebook_id + ".json"), JSON.stringify(cbk, null, 2));
+
+  const coding = (id, coder, code) => ({
+    coding_id: id, codebook_ref: cbk.codebook_id, coder, code, status: "active",
+    target: { kind: "source", id: "src-b95bb22d8232" },
+    provenance: { produced_by: { tool: "t", method: "model" }, created_at: "2026-01-01T00:00:00Z" },
+  });
+  fs.mkdirSync(path.join(dir, "codings", "cds-test"), { recursive: true });
+  fs.writeFileSync(path.join(dir, "codings", "cds-test", "manifest.json"),
+    JSON.stringify({ set_id: "cds-test", items_path: "codings/cds-test/items.jsonl" }, null, 2));
+  fs.writeFileSync(path.join(dir, "codings", "cds-test", "items.jsonl"),
+    [coding("cod-000000000001", "model-a", "for"), coding("cod-000000000002", "model-b", "against")]
+      .map((c) => JSON.stringify(c)).join("\n") + "\n");
+
+  const corpusFile = path.join(dir, "corpus.json");
+  const corpus = JSON.parse(fs.readFileSync(corpusFile, "utf8"));
+  corpus.sections.codebooks = "codebooks/";
+  corpus.sections.codings = "codings/";
+  fs.writeFileSync(corpusFile, JSON.stringify(corpus, null, 2));
+
+  const plan = buildVaultPlan(loadCorpus(dir));
+  eq("a codebook becomes its own note", plan.counts.codebooks, 1);
+  const book = plan.notes.find((n) => n.kind === "codebook");
+  ok("the codebook note defines each code", book.text.includes("## for") && book.text.includes("Argues for the approach."));
+
+  const note = plan.notes.find((n) => n.objectId === "src-b95bb22d8232");
+  ok("source-level codes get their own section", note.text.includes("## Codes"));
+  ok("a code names its coder", note.text.includes("coder `model-a`") && note.text.includes("coder `model-b`"));
+  ok("both sides of a disagreement are shown", note.text.includes("#for]]") && note.text.includes("#against]]"));
+  ok("a disagreement is labelled, not resolved", note.text.includes("coders disagree; both judgements stand"));
+  ok("a code links to its definition", note.text.includes("[[Stance#for]]"));
+  // A chip must not be able to borrow a gate badge's authority.
+  const codeLine = note.text.split("\n").find((l) => l.includes("coder `model-a`"));
+  ok("a code chip carries no verification badge", !/verified|GATE FAILED/.test(codeLine));
+  ok("codes are stated as judgements", note.text.includes("not a verified fact"));
+
+  fs.rmSync(dir, { recursive: true, force: true });
+}
+
+// --- Obsidian export: a failed gate is never presented as clean ---
+{
+  const src = path.join(HERE, "..", "examples", "web-research-corpus");
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "upc-tamper-"));
+  fs.cpSync(src, dir, { recursive: true });
+  const clean = path.join(dir, "sources", "watchdog-2024-migrate-with-no-downtime", "representations", "clean.md");
+  fs.writeFileSync(clean, fs.readFileSync(clean, "utf8").replace("fully validated", "fully checked"));
+
+  const plan = buildVaultPlan(loadCorpus(dir));
+  eq("the drifted quote is counted as failed", plan.counts.quotes_failed, 1);
+  const note = plan.notes.find((n) => n.objectId === "src-b95bb22d8232");
+  ok("a failed gate raises a caution block", note.text.includes("> [!caution] Failed quotation gates"));
+  ok("the failed quote's text is not shown", !note.text.includes('**"cut over DNS only after'));
+  ok("the failed quote is named by id", note.text.includes("`ext-d8129f9b7114`"));
+  ok("the report banners the failure", plan.report.text.includes("quotation gate failure"));
+  ok("a clean corpus does not banner", !buildVaultPlan(loadCorpus(src)).report.text.includes("gate failure"));
+
+  fs.rmSync(dir, { recursive: true, force: true });
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

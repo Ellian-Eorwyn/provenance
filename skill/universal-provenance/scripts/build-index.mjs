@@ -18,8 +18,8 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { loadCorpus, getRepFile, verifyHopB, bareHash, atomicWriteFile,
-  resolveLocator, lineRangeForCharRange, isDerivedText, isModelRewrittenText, textLines, isTextualMedia as U_TEXTUAL } from "./upc_common.mjs";
+import { loadCorpus, getRepFile, bareHash, atomicWriteFile, badgeForExtraction, VERIFIED_BADGES,
+  resolveLocator, lineRangeForCharRange, textLines, isTextualMedia as U_TEXTUAL } from "./upc_common.mjs";
 
 const TEXTUAL = U_TEXTUAL; // shared predicate (upc_common), kept as a local alias
 const CTX = 90; // codepoints of context on each side
@@ -87,32 +87,24 @@ export function buildModel(loaded) {
     const o = e.obj;
     const rep = repById.get(o.representation_ref);
     const src = srcById.get(o.source_id);
-    let badge = "unverifiable", contextBefore = "", contextAfter = "", shownQuote = o.direct_quote || "", actualSpan = null, verified = false;
-    if (o.direct_quote == null) {
-      badge = "paraphrase";
-    } else if (rep && rep.contained && fs.existsSync(rep.abs) && TEXTUAL(rep.obj.media_type) && o.locator && o.locator.type === "char_range") {
-      const repRec = getRepFile(rep.abs);
-      const res = verifyHopB(o, repRec);
-      if (res.ok) {
-        verified = true;
-        badge = isDerivedText(rep.obj, lookupRep)
-          ? "verified-to-transcript"
-          : isModelRewrittenText(rep.obj, lookupRep) ? "verified-to-rewrite" : "verified";
-        const v = o.locator.value;
-        const len = repRec.cps.length;
+    let contextBefore = "", contextAfter = "", shownQuote = o.direct_quote || "", actualSpan = null;
+    const readable = rep && rep.contained && fs.existsSync(rep.abs);
+    const repRec = readable ? getRepFile(rep.abs) : null;
+    // The §09 badge taxonomy lives in upc_common so this page, `upc locate`, and
+    // every export cannot drift apart on it.
+    const { badge } = badgeForExtraction(o, rep ? rep.obj : null, repRec, lookupRep);
+    const verified = VERIFIED_BADGES.has(badge);
+    if (repRec && (verified || badge === "failed")) {
+      const v = o.locator.value || {};
+      const len = repRec.cps.length;
+      if (Number.isInteger(v.start) && Number.isInteger(v.end)) {
         contextBefore = repRec.cps.slice(Math.max(0, v.start - CTX), v.start).join("");
-        contextAfter = repRec.cps.slice(v.end, Math.min(len, v.end + CTX)).join("");
-      } else {
-        badge = "failed"; failCount++;
-        // reveal drift: show what is ACTUALLY at the recorded offsets
-        if (repRec.cps && o.locator.value && Number.isInteger(o.locator.value.start)) {
-          const v = o.locator.value;
-          actualSpan = repRec.cps.slice(v.start, Math.min(repRec.cps.length, v.end)).join("");
-          contextBefore = repRec.cps.slice(Math.max(0, v.start - CTX), v.start).join("");
-          contextAfter = repRec.cps.slice(Math.min(repRec.cps.length, v.end), Math.min(repRec.cps.length, v.end + CTX)).join("");
-        }
+        contextAfter = repRec.cps.slice(Math.min(len, v.end), Math.min(len, v.end + CTX)).join("");
+        // On a failure, reveal the drift: show what is ACTUALLY at the recorded offsets.
+        if (!verified) actualSpan = repRec.cps.slice(v.start, Math.min(len, v.end)).join("");
       }
     }
+    if (badge === "failed") failCount++;
     // Presentation anchors: the primary locator plus every secondary, resolved
     // at BUILD time against the bytes (spec/09: context comes from the
     // representation, never from the record). `context` is dropped because the

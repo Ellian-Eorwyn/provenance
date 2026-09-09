@@ -1,0 +1,130 @@
+{
+  "profile_id": "https://provenance.dev/upc/1.7.0/profiles/obsidian",
+  "name": "UPC Obsidian vault profile",
+  "description": "Describes the Obsidian vault an `upc export --format obsidian` writes: the frontmatter properties it may emit and their order, the callouts it may use, the block order it assembles a note from, and the folder routes it files notes and attachments into. UPC is a standard, so none of this is compiled into the exporter; a vault with different conventions supplies its own profile with --profile.",
+
+  "frontmatter": {
+    "property_order": [
+      "type", "status", "domain", "subdomain", "project", "parent",
+      "people", "organization", "related", "source_kind", "capture_type",
+      "date", "rating", "cover", "cssclasses"
+    ],
+    "properties": {
+      "type":         { "shape": "scalar",   "required": true },
+      "status":       { "shape": "scalar",   "required": true },
+      "domain":       { "shape": "scalar",   "required": true },
+      "subdomain":    { "shape": "scalar" },
+      "project":      { "shape": "wikilink" },
+      "parent":       { "shape": "wikilink" },
+      "people":       { "shape": "wikilink_list" },
+      "organization": { "shape": "wikilink" },
+      "related":      { "shape": "wikilink_list" },
+      "source_kind":  { "shape": "scalar",   "required_when": { "type": "source" } },
+      "capture_type": { "shape": "scalar" },
+      "date":         { "shape": "scalar",   "human_owned": true },
+      "rating":       { "shape": "scalar",   "human_owned": true },
+      "cover":        { "shape": "wikilink", "human_owned": true },
+      "cssclasses":   { "shape": "list",     "human_owned": true }
+    },
+    "extended_properties": ["url", "upc_source_id", "upc_corpus_id"]
+  },
+
+  "blocks": [
+    "frontmatter", "title", "summary", "body", "key", "define", "evidence",
+    "caution", "question", "reflection", "connections", "provenance",
+    "sources", "notes", "footnotes"
+  ],
+  "callouts": {
+    "summary":     { "folded": false },
+    "key":         { "folded": false },
+    "define":      { "folded": false },
+    "evidence":    { "folded": false },
+    "caution":     { "folded": false },
+    "question":    { "folded": false },
+    "reflection":  { "folded": true },
+    "connections": { "folded": true },
+    "provenance":  { "folded": true },
+    "info":        { "folded": true, "stock": true }
+  },
+  "owner_blocks": ["notes"],
+  "reserved_headings": ["Sources", "Notes", "Corpus"],
+
+  "routes": {
+    "inbox": "00 Inbox",
+    "sources_root": { "number": 10, "label": "Sources" },
+    "meta_root": { "number": 99, "label": "Meta" },
+    "meta_subdomains": {
+      "schemas":     { "number": 2, "label": "Schemas" },
+      "templates":   { "number": 3, "label": "Templates" },
+      "dashboards":  { "number": 4, "label": "Dashboards" },
+      "attachments": { "number": 5, "label": "Attachments" },
+      "workflows":   { "number": 6, "label": "Workflows" },
+      "maintenance": { "number": 7, "label": "Maintenance" }
+    },
+    "attachment_subfolders": { "image": "Images", "document": "PDFs" }
+  },
+
+  "source_kinds": {
+    "book":         { "number": 1,  "label": "Book" },
+    "article":      { "number": 2,  "label": "Article" },
+    "transcript":   { "number": 3,  "label": "Transcript" },
+    "report":       { "number": 4,  "label": "Report" },
+    "policy":       { "number": 5,  "label": "Policy" },
+    "standard":     { "number": 6,  "label": "Standard" },
+    "manual":       { "number": 7,  "label": "Manual" },
+    "presentation": { "number": 8,  "label": "Presentation" },
+    "website":      { "number": 9,  "label": "Website" },
+    "dataset":      { "number": 10, "label": "Dataset" },
+    "video":        { "number": 11, "label": "Video" },
+    "podcast":      { "number": 12, "label": "Podcast" },
+    "interview":    { "number": 13, "label": "Interview" },
+    "generated":    { "number": 14, "label": "Generated" }
+  },
+
+  "kind_mapping": {
+    "note": "A source's vault kind is decided by CSL item_type first (the most specific signal a corpus carries), then by UPC source_kind, then by the roles of its representations. Nothing here is a guess about content; each rule reads a field the corpus actually stores.",
+    "by_item_type": {
+      "article-journal": "article",
+      "article-magazine": "article",
+      "article-newspaper": "article",
+      "paper-conference": "article",
+      "thesis": "article",
+      "chapter": "book",
+      "book": "book",
+      "report": "report",
+      "legislation": "policy",
+      "legal_case": "policy",
+      "standard": "standard",
+      "webpage": "website",
+      "post-weblog": "website",
+      "post": "website",
+      "dataset": "dataset",
+      "motion_picture": "video",
+      "broadcast": "podcast",
+      "song": "podcast",
+      "speech": "presentation",
+      "interview": "interview",
+      "manuscript": "manual"
+    },
+    "by_source_kind": {
+      "url": "website",
+      "document": "report",
+      "image": "website",
+      "audio": "podcast",
+      "video": "video",
+      "dataset": "dataset"
+    },
+    "by_representation_role": {
+      "transcript": "transcript",
+      "document_pdf": "report",
+      "ocr_pdf": "report"
+    },
+    "default": "website",
+    "generated": "generated"
+  },
+
+  "body_roles": {
+    "note": "Preference order for the representation a note's body is read from. Ordered cleanest-first; a model-rewritten representation is skipped unless --allow-rewrite-body is passed, because a rewrite is inference (spec/05, spec/09) and a reader must not meet one believing it is the source.",
+    "prefer": ["clean_markdown", "markdown", "text", "transcript", "ocr", "metadata"]
+  }
+}
