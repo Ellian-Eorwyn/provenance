@@ -1,0 +1,32 @@
+{
+  "upc_spec_version": "1.8.0",
+  "corpus_id": "cor-000000000003",
+  "title": "Refound fixture",
+  "sections": {
+    "sources": "sources/",
+    "provenance": "provenance/events.jsonl",
+    "sources_csv": "sources.csv",
+    "extractions_csv": "extractions.csv",
+    "index_html": "index.html"
+  },
+  "counts": {
+    "sources": 1,
+    "representations": 1,
+    "extractions": 1,
+    "generations": 0,
+    "syntheses": 0
+  },
+  "sources": [
+    {
+      "source_id": "src-6c028fe157b9",
+      "path": "sources/note-typeset/",
+      "title": "Typeset note",
+      "primary_url": "",
+      "sha256": "sha256:0024937352022e61f01c33db453ae948a563cc40085fd7f0e4e36d0c9dbc1ba7"
+    }
+  ],
+  "syntheses": [],
+  "integrity": {
+    "schema_hash": "sha256:1d6a645ff77f08d4b615275015d0f9df1e8ef10dc4607201e5fd56b141d41a16"
+  }
+}

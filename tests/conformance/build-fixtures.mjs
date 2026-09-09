@@ -233,6 +233,53 @@ const cbkPath = (d, cbk) => path.join(d, "codebooks", cbk.codebook_id + ".json")
 // warnings never appear in `expect`, which lists the codes that MUST fire as errors.
 make("pass-coded", [], (d) => { seedCoded(d); });
 
+// A quotation located by normalized re-find is an ordinary verified quotation.
+// The fixture exists to pin the property that matters: the corpus stores the
+// DOCUMENT's characters (curly quotes, an ﬁ ligature, a hyphenated line break),
+// not the ordinary-character rendering the model proposed, and it passes the
+// unnormalized hop-B gate like any other quote. Built through the real CLI so
+// the fixture proves the shipped path, not a reconstruction of it.
+make("pass-anchor-refound", [], (d) => {
+  rmrf(d);
+  const slug = "note-typeset";
+  const sd = path.join(d, "sources", slug);
+  const TYPESET = ["# Note", "The “ﬁrst” rule of a transi-\ntion is simple: never retype what you can copy."].join("\n\n") + "\n";
+  wText(path.join(sd, "representations", "clean.md"), TYPESET);
+  const repId = mintRepId(Buffer.from(TYPESET, "utf8"));
+  const srcId = mintSrcId({ primaryBytesSha256: sha(TYPESET) });
+  wJSON(path.join(sd, "source.json"), {
+    source_id: srcId, source_kind: "document", title: "Typeset note",
+    bibliographic: { item_type: "document", title: "Typeset note", issued: { date_parts: [[2026]] } },
+    representations: [{
+      representation_id: repId, role: "clean_markdown", media_type: "text/markdown",
+      path: `sources/${slug}/representations/clean.md`, sha256: sha(TYPESET),
+      char_count: codepointLength(TYPESET), produced_by: "conversion",
+      provenance: { produced_by: { tool: "t", method: "conversion" }, created_at: TS },
+    }],
+    extractions_path: `sources/${slug}/extractions.jsonl`,
+    provenance: { produced_by: { tool: "t", method: "manual" }, created_at: TS },
+  });
+  wText(path.join(sd, "extractions.jsonl"), "");
+  wText(path.join(d, "provenance", "events.jsonl"), "");
+  wJSON(path.join(d, "corpus.json"), {
+    upc_spec_version: SPEC_VERSION, corpus_id: "cor-000000000003", title: "Refound fixture",
+    sections: { sources: "sources/", provenance: "provenance/events.jsonl", sources_csv: "sources.csv", extractions_csv: "extractions.csv", index_html: "index.html" },
+  });
+  // The model's rendering: straight quotes, "fi" spelled out, the line break gone.
+  const proposed = 'The "first" rule of a transition is simple';
+  execFileSync(process.execPath,
+    [UPC, "anchor", "--corpus", d, "--rep", repId, "--normalize", "--type", "passage", "--tool", "fixture"],
+    { input: JSON.stringify({ quote: proposed, note: "retyped from the typeset page" }) + "\n", stdio: ["pipe", "ignore", "inherit"] });
+  // `anchor` stamps the wall clock; fixtures must be byte-reproducible, so pin
+  // the timestamps to TS. `created_at` is not in any id recipe, so nothing
+  // re-mints and the fixture still describes exactly what the CLI produced.
+  for (const rel of [`sources/${slug}/extractions.jsonl`, "provenance/events.jsonl"]) {
+    const abs = path.join(d, rel);
+    atomicWriteFile(abs, fs.readFileSync(abs, "utf8").replace(/"(created_at|started_at|ended_at)":"[^"]*"/g, `"$1":"${TS}"`));
+  }
+  regen(d);
+});
+
 make("coding-dangling-codebook", ["dangling_codebook"], (d) => {
   const { cod, cbk } = seedCoded(d);
   fs.rmSync(cbkPath(d, cbk));

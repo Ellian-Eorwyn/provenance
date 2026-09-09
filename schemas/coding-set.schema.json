@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://provenance.dev/upc/1.7.0/schemas/coding-set.schema.json",
+  "$id": "https://provenance.dev/upc/1.8.0/schemas/coding-set.schema.json",
   "title": "UPC Coding Set Manifest",
   "description": "manifest.json for a coding pass (codings/<set-id>/manifest.json), whose items.jsonl lines each validate against coding.schema.json. The manifest is where coder identity is DECLARED: coding.coder is a stable handle, and the volatile detail behind it (which model, which prompt version, which person) lives here, so a model upgrade does not re-mint coding ids or destroy inter-rater history.",
   "type": "object",

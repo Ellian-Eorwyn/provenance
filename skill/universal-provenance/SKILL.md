@@ -66,7 +66,16 @@ node scripts/upc.mjs export <corpus-dir> --format bibtex|ris|csl-json|jsonl|mark
 node scripts/upc.mjs export <corpus-dir> --format obsidian -o <vault-dir> [--into <vault>] [--strip none|standard|aggressive]
 node scripts/upc.mjs reanchor <ext-id>|--all --corpus <corpus-dir> [--to <rep-id>]
 node scripts/upc.mjs build-index <corpus-dir>
-node scripts/upc.mjs mint <src|ext|gen|syn> < object.json
+node scripts/upc.mjs export <corpus-dir> --format site -o <dir> [--matrix a:b] [--bundle]
+node scripts/upc.mjs mint <src|rep|ext|gen|syn|cod|cbk> [--batch] < object.json
+node scripts/upc.mjs add source --corpus <corpus-dir> [--batch] [--hardlink] < source.json
+node scripts/upc.mjs anchor --corpus <corpus-dir> --rep <rep-id> [--normalize] [--set <id>] < candidates.jsonl
+node scripts/upc.mjs code --corpus <corpus-dir> --set <cds-id> [--coder-kind model|human] < codings.jsonl
+node scripts/upc.mjs codebook <corpus-dir> [<cbk-id>]
+node scripts/upc.mjs batch --corpus <corpus-dir> < commands.ndjson
+node scripts/upc.mjs event --corpus <corpus-dir> < event.json
+node scripts/upc.mjs version --json
+node scripts/upc.mjs check-compat --requires "^1.8"
 ```
 
 - **validate** — runs the spec/08 rule registry: schema, referential integrity,
@@ -110,6 +119,42 @@ node scripts/upc.mjs mint <src|ext|gen|syn> < object.json
   against), so the pane works offline from `file://`. Search, sort, and the
   selected extraction ride in the URL hash (`#ex=<ext-id>` addresses one
   directly), so a filtered view is shareable. Read-only.
+
+- **add** — writes a source from a JSON description plus a list of files: hashes
+  the bytes, mints every id, slugifies with collision handling, checks portable
+  filenames and containment, wires `parent_representation_ref` by file index, and
+  journals one `import` event. This is how a producer in any language gets
+  documents *into* a corpus without reimplementing the layout rules. UPC still
+  reads no PDFs and fetches nothing — what a document is made of is the tool's
+  business; identity and layout are not.
+- **anchor** — the re-extraction protocol (`references/re-extraction.md`): a model
+  proposes candidate quotations as JSONL, and this decides whether each is real.
+  Exactly one byte-exact occurrence mints an `active` `char_range` extraction that
+  passes hop B by construction; zero or several never produce an active quotation.
+  **`--normalize`** additionally retries a failed search with whitespace, quote,
+  dash, ligature, hyphenation, initial-case and trailing-period tolerance — and
+  stores *the representation's own characters*, recording what the model actually
+  proposed in `anchoring.proposed_quote`. The gate is untouched: normalization
+  changes what can be found, never what counts as verified.
+- **code** — batch-applies codings against a codebook (spec/12). Validates the
+  open/closed form and code membership, mints `cod-` ids, supersedes a changed
+  answer from the same coder, declares coders in the set manifest, and is
+  idempotent on re-run. Batch only, deliberately.
+- **codebook** — read-only inspection of the coding schemes, with computed
+  application counts.
+- **batch** — NDJSON commands in, NDJSON results out, over one `loadCorpus` with a
+  warm representation cache. `locate` is O(whole corpus) per invocation, so a
+  reader that shells out per passage is quadratic; this is the fix.
+- **event** — appends one activity to the journal, for a tool that derives
+  something from the corpus (an index, a conversion) and should say so.
+- **version / check-compat** — the version handshake. A consumer pins with
+  `check-compat --requires "^1.8"` and fails loudly rather than drifting.
+- **export --format site** — the researcher-facing projection: a static,
+  multi-file library with per-code passage pages, per-source pages carrying the
+  reading copy with every passage highlighted in place, a searchable passage
+  index, rendered overviews, and an optional two-codebook matrix. It never uses
+  the words extraction, representation, locator or hop. Use `index.html` to check
+  a corpus; use this to hand it to somebody.
 
 `validate.mjs` / `build-index.mjs` remain as thin back-compat wrappers. The
 scripts locate the UPC `schemas/` and `vocab/` by walking up from the script dir;

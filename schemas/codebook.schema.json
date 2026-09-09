@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://provenance.dev/upc/1.7.0/schemas/codebook.schema.json",
+  "$id": "https://provenance.dev/upc/1.8.0/schemas/codebook.schema.json",
   "title": "UPC Codebook",
   "description": "A named coding scheme: the controlled vocabulary of codes a coder may apply (§12). A codebook is the SCHEME; a coding is one JUDGEMENT that applies one of its codes to one target. Identity is over (namespace, slug) and NOT over codes[], because a controlled vocabulary's job is to stay stable while its contents evolve — hashing the code list would dangle every codebook_ref on every edit. Evolution is carried by the advisory revision / revision_digest pair instead.",
   "type": "object",

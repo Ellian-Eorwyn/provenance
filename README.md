@@ -1,7 +1,7 @@
 # Universal Provenance Corpus (UPC)
 
 **A tool-independent standard for storing research materials with explicit,
-portable provenance and byte-exact quotation gates.** Version **1.7.0**.
+portable provenance and byte-exact quotation gates.** Version **1.8.0**.
 
 A UPC corpus is a folder in which both humans and software can always answer:
 *What is this object? Where did it come from? What transformations produced it?
@@ -185,6 +185,41 @@ heads and page numbers go, so the note is the content and nothing else — and i
 in each note what it removed. Quotations are still rendered from the representation
 bytes at the locator and still carry their gate badge, so stripping the body cannot
 change what a quotation claims.
+
+Put documents *into* a corpus. UPC reads no PDFs and fetches nothing — what a
+document is made of is the tool's business — but identity and layout are not, so
+`add` does the hashing, minting, slugging and journalling for a producer written
+in any language:
+
+```bash
+echo '{"title":"A paper","source_kind":"document",
+       "files":[{"path":"/abs/paper.pdf","role":"document_pdf","media_type":"application/pdf"},
+                {"path":"/abs/paper.txt","role":"text","media_type":"text/plain","parent":0}]}' \
+  | node skill/universal-provenance/scripts/upc.mjs add source --corpus <corpus>
+```
+
+Let a model propose quotations and have the tool decide which are real. With
+`--normalize`, a span the model retyped with straight quotes, a joined line break
+or an expanded ligature is still located — and what gets **stored** is the
+document's own characters, never the model's:
+
+```bash
+echo '{"quote":"the span the model believes is there","type":"passage"}' \
+  | node skill/universal-provenance/scripts/upc.mjs anchor --corpus <corpus> --rep <rep-id> --normalize
+```
+
+Publish the corpus as a static site for people who have a question about the
+literature rather than about the corpus — code pages, per-source pages carrying
+the reading copy with every passage highlighted in place, a searchable passage
+index, and rendered overviews:
+
+```bash
+node skill/universal-provenance/scripts/upc.mjs export <corpus> --format site -o /tmp/corpus-site --bundle
+```
+
+It is a pile of files, not an app: no fetch, no router, no CDN, so it works from
+`file://`. `index.html` (above) stays what it always was — the surface for
+checking whether a corpus holds up; this one is for handing to a colleague.
 
 Rebuild the examples and run the tests:
 

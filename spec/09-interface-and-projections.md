@@ -233,6 +233,36 @@ bibliography). The bibliographic mappings:
 | `abstract` | `abstract` | `AB` |
 | (anything unmapped) | `note` | `N1` |
 
+### The reader's site export
+
+`upc export … --format site` emits a **library** projection: a static, multi-file
+site whose reader has a question about the literature, not about the corpus.
+`index.html` (above) is the other surface, and the two are not interchangeable —
+one exists to show whether the corpus holds up, the other to be used.
+
+Normative requirements, in addition to everything the browser must already do:
+
+1. The site MUST NOT use the words *extraction*, *representation*, *locator* or
+   *hop* in anything a reader sees. Use the projection vocabulary: **Copy**,
+   **Passage**, **Note**, "Checked against the extracted text".
+2. Every quotation and its context MUST be read from the representation bytes at
+   the locator **at build time** and re-gated there. A quotation whose gate now
+   fails MUST be rendered as failing, never omitted: a library that quietly drops
+   what it can no longer prove is worse than one that says so.
+3. A reading copy too large to embed MUST be omitted whole with a statement to
+   that effect. It MUST NOT be truncated — half a document presented as a whole
+   one is exactly the failure this projection exists to prevent.
+4. The site MUST work from `file://`. A projection that needs a server is not
+   something a colleague can be handed.
+5. All of the code-display rules above apply and MUST be enforced by the
+   renderer, not left to a template: a chip is not a badge, a code is never shown
+   without its coder, a disagreement is displayed rather than resolved, a code on
+   a failing span is marked as detached, a definition is at most one interaction
+   away, and every count states its unit.
+6. A two-codebook matrix, where offered, counts **passages carrying both codes**
+   and MUST say so. A cell with no passages shows nothing, not a zero dressed up
+   as a finding.
+
 ### The Obsidian vault export
 
 `upc export … --format obsidian` emits a **reading** projection: one Markdown note

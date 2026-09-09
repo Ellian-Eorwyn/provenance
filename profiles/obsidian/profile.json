@@ -1,5 +1,5 @@
 {
-  "profile_id": "https://provenance.dev/upc/1.7.0/profiles/obsidian",
+  "profile_id": "https://provenance.dev/upc/1.8.0/profiles/obsidian",
   "name": "UPC Obsidian vault profile",
   "description": "Describes the Obsidian vault an `upc export --format obsidian` writes: the frontmatter properties it may emit and their order, the callouts it may use, the block order it assembles a note from, and the folder routes it files notes and attachments into. UPC is a standard, so none of this is compiled into the exporter; a vault with different conventions supplies its own profile with --profile.",
 

@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://provenance.dev/upc/1.7.0/schemas/coding.schema.json",
+  "$id": "https://provenance.dev/upc/1.8.0/schemas/coding.schema.json",
   "title": "UPC Coding",
   "description": "One coder's judgement that one code applies to one target (§12). A coding is deliberately a separate object from the extraction it labels: an extraction is the SPAN (content-addressed, so two coders selecting the same sentence converge on one id) and a coding is the JUDGEMENT about it (so two coders may agree, disagree, or multi-label without colliding). A coding MUST NOT carry its own locator — a span-level coding targets an extraction that has already passed the hop-B gate, which is what stops a code from becoming a back door for an unanchored span.",
   "type": "object",

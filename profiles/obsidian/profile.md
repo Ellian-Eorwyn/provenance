@@ -1,6 +1,6 @@
 # UPC Obsidian Vault Profile
 
-- **Profile id:** `https://provenance.dev/upc/1.7.0/profiles/obsidian`
+- **Profile id:** `https://provenance.dev/upc/1.8.0/profiles/obsidian`
 - **Machine form:** [`profile.json`](profile.json)
 - **Status:** the target of the `upc export … --format obsidian` projection
   ([crosswalks/obsidian.md](../../crosswalks/obsidian.md)).

@@ -1,6 +1,6 @@
 {
   "name": "@ellian-eorwyn/upc",
-  "version": "1.7.0",
+  "version": "1.8.0",
   "description": "Universal Provenance Corpus — a tool-independent research-corpus standard with byte-exact quotation gates. Spec, JSON Schemas, controlled vocabularies, and a zero-dependency reference implementation.",
   "license": "SEE LICENSE IN LICENSE.md",
   "type": "module",

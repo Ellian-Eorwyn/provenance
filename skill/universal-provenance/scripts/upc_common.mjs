@@ -366,7 +366,7 @@ export function checkFilename(relPath) {
   for (const seg of segs) {
     if (seg === "" || seg === ".") continue;
     if (seg === "..") return { ok: false, reason: ".. segment" };
-    if (/[ -<>:"|?*]/.test(seg)) return { ok: false, reason: "forbidden character in '" + seg + "'" };
+    if (/[\x00-\x1f<>:"|?*]/.test(seg)) return { ok: false, reason: "forbidden character in '" + seg + "'" };
     if (/[ .]$/.test(seg)) return { ok: false, reason: "trailing dot/space in '" + seg + "'" };
     const bare = seg.replace(/\.[^.]*$/, "").toLowerCase();
     if (WIN_RESERVED.has(bare)) return { ok: false, reason: "reserved name '" + seg + "'" };
@@ -464,6 +464,196 @@ export function getRepFile(absPath) {
 
 export function clearRepCache() {
   _repCache.clear();
+}
+
+// ---------------------------------------------------------------------------
+// Normalized re-find (spec/03). Anchoring-time only — NEVER verification time.
+//
+// A model asked to copy a span verbatim out of PDF-extracted text reliably
+// returns something a byte-exact search cannot find: a curly quote straightened,
+// a line break turned into a space, a hyphenated line-break word rejoined, an
+// `fi` ligature typed as two letters. The span is really there; the proposal is
+// a faithful reading of it rendered in ordinary characters.
+//
+// So the search may be normalized. What is STORED never is: the extraction's
+// direct_quote is always the representation's own codepoints, sliced at the
+// offsets this search found. The model's string is recorded separately as
+// `anchoring.proposed_quote` so a reviewer can see what was typed and what was
+// found. Hop B keeps comparing raw codepoints with `===`; nothing here can make
+// a quotation verify that would not have verified anyway.
+// ---------------------------------------------------------------------------
+
+const RE_WS = /[\s  -  　]/;
+const RE_LOWER = /\p{Ll}/u;
+const FOLD_SINGLE_QUOTE = "‘’‚‛′";
+const FOLD_DOUBLE_QUOTE = "“”„‟″";
+const FOLD_DASH = "‐‑‒–—―−";
+const LIGATURES = { "ﬀ": "ff", "ﬁ": "fi", "ﬂ": "fl", "ﬃ": "ffi", "ﬄ": "ffl" };
+
+/** The normalization classes, in the order spec/03 lists them. A result's
+ *  `classes` reports only those that actually changed a character, so a caller
+ *  can say which liberties were taken rather than listing the whole table. */
+export const REFIND_CLASSES = ["whitespace", "quotes", "dashes", "soft-hyphen", "hyphenation", "ligatures", "ellipsis", "initial-case", "trailing-period"];
+
+/** Normalize a codepoint array for re-finding.
+ *
+ *  Returns `{ norm, map, classes }` where `norm` is the normalized string,
+ *  `classes` is the Set of rule names that changed something, and `map[u]` is
+ *  the index in `cps` of the codepoint that produced UTF-16 code unit `u` of
+ *  `norm`. The map is what makes this safe: a hit in `norm` is translated back
+ *  to real codepoint offsets, and the stored quote is sliced from the ORIGINAL
+ *  codepoints at those offsets.
+ *
+ *  The map is indexed by UTF-16 code unit, not codepoint, precisely so that the
+ *  native `String.indexOf` — which returns code-unit offsets — can be used to
+ *  search it. Indexing by codepoint would silently shift every offset after the
+ *  first astral character in the document.
+ *
+ *  Case is deliberately not folded and Unicode normal forms are deliberately not
+ *  applied: both would let visibly different text match, and the point of the
+ *  gate is that what is stored is what the document says. */
+export function normalizeForRefind(cps) {
+  const out = [];
+  const map = [];
+  const classes = new Set();
+  // One map entry per UTF-16 code unit, so map indices line up with indexOf.
+  const push = (ch, srcIdx) => { out.push(ch); for (let k = 0; k < ch.length; k++) map.push(srcIdx); };
+
+  for (let i = 0; i < cps.length; i++) {
+    const c = cps[i];
+
+    if (c === "­") { classes.add("soft-hyphen"); continue; }
+
+    if (c === "-" || FOLD_DASH.includes(c)) {
+      // A hyphen at a line break inside a word is a typesetting artifact, not
+      // punctuation: drop it and the break so "transi-\ntions" reads as one word.
+      let j = i + 1, sawBreak = false;
+      while (j < cps.length && RE_WS.test(cps[j])) {
+        if (cps[j] === "\n" || cps[j] === "\r") sawBreak = true;
+        j++;
+      }
+      if (sawBreak && j < cps.length && RE_LOWER.test(cps[j])) {
+        classes.add("hyphenation");
+        i = j - 1;
+        continue;
+      }
+      if (c !== "-") classes.add("dashes");
+      push("-", i);
+      continue;
+    }
+
+    if (RE_WS.test(c)) {
+      let j = i;
+      while (j < cps.length && RE_WS.test(cps[j])) j++;
+      if (j - i > 1 || c !== " ") classes.add("whitespace");
+      push(" ", i);
+      i = j - 1;
+      continue;
+    }
+
+    if (FOLD_SINGLE_QUOTE.includes(c)) { classes.add("quotes"); push("'", i); continue; }
+    if (FOLD_DOUBLE_QUOTE.includes(c)) { classes.add("quotes"); push('"', i); continue; }
+
+    const lig = LIGATURES[c];
+    if (lig) {
+      classes.add("ligatures");
+      for (const ch of lig) push(ch, i);
+      continue;
+    }
+
+    if (c === "…") { classes.add("ellipsis"); for (const ch of "...") push(ch, i); continue; }
+
+    push(c, i);
+  }
+
+  return { norm: out.join(""), map, classes };
+}
+
+/** Cached normalized form of a representation, keyed on the getRepFile record. */
+function repNorm(repRec) {
+  if (!repRec._refind) repRec._refind = normalizeForRefind(repRec.cps);
+  return repRec._refind;
+}
+
+/** Find `candidate` in a representation under the normalization above.
+ *
+ *  Returns one of:
+ *    { status: "refound", start, end, quote, classes }  exactly one hit
+ *    { status: "not_found" }                            zero hits
+ *    { status: "ambiguous", candidates: n }             more than one hit
+ *
+ *  `quote` is sliced from the representation's own codepoints — never the
+ *  candidate. Zero and multiple hits are failures exactly as they are for the
+ *  exact search: a span that cannot be located uniquely is never minted. */
+export function refindSpan(repRec, candidate) {
+  if (!repRec || !repRec.utf8ok || typeof candidate !== "string" || candidate === "") {
+    return { status: "not_found" };
+  }
+  const cand = normalizeForRefind(Array.from(candidate));
+  const needle = cand.norm.trim();
+  if (needle === "") return { status: "not_found" };
+
+  const hay = repNorm(repRec);
+  const find = (n) => {
+    const out = [];
+    let from = 0, idx;
+    while ((idx = hay.norm.indexOf(n, from)) !== -1) { out.push(idx); from = idx + 1; }
+    return out;
+  };
+
+  // Two habits of a model asked to quote, both measured on real output rather
+  // than imagined, and both tolerated only in the narrowest possible form:
+  //
+  //   initial-case    — quoting from mid-sentence, it capitalises the first
+  //                     letter, because that is what a sentence looks like.
+  //                     Only the FIRST character's case is tolerated; general
+  //                     case folding would let visibly different text match.
+  //   trailing-period — it ends the quote with a full stop the document does not
+  //                     have there, because it believes it has quoted a whole
+  //                     sentence. Only a single trailing "." is tolerated, and
+  //                     what gets stored is the document's span without it.
+  //
+  // Variants are tried in order of how little they concede, and the first that
+  // resolves uniquely wins. An ambiguous variant stops the search: a span that
+  // cannot be located uniquely is never minted, however it was rendered.
+  const swapInitial = (n) => {
+    const f = n[0];
+    const sw = f === f.toLowerCase() ? f.toUpperCase() : f.toLowerCase();
+    return sw === f ? null : sw + n.slice(1);
+  };
+  const dropPeriod = (n) => (n.length > 1 && n.endsWith(".") && !n.endsWith("..") ? n.slice(0, -1) : null);
+  const variants = [{ n: needle, taken: [] }];
+  const ic = swapInitial(needle);
+  if (ic) variants.push({ n: ic, taken: ["initial-case"] });
+  const tp = dropPeriod(needle);
+  if (tp) {
+    variants.push({ n: tp, taken: ["trailing-period"] });
+    const both = swapInitial(tp);
+    if (both) variants.push({ n: both, taken: ["initial-case", "trailing-period"] });
+  }
+
+  let used = null, hits = [], taken = [];
+  for (const v of variants) {
+    const h = find(v.n);
+    if (h.length === 1) { used = v.n; hits = h; taken = v.taken; break; }
+    if (h.length > 1) return { status: "ambiguous", candidates: h.length };
+  }
+  if (!used) return { status: "not_found" };
+
+  const start = hay.map[hits[0]];
+  const end = hay.map[hits[0] + used.length - 1] + 1;
+  // Report the classes exercised by THIS span and this candidate — not every
+  // class the whole document happens to contain.
+  const spanClasses = normalizeForRefind(repRec.cps.slice(start, end)).classes;
+  const classes = new Set([...cand.classes, ...spanClasses]);
+  for (const t of taken) classes.add(t);
+  return {
+    status: "refound",
+    start,
+    end,
+    quote: repRec.cps.slice(start, end).join(""),
+    classes: REFIND_CLASSES.filter((c) => classes.has(c)),
+  };
 }
 
 // ---------------------------------------------------------------------------

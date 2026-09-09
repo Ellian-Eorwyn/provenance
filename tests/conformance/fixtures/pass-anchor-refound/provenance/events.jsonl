@@ -1,0 +1,1 @@
+{"event_id":"evt-000001","activity_type":"extract","tool":"fixture","started_at":"2026-08-17T12:00:00Z","status":"success","inputs":{"representation_refs":["rep-002493735202"]},"outputs":{"extraction_ids":["ext-8c9afbdbfb0f"]},"notes":"anchored 1/1 candidate(s)"}

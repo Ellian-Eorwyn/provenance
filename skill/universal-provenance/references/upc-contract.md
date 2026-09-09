@@ -1,9 +1,34 @@
-# UPC Output Contract (skill-local, 1.5.0)
+# UPC Output Contract (skill-local, 1.8.0)
 
 The condensed, self-sufficient contract for producing a conformant Universal
 Provenance Corpus. The full normative spec is in `spec/` at the standard's root;
 this is what a producing tool needs at write time. Where this and the spec
 disagree, the spec governs.
+
+## Codes and codings (since 1.6.0)
+
+A **codebook** is the scheme; a **coding** is one judgement recorded against one
+object. Both live under their own `sections` keys, and `loadCorpus` reads them
+only if `corpus.json` declares those keys — there is no directory sniffing.
+
+- `codebooks/<cbk-id>.json` — `cbk-` is hashed over `(namespace, slug)` **only**,
+  so a codebook's codes can be edited freely without re-minting anything or
+  dangling an existing coding. `revision` and `revision_digest` carry evolution
+  and are advisory. `codes[]` needs at least one entry, even when `closed: false`.
+- `codings/<set-id>/{manifest.json, items.jsonl}` — the manifest declares
+  `coders[]` (`coder`, `kind: model|human|ensemble|adjudicator`, and the volatile
+  model/prompt detail), so a model upgrade does not destroy agreement history.
+- A coding **never carries a locator**. Its `target` is an `extraction`, `source`
+  or `representation`, so a span-level coding points at something that already
+  passed the gate. A code can never become a second, ungated way to point at text.
+- `cod-` is hashed over `(codebook_ref, target, coder, code|value)`. Re-running an
+  unchanged pass writes nothing; a *changed* answer from the same coder supersedes
+  the old one; two coders disagreeing produce two retained records, and no surface
+  may pick a winner.
+
+Produce them in two steps, never one: `upc anchor` decides which proposed spans
+are real, then `upc code` records judgements against the spans that survived.
+`upc add source` writes sources; `upc export --format site` publishes the result.
 
 ## Layout (default; `corpus.json.sections` is authoritative)
 

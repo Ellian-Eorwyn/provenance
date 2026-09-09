@@ -3,6 +3,118 @@
 All notable changes to the Universal Provenance Corpus (UPC) standard.
 Versioning is semantic (§00 Versioning policy).
 
+## 1.8.0 — 2026-09-09
+
+**Backward-compatible (additive) minor release: getting documents in, and getting
+a readable library out.** No object field, vocabulary, id recipe or quotation gate
+changed; the schema `$id`s bump to `1.8.0` (which changes `integrity.schema_hash` —
+regenerate projections with `upc regen`). Every 1.7.0 corpus remains valid.
+
+Everything here came out of putting the standard to work on a real corpus for the
+first time: 179 PDFs of transitions literature, coded by a local 27B model against
+nine codebooks. Each item below is a thing that was measured, not a thing that
+seemed like a good idea.
+
+### Added — `upc anchor --normalize`, so a model's quotation can be found
+
+- A model asked to copy a span verbatim out of PDF-extracted text does not. It
+  straightens a curly quote, writes `fi` for an `ﬁ` ligature, puts a space where
+  the page had a line break, rejoins a word the typesetter hyphenated, capitalises
+  the first letter because it is starting a sentence, and ends with a full stop
+  the document does not have there. **The span is genuinely in the document.**
+  A byte-exact search finds none of these.
+- So the *search* may be normalized while **what is stored never is**: the
+  extraction's `direct_quote` is always the representation's own codepoints,
+  sliced at the offsets the search found, and hop B still compares raw codepoints
+  with `===`. Nothing here can make a quotation verify that would not have
+  verified anyway; it only changes which spans a producer can find.
+- Nine normalization classes, all reported: `whitespace`, `quotes`, `dashes`,
+  `soft-hyphen`, `hyphenation`, `ligatures`, `ellipsis`, `initial-case`,
+  `trailing-period`. Case is **not** folded beyond that first character, and
+  Unicode normal forms are **not** applied — both would let visibly different
+  text match, and the point of the gate is that what is stored is what the
+  document says.
+- Zero or several normalized hits are still `not_found` / `ambiguous`. A span
+  that cannot be located uniquely is never minted, however it was rendered.
+- New optional `extraction.anchoring` records `{method, proposed_quote, rules[]}`
+  — the provenance of the *search*, excluded from the `ext-` identity recipe, so
+  a reviewer can see what the model typed next to what the document says. New
+  advisory `anchored_by_normalization` (never promoted under `--strict`).
+- **Measured:** on 67 model-proposed passages from three papers, the exact search
+  found 59 and normalization found 4 more, for 94%. Of the misses, two were the
+  model inventing a sentence boundary and two were faults in the *text* rather
+  than the search (below).
+
+### Added — `upc add`, so a producer does not reimplement the layout rules
+
+- **`upc add source --corpus <dir> [--batch] [--hardlink]`** takes a JSON
+  description plus a list of files and writes the source: hashing bytes, minting
+  `src-`/`rep-`/`img-` ids, slugifying with collision handling, checking portable
+  filenames and containment, wiring `parent_representation_ref` by index, and
+  appending one `import` event.
+- UPC still has no PDF reader, no fetcher and no OCR, deliberately: what a
+  document is made of is the tool's business. What is *not* the tool's business is
+  identity and layout, and every producer that reimplements those gets some of
+  them subtly wrong in a way that cannot be repaired from outside.
+- **`upc event --corpus <dir>`** appends one activity to the journal, so a tool
+  that derives something from a corpus — an index, a conversion — can say so
+  without reimplementing the journal's numbering or its atomic write.
+
+### Added — `upc export --format site`, a library rather than an audit
+
+- **`upc export <corpus> --format site -o <dir> [--matrix a:b] [--bundle]`** — a
+  static, multi-file site for the person who has a question about the literature
+  rather than about the corpus. Home, codes, per-code passage pages with filters
+  and CSV export, per-source pages carrying the full reading copy with every
+  passage highlighted in place, a searchable passage index, rendered overviews
+  with their claim registers, and an optional two-codebook matrix.
+- `index.html` (`build-index.mjs`) remains what it has always been: a
+  *verification* surface that speaks the standard's vocabulary. This is the other
+  audience, and it never uses the words extraction, representation, locator or
+  hop. The translation is the one in `docs/adoption-plan.md`: Copy, Passage, Note,
+  "Checked against the extracted text", "Doesn't match the source".
+- It is a pile of files, not an app: no fetch, no router, no CDN, so it works from
+  `file://` — which is what "email someone the folder" actually requires.
+- §09's code rules are enforced by the renderer, not left to a template: a code
+  chip is shaped and coloured unlike any badge, no code is shown without its
+  coder, a disagreement is displayed with neither judgement winning, a code on a
+  broken span is struck through, a definition is one hover away, and every count
+  states whether it counts passages or sources.
+- Quotations and their context are sliced from the representation bytes and
+  re-gated at build time, so a page cannot show a quotation the corpus can no
+  longer prove; a failure is rendered as a failure. A reading copy too large to
+  embed is omitted whole with a message, never truncated.
+
+### Fixed — three defects real use exposed
+
+- **`upc anchor --set` wrote where the corpus could not see.** `loadCorpus` reads
+  only what `sections` declares — there is no directory sniffing — so an extraction
+  set written into an undeclared `extractions/` was invisible: the objects were on
+  disk, every coding that targeted one dangled, and nothing said why. `anchor` and
+  `code` now declare the section they write into. This was found by coding a real
+  corpus and getting 28 dangling targets out of 28.
+- **A failed `upc code` run left the corpus invalid.** The coding-set manifest was
+  written before any coding succeeded, so a run in which everything failed left a
+  manifest with `coders: []`, which violates its own schema. A run that lands
+  nothing now writes nothing.
+- **A raw NUL and a raw US byte sat in `upc_common.mjs`** inside a regex character
+  class, where the `\x00`/`\x1f` escapes were meant. Functionally identical, but
+  it made every `grep` treat the reference implementation as a binary file.
+
+### Notes for producers
+
+- Text handed to `upc add` should be **soft-wrapped** (one line per paragraph),
+  per §02. Measured: a hard-wrapped copy puts a newline inside most multi-line
+  quotations, which then cannot use the inline `"…" [ext-id]` marker form.
+- Two faults in *converted text* accounted for every anchoring failure that was
+  not the model's fault: a running head emitted inline at a page break, splicing a
+  journal citation into the middle of a sentence; and a word broken across lines
+  with a SOFT HYPHEN rather than a hyphen-minus, which naive rejoining turns into
+  "en ables". Fix the text; do not loosen what counts as a match.
+- An **open codebook** (`closed: false`) still needs at least one entry in
+  `codes[]`, because the schema requires it. A codebook whose values are genuinely
+  open-ended should seed one illustrative code rather than shipping an empty array.
+
 ## 1.7.0 — 2026-08-28
 
 **Backward-compatible (additive) minor release: an Obsidian vault export.** No

@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://provenance.dev/upc/1.7.0/schemas/provenance-stamp.schema.json",
+  "$id": "https://provenance.dev/upc/1.8.0/schemas/provenance-stamp.schema.json",
   "title": "UPC Provenance Stamp",
   "description": "Embedded on every derived object (representation, extraction, generation, synthesis). Records who/what produced it, when, how, and what it was derived from. input_digest lives here and only here.",
   "type": "object",

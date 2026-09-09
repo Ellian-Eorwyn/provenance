@@ -15,13 +15,15 @@ import {
   charToLine, lineRangeForCharRange, textLines, resolveLocator, isTranscriptRole,
   isDerivedText, isTextualMedia, isModelRewrittenText,
   mintCbkId, mintCodId, codebookRevisionDigest, mintRepId, canonicalUrl as _cu,
+  normalizeForRefind, refindSpan,
 } from "../skill/universal-provenance/scripts/upc_common.mjs";
 import { buildRoCrateGraph, fragmentForLocator, selectorsForLocator, buildAnnotationTargets } from "../skill/universal-provenance/scripts/ro-crate.mjs";
 import { buildModel as buildBrowserModel } from "../skill/universal-provenance/scripts/build-index.mjs";
 import { buildProvGraph } from "../skill/universal-provenance/scripts/prov.mjs";
 import { buildVaultPlan, writeVault, loadProfile, renderCallout, serializeFrontmatter,
   stripBoilerplate, yamlScalar } from "../skill/universal-provenance/scripts/obsidian.mjs";
-import { validateCorpus, anchorCmd, codeCmd, codebookCmd, batchCmd, mintBatchCmd, locateCmd, satisfiesRequirement, specVersion } from "../skill/universal-provenance/scripts/upc.mjs";
+import { validateCorpus, anchorCmd, codeCmd, codebookCmd, batchCmd, mintBatchCmd, locateCmd, satisfiesRequirement, specVersion, addSourceCmd, addSynthesisCmd } from "../skill/universal-provenance/scripts/upc.mjs";
+import { buildSiteModel } from "../skill/universal-provenance/scripts/site.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
@@ -1208,6 +1210,338 @@ ok("filename rejects reserved", !checkFilename("sources/con/x.md").ok);
   {
     const inspected = codebookCmd(dir, cbk.codebook_id);
     ok("codebook: applied counts are computed, never stored", inspected.codes.every((c) => typeof c.applied === "number"));
+  }
+
+  fs.rmSync(dir, { recursive: true, force: true });
+}
+
+// --- normalized re-find: the model may mistype, the corpus may not ---
+//
+// A model copying a span out of PDF-extracted text renders it in ordinary
+// characters: straight quotes, "fi" for a ligature, a space where the page had
+// a line break. The span is really there. What must never happen is that the
+// model's rendering gets stored as though the document said it.
+{
+  const mk = (t) => ({ utf8ok: true, text: t, cps: Array.from(t) });
+
+  // The map is indexed by UTF-16 code unit so it survives astral characters;
+  // indexing it by codepoint would shift every offset after the first emoji.
+  {
+    const n = normalizeForRefind(Array.from("\u{1F600}a“b"));
+    eq("refind: map is code-unit indexed", n.map.length, n.norm.length);
+    eq("refind: astral maps back to its own codepoint", n.map[n.norm.indexOf('"')], 2);
+  }
+
+  const R = mk('A “regime shift” in the ﬁrst transi-\ntion, 1990–2000.');
+  {
+    const r = refindSpan(R, 'A "regime shift" in the first transition, 1990-2000.');
+    eq("refind: locates a span the model retyped", r.status, "refound");
+    eq("refind: stores the document's own characters", r.quote, R.cps.slice(r.start, r.end).join(""));
+    ok("refind: the stored quote is not the proposal", r.quote !== 'A "regime shift" in the first transition, 1990-2000.');
+    // The line break here is consumed by the hyphenation rule, not the
+    // whitespace rule, so "whitespace" correctly does not appear.
+    eq("refind: reports which liberties it took", r.classes.join(","), "quotes,dashes,hyphenation,ligatures");
+    eq("refind: a plain line break reports whitespace",
+       refindSpan(mk("regime\nshift here"), "regime shift here").classes.join(","), "whitespace");
+  }
+
+  eq("refind: soft hyphens are invisible to the search",
+     refindSpan(mk("co­evolution here"), "coevolution here").status, "refound");
+  eq("refind: an ellipsis character matches three dots",
+     refindSpan(mk("and so… onward"), "and so... onward").status, "refound");
+  eq("refind: a span occurring twice is ambiguous, never minted",
+     refindSpan(mk('a “regime” and a “regime”'), 'a "regime"').status, "ambiguous");
+  eq("refind: a fabricated span is not found",
+     refindSpan(mk("nothing like it here"), "invented wording").status, "not_found");
+  // A model quoting from mid-sentence capitalises the first letter. That one
+  // character is tolerated — and the document's own casing is what gets stored.
+  {
+    const r = refindSpan(mk("Specifically, in the first phase, policy matters."), "In the first phase, policy matters.");
+    eq("refind: a capitalised mid-sentence start is tolerated", r.status, "refound");
+    eq("refind: the document's own casing is stored", r.quote, "in the first phase, policy matters.");
+    ok("refind: the liberty is reported", r.classes.includes("initial-case"));
+  }
+  // Beyond that first character, case is NOT folded: it would let visibly
+  // different text match, and the point of the gate is that what is stored is
+  // what the document says. Unicode normal forms are likewise not applied.
+  eq("refind: interior case is not folded", refindSpan(mk("the Regime shift"), "the regime shift").status, "not_found");
+  eq("refind: a wholly different case pattern is not folded", refindSpan(mk("THE REGIME"), "the regime").status, "not_found");
+
+  // Integration: the same thing through anchorCmd, ending in a real gate.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "upc-refind-"));
+  fs.mkdirSync(path.join(dir, "sources", "s1", "representations"), { recursive: true });
+  fs.mkdirSync(path.join(dir, "provenance"), { recursive: true });
+  const text = "Intro line.\nThe “ﬁrst” point of a transi-\ntion is simple.\nEnd.\n";
+  const buf = Buffer.from(text, "utf8");
+  fs.writeFileSync(path.join(dir, "sources", "s1", "representations", "clean.md"), buf);
+  const rep = mintRepId(buf);
+  const stamp = { produced_by: { tool: "t", method: "import" }, created_at: "2026-01-01T00:00:00Z" };
+  fs.writeFileSync(path.join(dir, "sources", "s1", "source.json"), JSON.stringify({
+    source_id: mintSrcId({ canonicalUrl: "https://example.org/r" }), source_kind: "url", title: "T",
+    retrieval: { original_url: "https://example.org/r", fetch_status: "success" },
+    extractions_path: "sources/s1/extractions.jsonl",
+    representations: [{ representation_id: rep, role: "clean_markdown", media_type: "text/markdown",
+      path: "sources/s1/representations/clean.md", sha256: sha256Hex(buf), produced_by: "conversion", provenance: stamp }],
+    provenance: stamp,
+  }, null, 2));
+  fs.writeFileSync(path.join(dir, "sources", "s1", "extractions.jsonl"), "");
+  fs.writeFileSync(path.join(dir, "provenance", "events.jsonl"), "");
+  fs.writeFileSync(path.join(dir, "corpus.json"), JSON.stringify({
+    upc_spec_version: specVersion(), corpus_id: "cor-000000000002",
+    sections: { sources: "sources/", provenance: "provenance/events.jsonl" },
+  }, null, 2));
+
+  const retyped = 'The "first" point of a transition is simple.';
+  clearRepCache();
+  eq("anchor: without --normalize a retyped span is not found",
+     anchorCmd(dir, rep, [{ quote: retyped }], { tool: "selftest", dryRun: true }).results[0].status, "not_found");
+
+  clearRepCache();
+  const res = anchorCmd(dir, rep, [{ quote: retyped }], { tool: "selftest", normalize: true });
+  eq("anchor: --normalize locates it", res.results[0].status, "refound");
+  eq("anchor: the refound span is written", res.wrote, 1);
+  eq("anchor: tally counts refound separately from anchored", res.tally.refound, 1);
+
+  const ext = JSON.parse(fs.readFileSync(path.join(dir, "sources", "s1", "extractions.jsonl"), "utf8").trim());
+  eq("anchor: direct_quote is the representation's text", ext.direct_quote,
+     Array.from(text).slice(ext.locator.value.start, ext.locator.value.end).join(""));
+  eq("anchor: the model's proposal is recorded, not stored as the quote", ext.anchoring.proposed_quote, retyped);
+  eq("anchor: the method is recorded", ext.anchoring.method, "normalized");
+  ok("anchor: the proposal is not what got minted", ext.direct_quote !== retyped);
+
+  // The whole point: a normalized SEARCH still yields a quotation that passes
+  // the unnormalized gate. Nothing here can make a bad quote verify.
+  clearRepCache();
+  const { text: fileText } = { text: fs.readFileSync(path.join(dir, "sources", "s1", "representations", "clean.md"), "utf8") };
+  eq("anchor: the refound extraction passes hop B",
+     verifyHopB(ext, { utf8ok: true, text: fileText, cps: Array.from(fileText) }).ok, true);
+  clearRepCache();
+  const rep2 = validateCorpus(dir);
+  eq("validate: a corpus with a refound quotation passes", rep2.status, "passed");
+  ok("validate: no gate failure from normalization", !rep2.errors.map((e) => e.code).includes("quote_gate_failed"));
+
+  // Idempotence: the id is over the STORED quote, so re-running writes nothing.
+  clearRepCache();
+  eq("anchor: re-running a refound candidate is idempotent",
+     anchorCmd(dir, rep, [{ quote: retyped }], { tool: "selftest", normalize: true }).results[0].status, "exists");
+
+  // An extraction SET must be declared in corpus.json, or its items are written
+  // where loadCorpus will never look and every coding that targets one dangles.
+  clearRepCache();
+  const setRes = anchorCmd(dir, rep, [{ quote: "Intro line." }], { tool: "selftest", normalize: true, set: "exs-1" });
+  eq("anchor: a set candidate is anchored", setRes.results[0].status, "anchored");
+  {
+    const cj = JSON.parse(fs.readFileSync(path.join(dir, "corpus.json"), "utf8"));
+    ok("anchor: creating a set declares sections.extractions", !!cj.sections.extractions);
+    clearRepCache();
+    const loadedAgain = loadCorpus(dir);
+    ok("anchor: a set's items are visible to loadCorpus",
+       loadedAgain.extractions.some((e) => e.obj.extraction_id === setRes.results[0].extraction_id));
+  }
+
+  // A coding run in which nothing lands must leave nothing behind: an empty
+  // `coders` array is schema-invalid and would fail an otherwise clean corpus.
+  clearRepCache();
+  const noneLanded = codeCmd(dir, "cds-empty", [
+    { codebook_ref: "cbk-000000000000", code: "x", target: { kind: "extraction", id: "ext-000000000000" }, coder: "m" },
+  ], { tool: "selftest" });
+  eq("code: a coding against an unknown codebook errors", noneLanded.results[0].status, "error");
+  ok("code: a run that lands nothing writes no set manifest",
+     !fs.existsSync(path.join(dir, "codings", "cds-empty", "manifest.json")));
+  clearRepCache();
+  eq("validate: a failed coding run leaves the corpus valid", validateCorpus(dir).status, "passed");
+
+  fs.rmSync(dir, { recursive: true, force: true });
+}
+
+// --- `upc add`: the producer primitive, and what it refuses ---
+{
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "upc-add-"));
+  const stage = fs.mkdtempSync(path.join(os.tmpdir(), "upc-stage-"));
+  fs.mkdirSync(path.join(dir, "provenance"), { recursive: true });
+  fs.writeFileSync(path.join(dir, "provenance", "events.jsonl"), "");
+  fs.writeFileSync(path.join(dir, "corpus.json"), JSON.stringify({
+    upc_spec_version: specVersion(), corpus_id: "cor-000000000005",
+    sections: { sources: "sources/", provenance: "provenance/events.jsonl" },
+  }, null, 2));
+
+  const pdfPath = path.join(stage, "paper.pdf");
+  const txtPath = path.join(stage, "paper.txt");
+  fs.writeFileSync(pdfPath, Buffer.from("%PDF-1.4\nnot really a pdf\n"));
+  fs.writeFileSync(txtPath, "The regime resists change.\n\nA second paragraph.\n");
+
+  const rec = {
+    slug: "a-paper", title: "A paper", source_kind: "document",
+    bibliographic: { item_type: "article-journal", title: "A paper", issued: { date_parts: [[2026]] } },
+    aliases: { demo: "p1" },
+    files: [
+      { path: pdfPath, role: "document_pdf", media_type: "application/pdf", produced_by: "import" },
+      { path: txtPath, role: "text", media_type: "text/plain", produced_by: "conversion", parent: 0 },
+    ],
+  };
+  const res = addSourceCmd(dir, [rec], { tool: "selftest" });
+  eq("add: a source is written", res.results[0].status, "added");
+  eq("add: both files become representations", res.results[0].representation_ids.length, 2);
+  ok("add: the bytes land inside the corpus",
+     fs.existsSync(path.join(dir, "sources", "a-paper", "representations", "paper.txt")));
+  {
+    const src = JSON.parse(fs.readFileSync(path.join(dir, "sources", "a-paper", "source.json"), "utf8"));
+    const txt = src.representations.find((r) => r.media_type === "text/plain");
+    eq("add: a text representation records its codepoint count", txt.char_count, 48);
+    eq("add: the derived text points at what it came from", txt.parent_representation_ref,
+       src.representations.find((r) => r.media_type === "application/pdf").representation_id);
+    eq("add: the id is the byte hash", txt.representation_id,
+       mintRepId(fs.readFileSync(txtPath)));
+  }
+  // Re-adding the same bytes is not a second source.
+  clearRepCache();
+  eq("add: the same document twice is one source",
+     addSourceCmd(dir, [rec], { tool: "selftest" }).results[0].status, "exists");
+
+  // A symlink would let the corpus's bytes change from outside it.
+  const linkPath = path.join(stage, "link.txt");
+  fs.symlinkSync(txtPath, linkPath);
+  const bad = addSourceCmd(dir, [{ ...rec, slug: "b", files: [{ path: linkPath, role: "text", media_type: "text/plain" }] }],
+                           { tool: "selftest" });
+  eq("add: a symlink is refused", bad.results[0].status, "error");
+  ok("add: the refusal says why", /symlink/.test(bad.results[0].detail));
+
+  clearRepCache();
+  eq("add: the corpus is valid after adding", validateCorpus(dir).status, "passed");
+
+  // A synthesis that misquotes its evidence must not be written at all.
+  clearRepCache();
+  const loaded2 = loadCorpus(dir);
+  const textRep = loaded2.representations.find((r) => r.obj.media_type === "text/plain").obj.representation_id;
+  const anch = anchorCmd(dir, textRep, [{ quote: "The regime resists change." }], { tool: "selftest" });
+  const eid = anch.results[0].extraction_id;
+  const sid = loaded2.sources[0].obj.source_id;
+  const good = path.join(stage, "good.md");
+  const bad2 = path.join(stage, "bad.md");
+  fs.writeFileSync(good, `# Overview\n\nAs it says, "The regime resists change." [${eid}].\n\n## Sources\n\n- ${sid}\n`);
+  fs.writeFileSync(bad2, `# Overview\n\nAs it says, "The regime WELCOMES change." [${eid}].\n\n## Sources\n\n- ${sid}\n`);
+  const claims = [{ claim_id: "cl-0001", text: "Regimes resist.", evidence_ids: [eid] }];
+
+  clearRepCache();
+  const refused = addSynthesisCmd(dir, { type: "thematic", title: "Bad", claims }, { output: bad2, tool: "selftest" });
+  eq("add synthesis: a misquotation is refused", refused.status, "refused");
+  eq("add synthesis: nothing is written on refusal", refused.wrote, 0);
+
+  clearRepCache();
+  const okSyn = addSynthesisCmd(dir, { type: "thematic", title: "Good", claims }, { output: good, tool: "selftest" });
+  eq("add synthesis: a correct quotation is written", okSyn.status, "ok");
+  ok("add synthesis: it lands where loadCorpus looks",
+     fs.existsSync(path.join(dir, "syntheses", okSyn.synthesis_id, "synthesis.json")));
+
+  // Rule 2.4: prose that never names its source is caught before writing.
+  const uncited = path.join(stage, "uncited.md");
+  fs.writeFileSync(uncited, `# Overview\n\nAs it says, "The regime resists change." [${eid}].\n`);
+  clearRepCache();
+  eq("add synthesis: prose that never cites its source is refused",
+     addSynthesisCmd(dir, { type: "thematic", title: "U", claims }, { output: uncited, tool: "selftest" }).status,
+     "refused");
+
+  clearRepCache();
+  const rep2 = validateCorpus(dir);
+  eq("validate: the corpus with a synthesis is valid", rep2.status, "passed");
+  eq("validate: it reaches L2", rep2.level, "L2");
+
+  fs.rmSync(dir, { recursive: true, force: true });
+  fs.rmSync(stage, { recursive: true, force: true });
+}
+
+// --- the site projection: a library, and §09's code rules enforced by it ---
+//
+// The browser exists to check a corpus; this exists to be used. The rules below
+// are not styling preferences — each is a way the projection could quietly lie.
+{
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "upc-site-"));
+  const slug = "s1";
+  fs.mkdirSync(path.join(dir, "sources", slug, "representations"), { recursive: true });
+  fs.mkdirSync(path.join(dir, "provenance"), { recursive: true });
+  fs.mkdirSync(path.join(dir, "codebooks"), { recursive: true });
+
+  const text = "Alpha line.\n\nThe regime resists change for structural reasons.\n\nOmega line.\n";
+  const buf = Buffer.from(text, "utf8");
+  fs.writeFileSync(path.join(dir, "sources", slug, "representations", "clean.md"), buf);
+  const rep = mintRepId(buf);
+  const srcId = mintSrcId({ canonicalUrl: "https://example.org/site" });
+  const stamp = { produced_by: { tool: "t", method: "import" }, created_at: "2026-01-01T00:00:00Z" };
+  fs.writeFileSync(path.join(dir, "sources", slug, "source.json"), JSON.stringify({
+    source_id: srcId, source_kind: "url", title: "A paper about regimes",
+    bibliographic: { item_type: "article-journal", title: "A paper about regimes",
+      authors: [{ family: "Geels", given: "F." }], issued: { date_parts: [[2017]] } },
+    retrieval: { original_url: "https://example.org/site", fetch_status: "success" },
+    extractions_path: `sources/${slug}/extractions.jsonl`,
+    representations: [{ representation_id: rep, role: "clean_markdown", media_type: "text/markdown",
+      path: `sources/${slug}/representations/clean.md`, sha256: sha256Hex(buf),
+      produced_by: "conversion", provenance: stamp }],
+    provenance: stamp,
+  }, null, 2));
+  fs.writeFileSync(path.join(dir, "provenance", "events.jsonl"), "");
+  fs.writeFileSync(path.join(dir, "corpus.json"), JSON.stringify({
+    upc_spec_version: specVersion(), corpus_id: "cor-000000000004", title: "Site fixture",
+    sections: { sources: "sources/", codebooks: "codebooks/", codings: "codings/",
+                provenance: "provenance/events.jsonl" },
+  }, null, 2));
+
+  const codes = [{ code: "mlp", label: "Multi-level perspective", definition: "Niche, regime, landscape." },
+                 { code: "spt", label: "Social practice theory", definition: "Practices, not choices." }];
+  const cbk = { codebook_id: "", namespace: "demo", slug: "theory", title: "Theory",
+                closed: true, multi_label: false, unit: "passage", revision: 1,
+                revision_digest: codebookRevisionDigest(codes), codes, provenance: stamp };
+  cbk.codebook_id = mintCbkId(cbk);
+  fs.writeFileSync(path.join(dir, "codebooks", cbk.codebook_id + ".json"), JSON.stringify(cbk, null, 2));
+
+  clearRepCache();
+  const quote = "The regime resists change for structural reasons.";
+  const a = anchorCmd(dir, rep, [{ quote }, { quote: "", text: "A summary in someone's own words." }],
+                      { tool: "selftest" });
+  const extId = a.results[0].extraction_id;
+  // A paraphrase-only extraction, to prove it is never dressed as a quotation.
+  {
+    const f = path.join(dir, "sources", slug, "extractions.jsonl");
+    const para = { source_id: srcId, representation_ref: rep, type: "evidence", status: "active",
+      text: "A summary in someone's own words.",
+      locator: { type: "char_range", representation_ref: rep, value: { start: 0, end: 11 } },
+      provenance: stamp };
+    para.extraction_id = mintExtId(para);
+    fs.appendFileSync(f, JSON.stringify(para) + "\n");
+  }
+  // Two coders, one single-label codebook, different answers: a real disagreement.
+  clearRepCache();
+  codeCmd(dir, "cds-1", [
+    { codebook_ref: cbk.codebook_id, code: "mlp", target: { kind: "extraction", id: extId }, coder: "model-a" },
+    { codebook_ref: cbk.codebook_id, code: "spt", target: { kind: "extraction", id: extId }, coder: "ellie" },
+  ], { tool: "selftest", coderKind: "model" });
+
+  clearRepCache();
+  const model = buildSiteModel(loadCorpus(dir), { matrix: null });
+  const p = model.passageById.get(extId);
+
+  eq("site: a quotation is checked against the bytes", p.badge, "verified");
+  eq("site: context is read from the file, not stored", p.before, "Alpha line.\n\n");
+  ok("site: a count states its unit", model.passages.length === 2 && model.sources.length === 1);
+  eq("site: a code carries its coder", p.codings.map((c) => c.coder).sort().join(","), "ellie,model-a");
+  ok("site: a code carries its definition", p.codings.every((c) => c.definition.length > 0));
+  eq("site: disagreement is detected, not resolved", p.disagreements.length, 1);
+  ok("site: both judgements survive", p.codings.length === 2);
+  ok("site: a summary is not a quotation", model.passages.some((x) => !x.quote && x.note && x.badge === "paraphrase"));
+  eq("site: per-code counts separate passages from sources",
+     model.codeIndex.get(`${cbk.codebook_id}:mlp`).sources.size, 1);
+
+  // A drifted locator must surface as a failure, and its code must inherit it.
+  {
+    const f = path.join(dir, "sources", slug, "extractions.jsonl");
+    const lines = fs.readFileSync(f, "utf8").trim().split("\n").map((l) => JSON.parse(l));
+    lines[0].locator.value = { start: lines[0].locator.value.start + 3, end: lines[0].locator.value.end + 3 };
+    fs.writeFileSync(f, lines.map((o) => JSON.stringify(o)).join("\n") + "\n");
+    clearRepCache();
+    const broken = buildSiteModel(loadCorpus(dir), {});
+    const bp = broken.passageById.get(extId);
+    eq("site: a drifted quotation is shown as failing", bp.badge, "failed");
+    ok("site: the failure says what the source now reads", typeof bp.actual === "string" && bp.actual !== bp.quote);
+    eq("site: the corpus-wide failure count is exposed", broken.failures, 1);
   }
 
   fs.rmSync(dir, { recursive: true, force: true });

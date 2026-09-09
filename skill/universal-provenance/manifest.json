@@ -1,8 +1,8 @@
 {
   "name": "universal-provenance",
   "type": "provenance-skill",
-  "version": "1.7.0",
-  "upc_spec_version": "1.7.0",
+  "version": "1.8.0",
+  "upc_spec_version": "1.8.0",
   "description": "Read, write, validate, verify, browse, and export a Universal Provenance Corpus (UPC) with byte-exact quotation gates.",
   "skill_file": "SKILL.md",
   "scripts_dir": "scripts",
@@ -54,7 +54,7 @@
     {
       "name": "upc_export",
       "command": "node scripts/upc.mjs export",
-      "args_hint": "<corpus-dir> --format bibtex|ris|csl-json|jsonl|markdown|ro-crate|prov|obsidian [-o <file|dir>] [--copy] [--into <vault>] [--strip none|standard|aggressive] [--frontmatter approved|extended] [--allow-rewrite-body] [--profile <file>]",
+      "args_hint": "<corpus-dir> --format bibtex|ris|csl-json|jsonl|markdown|ro-crate|prov|obsidian|site [-o <file|dir>] [--copy] [--into <vault>] [--strip none|standard|aggressive] [--frontmatter approved|extended] [--allow-rewrite-body] [--profile <file>]",
       "description": "Export bibliographic and object projections: CSL-JSON (authoritative), BibTeX, RIS, JSONL (raw objects), a Markdown bibliography, a deterministic RO-Crate 1.3 metadata graph (--format ro-crate writes ro-crate-metadata.json into the corpus root; --copy -o <dir> emits a detached self-contained crate), or a deterministic W3C PROV-O derivation graph as flattened JSON-LD (--format prov, streamed to stdout or -o <file>). All exports are read-only projections; the UPC objects stay canonical, and the quotation gate is UPC-only (not carried into PROV). --format obsidian writes a readable Obsidian vault (-o <dir> standalone, or --into <vault> for an existing vault's inbox): one Markdown note per source, generation and synthesis, images copied into the attachment folder with their descriptions as folded captions, and each note's origin in a folded provenance callout. It is the one LOSSY export — navigation, running heads and page numbers are removed so the note is the content — and it reports what it stripped in each note; quotations are still rendered from the representation bytes at the locator and still carry their gate badge. It is byte-idempotent and will not overwrite a note edited by hand.",
       "destructive": false
     },
@@ -80,9 +80,37 @@
       "destructive": false
     },
     {
+      "name": "upc_add",
+      "command": "node scripts/upc.mjs add source",
+      "args_hint": "--corpus <corpus-dir> [--batch] [--hardlink] [--tool <t>] [--dry-run]  (source JSON on stdin)",
+      "description": "Write a source into a corpus from a JSON description plus a list of files: hashes the bytes, mints src-/rep-/img- ids, slugifies with collision handling, checks portable filenames and containment, wires parent_representation_ref by file index, and journals one import event. Files are copied by default; a hardlink shares the inode, so an edit to the original would break every quotation anchored in it. This is how documents get INTO a corpus. UPC still reads no PDFs and fetches nothing: what a document is made of is the tool's business, identity and layout are not.",
+      "destructive": true
+    },
+    {
+      "name": "upc_add_synthesis",
+      "command": "node scripts/upc.mjs add synthesis",
+      "args_hint": "--corpus <corpus-dir> --output <file.md> [--allow-unverified] [--dry-run]  (synthesis JSON on stdin)",
+      "description": "Write generated prose and its claim register, but ONLY if its quotations hold. Every \"...\" [ext-id] marker in the output is checked against the extraction it cites, and every source the claims rest on must be named in the prose, before anything is written. Prose that misquotes its sources is refused with the failing markers listed, and the corpus is left untouched.",
+      "destructive": true
+    },
+    {
+      "name": "upc_event",
+      "command": "node scripts/upc.mjs event",
+      "args_hint": "--corpus <corpus-dir>  (event JSON on stdin; activity_type required)",
+      "description": "Append one activity to the corpus journal, for a tool that derives something from the corpus (an index, an export, a conversion) and should say so without reimplementing the journal's numbering or its atomic write.",
+      "destructive": true
+    },
+    {
+      "name": "upc_check_compat",
+      "command": "node scripts/upc.mjs check-compat",
+      "args_hint": "--requires \"^1.8\" [--schema-hash sha256:...]",
+      "description": "Fail loudly rather than drift: exits non-zero when the CLI's spec version or schema hash is outside what the consumer pinned.",
+      "destructive": false
+    },
+    {
       "name": "upc_anchor",
       "command": "node scripts/upc.mjs anchor",
-      "args_hint": "--corpus <corpus-dir> --rep <rep-id> [--set <id>] [--type <t>] [--query <q>] [--dry-run]  (JSONL candidates on stdin)",
+      "args_hint": "--corpus <corpus-dir> --rep <rep-id> [--normalize] [--set <id>] [--type <t>] [--query <q>] [--dry-run]  (JSONL candidates on stdin)",
       "description": "Byte-exact-anchor candidate quotations proposed by a model. Each stdin line is {quote, type?, query?, note?}. A quote occurring EXACTLY ONCE in the representation mints an active char_range extraction that passes the hop-B gate by construction; zero or multiple occurrences return not_found/ambiguous and are never written as verified. The model chooses what to extract; this decides what is real. Writes only unique hits and journals one extract event.",
       "destructive": true
     },

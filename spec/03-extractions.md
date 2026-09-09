@@ -222,6 +222,50 @@ punctuation you don't want, the fix is to **choose a cleaner span** or to write 
 cleaned representation and anchor into it — not to edit the quote after copying.
 Editing the copied bytes is exactly what breaks the gate.
 
+## Normalized re-find at anchoring time
+
+A model asked to copy a span out of PDF-extracted text reliably returns
+something a byte-exact search cannot find. It straightens a curly quote, writes
+`fi` where the page has an `ﬁ` ligature, puts a space where the page has a line
+break, rejoins a word the typesetter hyphenated across lines. The span is
+genuinely in the document; the proposal is a faithful reading of it rendered in
+ordinary characters.
+
+A producer MAY therefore search with a stated normalization when the byte-exact
+search finds nothing. The normalization applies to **both sides** of the search
+and to nothing else:
+
+| Class | Treatment |
+|---|---|
+| `whitespace` | any run of whitespace (including NBSP, en/em spaces, U+202F, U+3000) collapses to one space |
+| `quotes` | `‘ ’ ‚ ‛ ′` fold to `'`; `“ ” „ ‟ ″` fold to `"` |
+| `dashes` | U+2010–2015 and U+2212 fold to `-` |
+| `soft-hyphen` | U+00AD is removed |
+| `hyphenation` | a hyphen at a line break followed by a lowercase letter is removed with the break |
+| `ligatures` | `ﬀ ﬁ ﬂ ﬃ ﬄ` expand to their letters |
+| `ellipsis` | `…` expands to `...` |
+
+Case is **not** folded and Unicode normal forms are **not** applied. Both would
+let visibly different text match, and the point of the gate is that what is
+stored is what the document says.
+
+The rules that make this safe, all normative:
+
+- A producer **MUST** store the representation's own codepoints at the located
+  offsets as `direct_quote`. The proposed string is never stored as the quote.
+- A producer **MUST NOT** mint an `active` extraction when the normalized search
+  finds zero or more than one occurrence, exactly as for the exact search.
+- A producer **SHOULD** record the search on the extraction as `anchoring`:
+  `{ method: "normalized", proposed_quote, rules[] }`, where `rules` lists only
+  the classes that actually differed. `anchoring` is advisory, is excluded from
+  the `ext-` identity recipe, and describes the *search*, not the quotation.
+- **Hop B is unchanged.** Verification remains codepoint equality with no
+  normalization. Nothing in this section can make a quotation verify that would
+  not have verified anyway; it only changes which spans a producer can find.
+
+`upc anchor --normalize` implements exactly this. Without the flag the search is
+byte-exact and nothing else.
+
 ## Narrowing: sub-quoting without loosening the gate
 
 To quote *less* than an existing extraction — a phrase inside a verified sentence

@@ -111,6 +111,7 @@ closed forms.
 | Two coders assign different labels to one target under one single-label codebook | `coding_disagreement` | Advis | informational; inter-rater disagreement is data, and a surface MUST NOT resolve it silently (§09, §12) |
 | A codebook defines a code that is never applied | `codebook_code_unused` | Advis | codebook hygiene |
 | A codebook's `revision_digest` does not match its `codes[]` | `codebook_revision_stale` | Advis | regenerate the digest (§12) |
+| An extraction's span was located by normalized re-find | `anchored_by_normalization` | Advis | informational; `anchoring.method: "normalized"` (§03). Never promoted under `--strict`: the stored quote is the representation's own bytes and passed hop B like any other |
 
 ## Rule classes
 

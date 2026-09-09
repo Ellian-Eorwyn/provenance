@@ -31,6 +31,7 @@ import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
 import * as U from "./upc_common.mjs";
 import { isTextualMedia as U_TEXTUAL } from "./upc_common.mjs";
+import { writeSite } from "./site.mjs";
 import { writeRoCrate, buildAnnotationTargets } from "./ro-crate.mjs";
 import { buildProvGraph } from "./prov.mjs";
 import { writeVault } from "./obsidian.mjs";
@@ -61,7 +62,7 @@ function findSpecDirs() {
 
 // The VERSION file at the spec root is the single source of truth for the spec
 // version; the fallback exists only so a detached scripts/ copy still reports.
-const FALLBACK_SPEC_VERSION = "1.5.0";
+const FALLBACK_SPEC_VERSION = "1.8.0";
 function specVersion() {
   try {
     const { specRoot } = findSpecDirs();
@@ -78,7 +79,7 @@ function specVersion() {
 
 const COMMANDS = [
   "validate", "verify-quotes", "verify", "quote", "locate", "anchor", "code",
-  "codebook", "regen", "build-index", "export", "mint", "batch", "reanchor",
+  "codebook", "regen", "build-index", "export", "mint", "add", "event", "batch", "reanchor",
   "version", "check-compat",
 ];
 
@@ -474,6 +475,11 @@ export function validateCorpus(root, opts = {}) {
     }
     // x- extension type
     if (typeof o.type === "string" && o.type.startsWith("x-")) warn("x_extension", o.extraction_id, `type ${o.type}`);
+    // Located by normalized re-find (§03). Informational: the stored quote is
+    // still the representation's own bytes and is gated below like any other.
+    if (o.anchoring && o.anchoring.method === "normalized") {
+      warn("anchored_by_normalization", o.extraction_id, `rules: ${(o.anchoring.rules || []).join(",") || "unstated"}`);
+    }
 
     if (status !== "active") { warn("flagged_extraction", o.extraction_id, `status=${status}`, { hop: "B" }); continue; }
     if (o.direct_quote == null) continue; // text-only: nothing to gate
@@ -1308,6 +1314,26 @@ function reanchorOne(loaded, model, ext, toRepId) {
 // ---------------------------------------------------------------------------
 
 /** Append one activity event to the journal, minting the next sequential evt- id. */
+/** Declare a section in corpus.json if it is not already declared.
+ *
+ *  `loadCorpus` reads only what `sections` declares — there is no directory
+ *  sniffing — so a tool that writes an extraction set or a coding set into an
+ *  undeclared location produces files the corpus cannot see. The objects are on
+ *  disk, every reference to them dangles, and nothing says why. corpus.json is
+ *  machine-owned and regenerable (spec/01), so the writer declares what it wrote. */
+function ensureSection(loaded, key, value) {
+  const cjRel = "corpus.json";
+  const { abs, contained } = U.resolveInside(loaded.root, cjRel);
+  if (!contained || !fs.existsSync(abs)) return false;
+  const cj = U.readJSON(abs);
+  cj.sections = cj.sections || {};
+  if (cj.sections[key]) return false;
+  cj.sections[key] = value;
+  U.atomicWriteFile(abs, JSON.stringify(cj, null, 2) + "\n");
+  loaded.sections[key] = value;
+  return true;
+}
+
 function appendEvent(loaded, ev) {
   const rel = (loaded.sections && loaded.sections.provenance) || "provenance/events.jsonl";
   const { abs, contained } = U.resolveInside(loaded.root, rel);
@@ -1334,6 +1360,284 @@ function readJsonlText(text) {
     catch (e) { throw new Error(`stdin line ${i + 1}: ${e.message}`); }
   }
   return out;
+}
+
+/**
+ * upc add source — the producer primitive.
+ *
+ * UPC deliberately has no PDF reader, no fetcher, no OCR: what a document is made
+ * of is the tool's business. What is NOT the tool's business is layout and
+ * identity — slug collision, portable filenames, containment, `rep-` ids that are
+ * byte hashes, parent links, provenance stamps, the journal entry. Every producer
+ * that reimplements those gets some of them subtly wrong, and a corpus that is
+ * wrong in those ways is not repairable from the outside.
+ *
+ * So a producer in any language prepares files and a description, and this writes
+ * the corpus. Input (one JSON object, or JSONL with --batch):
+ *
+ *   { slug?, title, source_kind, bibliographic?, field_evidence?, identifiers?,
+ *     aliases?, retrieval?, tags?, provenance?,
+ *     files: [ { path, role, media_type, produced_by?, parent?, description?,
+ *                has_text?, language?, encoding? } ] }
+ *
+ * `files[].parent` is an INDEX into files[], so a producer can say "the text came
+ * from that PDF" without knowing any id in advance.
+ */
+function addSourceCmd(root, records, opts = {}) {
+  const loaded = U.loadCorpus(root);
+  const existingSlugs = new Set();
+  for (const s of loaded.sources) existingSlugs.add(String(s.dirRel || "").split("/").pop().toLowerCase());
+  const byId = new Map(loaded.sources.map((s) => [s.obj.source_id, s]));
+  const sourcesBase = (loaded.sections && loaded.sections.sources) || "sources/";
+  const results = [];
+  let wrote = 0;
+
+  for (let i = 0; i < records.length; i++) {
+    const r = records[i] || {};
+    try {
+      const files = Array.isArray(r.files) ? r.files : [];
+      if (!files.length) throw new Error("a source needs at least one file (spec/08 rule 0.4)");
+
+      // Hash every file once; refuse symlinks outright rather than resolving them.
+      const prepared = files.map((f, fi) => {
+        if (!f || !f.path) throw new Error(`files[${fi}]: no path`);
+        const abs = path.resolve(f.path);
+        const st = fs.lstatSync(abs);
+        if (st.isSymbolicLink()) throw new Error(`files[${fi}]: ${f.path} is a symlink; pass the real file`);
+        if (!st.isFile()) throw new Error(`files[${fi}]: ${f.path} is not a regular file`);
+        const bytes = fs.readFileSync(abs);
+        const hash = U.sha256Hex(bytes);
+        const media = f.media_type || "application/octet-stream";
+        // An image representation is addressed with the img- prefix (spec/05/06).
+        const id = /^image\//.test(media) ? U.mintImgId(bytes) : U.mintRepId(bytes);
+        return { f, fi, abs, bytes, hash, media, id };
+      });
+
+      // Identity: a URL source is addressed by its canonical URL, everything else
+      // by the bytes of its first file.
+      const url = (r.retrieval && (r.retrieval.canonical_url || r.retrieval.original_url)) || r.url;
+      const sourceId = url
+        ? U.mintSrcId({ canonicalUrl: U.canonicalUrl(url) })
+        : U.mintSrcId({ primaryBytesSha256: "sha256:" + prepared[0].hash });
+
+      if (byId.has(sourceId)) {
+        results.push({ i, status: "exists", source_id: sourceId, dir: byId.get(sourceId).dirRel });
+        continue;
+      }
+
+      const slug = U.slugifyWithCollision(r.slug || r.title || sourceId, sourceId, existingSlugs);
+      const bad = U.checkFilename(slug);
+      if (bad && bad.ok === false) throw new Error(`slug ${slug}: ${bad.reason}`);
+      const dirRel = path.posix.join(sourcesBase.replace(/\/$/, ""), slug);
+      const { abs: dirAbs, contained } = U.resolveInside(loaded.root, dirRel);
+      if (!contained) throw new Error(`refusing to write outside the corpus: ${dirRel}`);
+
+      const stamp = r.provenance || { produced_by: { tool: opts.tool || "upc", method: "import" }, created_at: nowStamp() };
+      const reps = [];
+      const seen = new Map();
+      for (const p of prepared) {
+        const base = path.basename(p.abs);
+        const nameCheck = U.checkFilename(base);
+        const fileName = nameCheck && nameCheck.ok === false
+          ? U.slugify(base.replace(/\.[^.]*$/, "")) + path.extname(base).toLowerCase()
+          : base;
+        const relPath = path.posix.join(dirRel, "representations", fileName);
+        const { abs: fileAbs, contained: inside } = U.resolveInside(loaded.root, relPath);
+        if (!inside) throw new Error(`refusing to write outside the corpus: ${relPath}`);
+        if (!opts.dryRun) {
+          fs.mkdirSync(path.dirname(fileAbs), { recursive: true });
+          if (opts.hardlink) { try { fs.linkSync(p.abs, fileAbs); } catch { fs.copyFileSync(p.abs, fileAbs); } }
+          else fs.copyFileSync(p.abs, fileAbs);
+        }
+        const rep = {
+          representation_id: p.id,
+          role: p.f.role || "original",
+          media_type: p.media,
+          path: relPath,
+          sha256: "sha256:" + p.hash,
+          ...(p.f.produced_by ? { produced_by: p.f.produced_by } : {}),
+          provenance: stamp,
+        };
+        if (TEXTUAL(p.media)) {
+          const dec = U.decodeUtf8Strict(p.bytes);
+          if (!dec.ok) throw new Error(`files[${p.fi}]: declared ${p.media} but is not valid UTF-8`);
+          rep.char_count = U.codepointLength(dec.text);
+        }
+        for (const k of ["description", "has_text", "language", "encoding", "page_count", "dimensions", "duration_seconds", "caption"]) {
+          if (p.f[k] != null) rep[k] = p.f[k];
+        }
+        if (p.f.parent != null) {
+          const parent = prepared[p.f.parent];
+          if (!parent) throw new Error(`files[${p.fi}]: parent index ${p.f.parent} out of range`);
+          rep.parent_representation_ref = parent.id;
+        }
+        // The same bytes twice in one source is one representation, not two.
+        if (seen.has(p.id)) continue;
+        seen.set(p.id, true);
+        reps.push(rep);
+      }
+
+      const source = {
+        source_id: sourceId,
+        source_kind: r.source_kind || (url ? "url" : "document"),
+        ...(r.title ? { title: r.title } : {}),
+        ...(r.bibliographic ? { bibliographic: r.bibliographic } : {}),
+        ...(r.field_evidence ? { field_evidence: r.field_evidence } : {}),
+        ...(r.retrieval ? { retrieval: r.retrieval } : {}),
+        ...(r.identifiers ? { identifiers: r.identifiers } : {}),
+        ...(r.relations ? { relations: r.relations } : {}),
+        ...(r.aliases ? { aliases: r.aliases } : {}),
+        ...(r.tags ? { tags: r.tags } : {}),
+        ...(r.discovery ? { discovery: r.discovery } : {}),
+        representations: reps,
+        extractions_path: path.posix.join(dirRel, "extractions.jsonl"),
+        provenance: stamp,
+        ...(r.ext ? { ext: r.ext } : {}),
+      };
+
+      if (!opts.dryRun) {
+        fs.mkdirSync(dirAbs, { recursive: true });
+        U.atomicWriteFile(path.join(dirAbs, "source.json"), JSON.stringify(source, null, 2) + "\n");
+        const extAbs = path.join(dirAbs, "extractions.jsonl");
+        if (!fs.existsSync(extAbs)) U.atomicWriteFile(extAbs, "");
+        wrote++;
+      }
+      existingSlugs.add(slug.toLowerCase());
+      byId.set(sourceId, { obj: source, dirRel });
+      results.push({ i, status: opts.dryRun ? "planned" : "added", source_id: sourceId, slug, dir: dirRel, representation_ids: reps.map((x) => x.representation_id) });
+    } catch (e) {
+      results.push({ i, status: "error", detail: e.message });
+    }
+  }
+
+  if (!opts.dryRun && wrote) {
+    appendEvent(loaded, {
+      activity_type: "import",
+      tool: opts.tool || "upc",
+      started_at: nowStamp(),
+      status: "success",
+      outputs: { source_ids: results.filter((r) => r.status === "added").map((r) => r.source_id) },
+      notes: `added ${wrote}/${records.length} source(s)`,
+    });
+  }
+
+  const tally = {};
+  for (const r of results) tally[r.status] = (tally[r.status] || 0) + 1;
+  return { status: "ok", wrote, tally, results };
+}
+
+/**
+ * upc add synthesis — write generated prose, but only if its quotations hold.
+ *
+ * The gate runs BEFORE anything is written. A synthesis whose quotations do not
+ * match the extractions it cites is not a synthesis with a warning attached; it
+ * is prose that misquotes its sources, and writing it would put the corpus in a
+ * state the validator will fail. So this refuses, prints which markers failed,
+ * and leaves the corpus untouched.
+ */
+function addSynthesisCmd(root, obj, opts = {}) {
+  const loaded = U.loadCorpus(root);
+  const model = buildModel(loaded);
+  if (!opts.output) throw new Error("add synthesis: --output <file.md> is required");
+  const srcAbs = path.resolve(opts.output);
+  if (!fs.existsSync(srcAbs)) throw new Error(`add synthesis: ${opts.output} does not exist`);
+  const text = fs.readFileSync(srcAbs, "utf8");
+
+  // Hop C, exactly as the validator will run it.
+  const failures = [];
+  for (const mk of U.parseQuoteMarkers(text)) {
+    const ext = model.extById.get(mk.extId);
+    if (!ext) { failures.push({ marker: mk.extId, reason: "no such passage" }); continue; }
+    const q = ext.direct_quote;
+    if (q == null) { failures.push({ marker: mk.extId, reason: "that passage is a note, not a quotation" }); continue; }
+    if (q !== mk.quote) {
+      failures.push({ marker: mk.extId, reason: "quoted text differs from the passage",
+                      expected: q.slice(0, 90), got: mk.quote.slice(0, 90) });
+    }
+  }
+  if (failures.length && !opts.allowUnverified) {
+    return { status: "refused", wrote: 0, failures,
+             detail: "the output misquotes the passages it cites; nothing was written" };
+  }
+
+  // A claim must list the sources its evidence comes from (rule 2.2). That is
+  // mechanically derivable from the extractions it cites, so derive it rather
+  // than making every producer remember.
+  const claims = (Array.isArray(obj.claims) ? obj.claims : []).map((c) => {
+    const ids = c.evidence_ids || [];
+    const from = [...new Set(ids.map((id) => (model.extById.get(id) || {}).source_id).filter(Boolean))];
+    return { ...c, ...(from.length ? { source_ids: [...new Set([...(c.source_ids || []), ...from])] } : {}) };
+  });
+  const evidenceIds = [...new Set(claims.flatMap((c) => c.evidence_ids || []))];
+  const sourceIds = [...new Set(claims.flatMap((c) => c.source_ids || [])
+    .concat(evidenceIds.map((id) => (model.extById.get(id) || {}).source_id).filter(Boolean)))];
+  const repRefs = [...new Set(evidenceIds
+    .map((id) => (model.extById.get(id) || {}).representation_ref).filter(Boolean))];
+
+  // Rule 2.4: the rendered output must cite every id its claims depend on. Catch
+  // that here rather than writing a synthesis that makes the corpus fail — the
+  // fix is a reference list in the prose, which the writer has to author anyway.
+  const uncited = sourceIds.filter((id) => !text.includes(id));
+  if (uncited.length && !opts.allowUnverified) {
+    return { status: "refused", wrote: 0,
+             failures: uncited.map((id) => ({ marker: id, reason: "the output never cites this source" })),
+             detail: "add a reference list naming every source id the claims rely on; nothing was written" };
+  }
+
+  const base = (loaded.sections && loaded.sections.syntheses) || "syntheses/";
+  const stamp = obj.provenance || { produced_by: { tool: opts.tool || "upc", method: "model" }, created_at: nowStamp() };
+  stamp.created_at = stamp.created_at || nowStamp();
+  stamp.derived_from = stamp.derived_from || {
+    ...(evidenceIds.length ? { extraction_ids: evidenceIds } : {}),
+    ...(sourceIds.length ? { source_ids: sourceIds } : {}),
+    ...(repRefs.length ? { representation_refs: repRefs } : {}),
+  };
+  // The digest is over the representations this prose was written from — the
+  // bytes that would have to change for it to be stale.
+  if (!stamp.input_digest) {
+    const inputs = repRefs
+      .map((id) => {
+        const r = model.repById.get(id);
+        return r ? { id, sha256: r.obj.sha256 } : null;
+      })
+      .filter(Boolean);
+    if (inputs.length) stamp.input_digest = U.computeInputDigest(inputs);
+  }
+
+  const syn = {
+    type: obj.type || "thematic",
+    ...(obj.title ? { title: obj.title } : {}),
+    ...(obj.question ? { question: obj.question } : {}),
+    ...(claims.length ? { claims } : {}),
+    stale: false,
+    provenance: stamp,
+    ...(obj.ext ? { ext: obj.ext } : {}),
+  };
+  syn.output = { path: "", media_type: obj.media_type || "text/markdown",
+                 sha256: "sha256:" + U.sha256Hex(Buffer.from(text, "utf8")) };
+  syn.synthesis_id = U.mintSynId(syn);
+  // One directory per synthesis, holding synthesis.json + synthesis.md — the
+  // layout loadCorpus scans for (a flat <id>.json is invisible to it).
+  const dirRel = path.posix.join(base.replace(/\/$/, ""), syn.synthesis_id);
+  const relPath = path.posix.join(dirRel, "synthesis.md");
+  syn.output.path = relPath;
+
+  if (opts.dryRun) return { status: "ok", wrote: 0, synthesis_id: syn.synthesis_id, failures };
+
+  const { abs: mdAbs, contained } = U.resolveInside(loaded.root, relPath);
+  if (!contained) throw new Error(`refusing to write outside the corpus: ${relPath}`);
+  fs.mkdirSync(path.dirname(mdAbs), { recursive: true });
+  U.atomicWriteFile(mdAbs, text);
+  const { abs: jAbs } = U.resolveInside(loaded.root, path.posix.join(dirRel, "synthesis.json"));
+  U.atomicWriteFile(jAbs, JSON.stringify(syn, null, 2) + "\n");
+  ensureSection(loaded, "syntheses", base);
+  appendEvent(loaded, {
+    activity_type: "synthesize", tool: opts.tool || "upc", started_at: nowStamp(), status: "success",
+    inputs: { extraction_ids: evidenceIds }, outputs: { synthesis_ids: [syn.synthesis_id] },
+    notes: `${syn.type}: ${syn.title || syn.synthesis_id}`,
+  });
+  return { status: "ok", wrote: 1, synthesis_id: syn.synthesis_id, path: dirRel,
+           claims: claims.length, cited_passages: evidenceIds.length, failures };
 }
 
 /**
@@ -1369,18 +1673,33 @@ function anchorCmd(root, repId, candidates, opts = {}) {
     const hits = [];
     let from = 0, idx;
     while ((idx = whole.indexOf(q, from)) !== -1) { hits.push(idx); from = idx + 1; }
-    if (hits.length !== 1) {
+
+    // The exact search is the first and preferred answer; normalization is only
+    // ever a fallback for a span the model rendered in ordinary characters.
+    let start, storedQuote = q, anchoring = null;
+    if (hits.length === 1) {
+      start = U.codepointLength(whole.slice(0, hits[0]));
+    } else if (hits.length === 0 && opts.normalize) {
+      const re = U.refindSpan(repRec, q);
+      if (re.status !== "refound") {
+        results.push({ i, status: re.status, quote: q, candidates: re.candidates || 0, normalized: true });
+        continue;
+      }
+      start = re.start;
+      storedQuote = re.quote;   // the representation's own codepoints, never the proposal
+      anchoring = { method: "normalized", proposed_quote: q, rules: re.classes };
+    } else {
       results.push({ i, status: hits.length === 0 ? "not_found" : "ambiguous", quote: q, candidates: hits.length });
       continue;
     }
-    const start = U.codepointLength(whole.slice(0, hits[0]));
+
     const ext = {
       source_id: sourceId,
       representation_ref: repId,
       type: c.type || opts.type || "evidence",
       status: "active",
-      direct_quote: q,
-      locator: { type: "char_range", representation_ref: repId, value: { start, end: start + U.codepointLength(q) } },
+      direct_quote: storedQuote,
+      locator: { type: "char_range", representation_ref: repId, value: { start, end: start + U.codepointLength(storedQuote) } },
       provenance: {
         produced_by: { tool: opts.tool || "upc", method: "model", ...(opts.model ? { model: opts.model } : {}), ...(opts.promptVersion ? { prompt_version: opts.promptVersion } : {}) },
         created_at: nowStamp(),
@@ -1393,17 +1712,25 @@ function anchorCmd(root, repId, candidates, opts = {}) {
     if (c.note) ext.rationale = c.note;
     if (c.interpretation) ext.interpretation = c.interpretation;
     if (c.confidence) ext.confidence = c.confidence;
+    if (anchoring) ext.anchoring = anchoring;
     ext.extraction_id = U.mintExtId(ext);
     const dup = existing.has(ext.extraction_id);
     if (!dup) minted.push(ext);
     existing.add(ext.extraction_id);
-    results.push({ i, status: dup ? "exists" : "anchored", extraction_id: ext.extraction_id, char_range: ext.locator.value });
+    results.push({
+      i,
+      status: dup ? "exists" : anchoring ? "refound" : "anchored",
+      extraction_id: ext.extraction_id,
+      char_range: ext.locator.value,
+      ...(anchoring ? { rules: anchoring.rules, stored_quote: storedQuote } : {}),
+    });
   }
 
   if (!opts.dryRun && minted.length) {
     let targetRel;
     if (opts.set) {
       const base = loaded.sections.extractions || "extractions/";
+      ensureSection(loaded, "extractions", base);
       targetRel = path.join(base, opts.set, "items.jsonl").replace(/\\/g, "/");
       const manRel = path.join(base, opts.set, "manifest.json").replace(/\\/g, "/");
       const { abs: manAbs } = U.resolveInside(loaded.root, manRel);
@@ -1434,7 +1761,7 @@ function anchorCmd(root, repId, candidates, opts = {}) {
     });
   }
 
-  const tally = { anchored: 0, exists: 0, not_found: 0, ambiguous: 0, invalid: 0 };
+  const tally = { anchored: 0, refound: 0, exists: 0, not_found: 0, ambiguous: 0, invalid: 0 };
   for (const r of results) tally[r.status] = (tally[r.status] || 0) + 1;
   return { status: "ok", representation_ref: repId, source_id: sourceId, wrote: opts.dryRun ? 0 : minted.length, tally, results };
 }
@@ -1528,7 +1855,17 @@ function codeCmd(root, setId, records, opts = {}) {
     results.push({ i, status: "coded", coding_id: cod.coding_id, ...(cod.supersedes ? { supersedes: cod.supersedes } : {}) });
   }
 
+  // A run in which nothing landed must leave nothing behind: a set manifest with
+  // an empty `coders` violates its own schema (minItems 1) and would make an
+  // otherwise clean corpus fail validation because of a failed command.
+  if (!opts.dryRun && !fresh.length && !prior.length && !fs.existsSync(manAbs)) {
+    const tally0 = {};
+    for (const r of results) tally0[r.status] = (tally0[r.status] || 0) + 1;
+    return { status: "ok", set: setId, wrote: 0, tally: tally0, results };
+  }
+
   if (!opts.dryRun) {
+    ensureSection(loaded, "codings", base);
     fs.mkdirSync(path.dirname(itemsAbs), { recursive: true });
     let man = fs.existsSync(manAbs) ? U.readJSON(manAbs) : null;
     if (!man) {
@@ -1704,11 +2041,19 @@ async function main() {
         // export had two options; with --into/--strip/--profile it would happily
         // read a flag's argument as the corpus directory.
         const VALUE_FLAGS = new Set(["--format", "-o", "--into", "--profile", "--strip",
-          "--frontmatter", "--filenames", "--image-names", "--domain"]);
+          "--frontmatter", "--filenames", "--image-names", "--domain", "--matrix"]);
         const dir = rest.find((a, i) => !a.startsWith("-") && !(i > 0 && VALUE_FLAGS.has(rest[i - 1])));
         const format = arg(rest, "--format");
         const out = arg(rest, "-o");
-        if (!dir || !format) { process.stderr.write("usage: upc export <dir> --format bibtex|ris|csl-json|jsonl|markdown|ro-crate|prov|obsidian [-o <file|dir>] [--copy]\n"); process.exit(2); }
+        if (!dir || !format) { process.stderr.write("usage: upc export <dir> --format bibtex|ris|csl-json|jsonl|markdown|ro-crate|prov|obsidian|site [-o <dir>] [--copy] [--bundle] [--matrix <a>:<b>]\n"); process.exit(2); }
+        if (format === "site") {
+          const mx = arg(rest, "--matrix");
+          print(writeSite(dir, {
+            out, bundle: rest.includes("--bundle"), allCodes: rest.includes("--all-codes"),
+            matrix: mx ? mx.split(":") : null,
+          }));
+          break;
+        }
         if (format === "ro-crate") {
           print(writeRoCrate(dir, { outDir: out, copy: rest.includes("--copy") }));
           break;
@@ -1751,14 +2096,55 @@ async function main() {
         else print(mintCmd(kind, stdin));
         break;
       }
+      case "add": {
+        const ADD_VALUE_FLAGS = new Set(["--corpus", "--output", "--tool"]);
+        const kind = rest.filter((a, i) => !a.startsWith("--") && !(i > 0 && ADD_VALUE_FLAGS.has(rest[i - 1])))[0];
+        const corpus = arg(rest, "--corpus");
+        if (!corpus || (kind !== "source" && kind !== "synthesis")) {
+          process.stderr.write("usage: upc add source --corpus <dir> [--batch] [--hardlink] [--tool <t>] [--dry-run] < source.json\n"
+            + "       upc add synthesis --corpus <dir> --output <file.md> [--tool <t>] [--allow-unverified] [--dry-run] < synthesis.json\n");
+          process.exit(2);
+        }
+        const stdin = fs.readFileSync(0, "utf8");
+        if (kind === "synthesis") {
+          const out = addSynthesisCmd(corpus, JSON.parse(stdin), {
+            output: arg(rest, "--output"), tool: arg(rest, "--tool"),
+            allowUnverified: rest.includes("--allow-unverified"), dryRun: rest.includes("--dry-run"),
+          });
+          print(out);
+          process.exit(out.status === "refused" ? 1 : 0);
+        }
+        const recs = rest.includes("--batch") ? readJsonlText(stdin) : [JSON.parse(stdin)];
+        const out = addSourceCmd(corpus, recs, {
+          tool: arg(rest, "--tool"), hardlink: rest.includes("--hardlink"), dryRun: rest.includes("--dry-run"),
+        });
+        print(out);
+        process.exit(out.tally.error ? 1 : 0);
+      }
+      case "event": {
+        // Append one activity to the journal. A tool that derives something from
+        // the corpus — an index, an export, a conversion — can say so without
+        // reimplementing the journal's numbering or its atomic write.
+        const corpus = arg(rest, "--corpus");
+        if (!corpus) { process.stderr.write("usage: upc event --corpus <dir> < event.json\n"); process.exit(2); }
+        const ev = JSON.parse(fs.readFileSync(0, "utf8"));
+        if (!ev.activity_type) { process.stderr.write("event: activity_type is required\n"); process.exit(2); }
+        const loaded = U.loadCorpus(corpus);
+        const id = appendEvent(loaded, {
+          started_at: nowStamp(), status: "success", ...ev,
+        });
+        print({ status: id ? "ok" : "error", event_id: id });
+        break;
+      }
       case "anchor": {
         const corpus = arg(rest, "--corpus");
         const repId = arg(rest, "--rep");
-        if (!corpus || !repId) { process.stderr.write("usage: upc anchor --corpus <dir> --rep <rep-id> [--set <id>] [--type <t>] [--query <q>] [--tool <t>] [--model <m>] [--dry-run] < candidates.jsonl\n"); process.exit(2); }
+        if (!corpus || !repId) { process.stderr.write("usage: upc anchor --corpus <dir> --rep <rep-id> [--set <id>] [--type <t>] [--query <q>] [--tool <t>] [--model <m>] [--normalize] [--dry-run] < candidates.jsonl\n"); process.exit(2); }
         const cands = readJsonlText(fs.readFileSync(0, "utf8"));
         const out = anchorCmd(corpus, repId, cands, {
           set: arg(rest, "--set"), type: arg(rest, "--type"), query: arg(rest, "--query"),
           tool: arg(rest, "--tool"), model: arg(rest, "--model"), promptVersion: arg(rest, "--prompt-version"),
+          normalize: rest.includes("--normalize"),
           dryRun: rest.includes("--dry-run"),
         });
         print(out);
@@ -1829,7 +2215,7 @@ async function main() {
 
 // Exports for thin wrappers / tests; only run the CLI when invoked directly.
 // (validateCorpus is already exported at its declaration.)
-export { verifyQuotesFile, verifyExtractionCmd, quoteCmd, locateCmd, regenCmd, exportCmd, mintCmd, mintBatchCmd, anchorCmd, codeCmd, codebookCmd, batchCmd, appendEvent, reanchorCmd, buildModel, sourcesCsv, extractionsCsv, computeSchemaHash, specVersion, satisfiesRequirement, COMMANDS };
+export { verifyQuotesFile, verifyExtractionCmd, quoteCmd, locateCmd, regenCmd, exportCmd, mintCmd, mintBatchCmd, anchorCmd, codeCmd, codebookCmd, batchCmd, addSourceCmd, addSynthesisCmd, appendEvent, ensureSection, reanchorCmd, buildModel, sourcesCsv, extractionsCsv, computeSchemaHash, specVersion, satisfiesRequirement, COMMANDS };
 
 const _isDirect = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
 if (_isDirect) main();

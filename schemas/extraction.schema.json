@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://provenance.dev/upc/1.7.0/schemas/extraction.schema.json",
+  "$id": "https://provenance.dev/upc/1.8.0/schemas/extraction.schema.json",
   "title": "UPC Extraction",
   "description": "Structured evidence selected from a specific representation at an exact location. The central interoperability contract. A direct_quote is exact verbatim text, verified byte-for-byte against the representation at a char_range locator (the hop-B gate, §03); text is a faithful, possibly paraphrased statement that is never verified and never presented as a quotation. An extraction must never become an orphaned quotation.",
   "type": "object",
@@ -25,6 +25,21 @@
       "type": "array",
       "description": "Additional coarse locators (page, section, heading, …) for human context. Advisory: never gate-bearing, excluded from identity.",
       "items": { "$ref": "locator.schema.json" }
+    },
+    "anchoring": {
+      "type": "object",
+      "description": "How this extraction's span was LOCATED, when a byte-exact search of the proposed text did not find it (spec/03). Advisory and excluded from the extraction id: it records the provenance of the search, not of the quotation. The stored direct_quote is always the representation's own codepoints, and hop B verifies it with no normalization.",
+      "properties": {
+        "method": { "enum": ["exact", "normalized"] },
+        "proposed_quote": { "type": "string", "description": "The text as proposed (typically by a model) before the normalized search located the real span." },
+        "rules": {
+          "type": "array",
+          "description": "Normalization classes that actually differed between the proposal and the stored span.",
+          "items": { "enum": ["whitespace", "quotes", "dashes", "soft-hyphen", "hyphenation", "ligatures", "ellipsis", "initial-case", "trailing-period"] }
+        }
+      },
+      "required": ["method"],
+      "additionalProperties": true
     },
     "query": { "type": "string", "description": "The question/task/purpose that prompted this extraction." },
     "interpretation": { "$ref": "../vocab/vocab.json#/$defs/interpretation" },

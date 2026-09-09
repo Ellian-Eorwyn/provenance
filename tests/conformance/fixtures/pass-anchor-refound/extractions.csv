@@ -1,0 +1,3 @@
+extraction_id,source_id,representation_ref,type,status,direct_quote,text,locator,query,interpretation,confidence,confidence_score,created_at
+ext-8c9afbdbfb0f,src-6c028fe157b9,rep-002493735202,passage,active,"The “ﬁrst” rule of a transi-
+tion is simple",,"{""representation_ref"":""rep-002493735202"",""type"":""char_range"",""value"":{""end"":51,""start"":8}}",,,,,2026-08-17T12:00:00Z
