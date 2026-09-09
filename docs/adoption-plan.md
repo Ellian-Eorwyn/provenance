@@ -1,6 +1,8 @@
 # Adoption plan — UPC as the storage substrate for ResearchAssistant and pi-forge
 
-**Status: phases 0–1 shipped in 1.6.0. Phase 2 complete (in the ResearchAssistant repo, `backend/upc/`). Phase 3 next.**
+**Status: phases 0–1 shipped in 1.6.0. Phase 2 complete (in the ResearchAssistant repo,
+`backend/upc/`). Phase 3 next for RA — but phases 4 and 5 have since been answered by a
+different consumer, and what that route learned is recorded below.**
 
 This is the living program document for putting UPC underneath real applications.
 It records not just what to build but *why the shape is what it is*, because most
@@ -12,10 +14,41 @@ of the design was forced by things measured in a real corpus rather than chosen.
 | 1 | UPC 1.6.0 — codes & codings, `representation_shared`, `verified-to-rewrite` | **done** (1.6.0) |
 | 2 | Read-only converter for an existing RA repository | **done** — L2, 0 errors on the 106-source corpus |
 | 3 | Read-only UPC projection inside RA | **next** |
-| 4 | The reader UI (`/read`, `/codes`) | not started |
-| 5 | The LLM coding pass — the actual goal | not started |
+| 4 | The reader UI (`/read`, `/codes`) | not started in RA — but `upc export --format site` (1.8.0) now ships a reader as a projection |
+| 5 | The LLM coding pass — the actual goal | **done, outside RA** — 1.8.0 + the `upc-corpus` skill coded a 178-source PDF corpus end to end |
 | 6 | Dual-write, human coding | not started |
 | 7 | pi-forge | not started |
+
+## What the first real coding pass taught (2026-09-09)
+
+Phase 5 was reached by a different route than this plan assumed: a folder of 179 PDFs
+rather than an RA repository, driven by a local 27B model through a Hermes skill. The
+conclusions are about UPC, not about that tool, so they belong here.
+
+- **The gate was never the problem; finding the span was.** A model asked to copy a
+  sentence verbatim returns something a byte-exact search cannot find — a straightened
+  quote, an expanded ligature, a joined line break, a capitalised mid-sentence start, a
+  full stop the page does not have. Every one of those is a *rendering* of a real span.
+  1.8.0's `anchor --normalize` searches under a stated normalization and stores the
+  representation's own characters; measured, it took anchoring from 83% to 94–98%.
+- **Most anchoring failures were faults in the text, not in the search.** Three causes,
+  in order of damage: a running head emitted inline at a page break, splicing a journal
+  citation into a sentence; a word broken across lines with a soft hyphen, which naive
+  rejoining turns into "en ables"; and line numbers down the margin of an accepted
+  author manuscript, which land between every clause. The last one made two papers
+  wholly uncodeable (0 of 47 passages) and affected 26 of 179. **Fix the converted text
+  before touching the matching rule.**
+- **Ask every codebook at once, not one at a time.** A pass that asks each codebook
+  separately produces passages carrying exactly one code, and a cross-tabulation built
+  from those is empty in every cell. Asking for all applicable codes per passage is what
+  makes a theory × dimension matrix possible — and that matrix is usually the deliverable.
+- **`sections` is load-bearing and silent.** `loadCorpus` reads only what `corpus.json`
+  declares, so a tool that wrote an extraction set into an undeclared section produced
+  objects on disk that every coding dangled against, with nothing saying why. Writers now
+  declare what they write (`ensureSection`).
+- **A failed command must leave nothing behind.** A coding run in which everything failed
+  used to write a set manifest with an empty `coders`, which is schema-invalid — so a
+  failed command made an otherwise clean corpus fail validation.
 
 ## Context
 

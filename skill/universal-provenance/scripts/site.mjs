@@ -401,7 +401,7 @@ const JS = `
           if(have.indexOf(v)<0)ok=false;
         });
         if(ok&&terms.length){
-          var hay=(r.getAttribute("data-search")||r.textContent||"").toLowerCase();
+          var hay=((r.getAttribute("data-search")||"")+" "+r.textContent).toLowerCase();
           ok=terms.every(function(t){return hay.indexOf(t)>=0;});
         }
         r.hidden=!ok; if(ok)shown++;
@@ -473,13 +473,13 @@ ${extraHead}
 
 // --- fragments ------------------------------------------------------------
 
-function badgeHtml(badge) {
+function badgeHtml(badge, terse) {
   const [icon, label, why] = BADGE_TEXT[badge] || BADGE_TEXT.unverifiable;
   const cls = badge === "failed" ? "badge bad" : (badge === "paraphrase" || badge === "unverifiable") ? "badge plain" : "badge";
-  return `<span class="${cls}" title="${attr(why)}">${icon} ${esc(label)}</span>`;
+  return `<span class="${cls}"${terse ? "" : ` title="${attr(why)}"`}>${icon} ${esc(label)}</span>`;
 }
 
-function chipHtml(c, base, detached) {
+function chipHtml(c, base, detached, terse) {
   const label = esc(c.label || c.code || c.value);
   const who = esc(c.coder) + (c.coder_kind ? ` (${esc(c.coder_kind)})` : "");
   const title = [c.definition ? `${c.label}: ${c.definition}` : c.label,
@@ -487,11 +487,15 @@ function chipHtml(c, base, detached) {
                  c.confidence ? `Confidence: ${c.confidence}` : ""].filter(Boolean).join("\n");
   const href = c.code != null ? `${base}codes/${encodeURIComponent(c.codebook_slug)}/${encodeURIComponent(c.code)}.html` : null;
   const inner = `${label} <span class="who">${who}</span>`;
-  return `<span class="chip${detached ? " detached" : ""}" data-id="${attr(c.coding_id)}" title="${attr(title)}">${
-    href ? `<a href="${href}">${inner}</a>` : inner}</span>`;
+  // On a page that lists the whole corpus, the definition rides on the code page
+  // one click away rather than in every row's title attribute — that tooltip is
+  // the single largest thing in a row, and §09 asks only that a definition be at
+  // most one interaction away.
+  return `<span class="chip${detached ? " detached" : ""}" data-id="${attr(c.coding_id)}"${
+    terse ? "" : ` title="${attr(title)}"`}>${href ? `<a href="${href}">${inner}</a>` : inner}</span>`;
 }
 
-function passageHtml(p, model, base, { showSource = true, context = true } = {}) {
+function passageHtml(p, model, base, { showSource = true, context = true, compact = false } = {}) {
   const bad = p.badge === "failed";
   const status = STATUS_TEXT[p.status] || "";
   const srcHref = `${base}sources/${encodeURIComponent(p.source_slug)}.html#ex=${encodeURIComponent(p.id)}`;
@@ -508,27 +512,33 @@ function passageHtml(p, model, base, { showSource = true, context = true } = {})
     // A summary is never dressed as a quotation (spec/09).
     body = `<p class="note">${esc(p.note)}</p>`;
   }
-  const chips = p.codings.map((c) => chipHtml(c, base, bad)).join(" ");
+  const chips = p.codings.map((c) => chipHtml(c, base, bad, compact)).join(" ");
   const dis = p.disagreements.length
     ? `<div class="disagree">Coders disagree here — both judgements are kept and shown.</div>` : "";
   const where = [p.line_range ? `line ${p.line_range.start}` : "", p.page ? `page ${p.page}` : ""].filter(Boolean).join(" · ");
-  const csv = j({
+  const csv = compact ? "" : j({
     quote: p.quote || p.note, source: `${p.cite} — ${p.source_title}`, year: p.year,
     doi: (model.sourceById.get(p.source_id) || {}).doi || "",
     codes: p.codings.map((c) => `${c.codebook_slug}:${c.code != null ? c.code : c.value}`).join("; "),
     coders: [...new Set(p.codings.map((c) => c.coder))].join("; "),
     checked: (BADGE_TEXT[p.badge] || [])[1] || "",
   });
-  const searchable = [p.quote, p.note, p.source_title, p.cite,
-    ...p.codings.map((c) => `${c.label} ${c.code || c.value} ${c.codebook_slug} ${c.coder}`)].join(" ");
+  // The searchable string repeats the quote, so on a page that lists every
+  // passage in the corpus it is the quote's own text that is searched instead —
+  // otherwise each row carries its text three times and the page runs to
+  // megabytes. Codes and titles still have to be there to be findable.
+  const searchable = compact
+    ? [p.source_title, p.cite, ...p.codings.map((c) => `${c.label} ${c.coder}`)].join(" ")
+    : [p.quote, p.note, p.source_title, p.cite,
+       ...p.codings.map((c) => `${c.label} ${c.code || c.value} ${c.codebook_slug} ${c.coder}`)].join(" ");
   return `<article class="passage${bad ? " bad" : ""}" id="${attr(p.id)}" data-row
    data-code="${attr(p.codings.map((c) => `${c.codebook_slug}:${c.code != null ? c.code : c.value}`).join("|"))}"
    data-coder="${attr([...new Set(p.codings.map((c) => c.coder))].join("|"))}"
    data-source="${attr(p.source_id)}" data-year="${attr(p.year)}"
-   data-search="${attr(searchable)}" data-csv="${attr(csv)}">
+   data-search="${attr(searchable)}"${compact ? "" : ` data-csv="${attr(csv)}"`}>
   ${body}${dis}
   <div class="meta">
-    ${badgeHtml(p.badge)}
+    ${badgeHtml(p.badge, compact)}
     ${status ? `<span class="badge plain">${esc(status)}</span>` : ""}
     ${chips}
     <span class="spacer"></span>
@@ -761,9 +771,10 @@ function passagesPage(model) {
     </select>` : "";
   }).join("")}
   <span class="muted" data-count data-one="passage shown" data-many="passages shown"></span>
-  <button class="btn" data-export>Download CSV</button>
 </div>
-${withQuote.map((p) => passageHtml(p, model, "../")).join("\n")}`,
+<p class="small muted">Searching matches the quotation itself as well as its codes, source and coder.
+To download a set of passages as a spreadsheet, open the code page for it.</p>
+${withQuote.map((p) => passageHtml(p, model, "../", { context: false, compact: true })).join("\n")}`,
   });
 }
 
