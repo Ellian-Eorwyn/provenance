@@ -244,7 +244,25 @@ export function buildSiteModel(loaded, opts = {}) {
     }
   }
 
-  const syntheses = (loaded.syntheses || []).map((s) => s.obj);
+  // Group overviews by the scheme they were written for. A producer may say so
+  // outright in `ext`; otherwise the title is a code's label, which is a lookup
+  // and not a guess — and an ambiguous label is left ungrouped rather than filed
+  // under whichever codebook happened to be read first.
+  const labelOwner = new Map();
+  for (const cb of codebooks) {
+    for (const c of cb.codes || []) {
+      const key = (c.label || c.code).toLowerCase();
+      labelOwner.set(key, labelOwner.has(key) ? null : { cb, code: c });
+    }
+  }
+  const syntheses = (loaded.syntheses || []).map((s) => {
+    const o = s.obj;
+    const declared = ((o.ext || {})["upc-corpus"] || {}).codebook;
+    const owner = declared
+      ? { cb: codebooks.find((c) => c.slug === declared), code: null }
+      : labelOwner.get(String(o.title || "").toLowerCase());
+    return { ...o, _group: owner && owner.cb ? owner.cb : null };
+  });
 
   return {
     title: (loaded.corpus && loaded.corpus.title) || "Research corpus",
@@ -564,8 +582,13 @@ function homePage(model) {
     title: model.title, rel: "index.html", model, active: "home",
     body: `<h1>${esc(model.title)}</h1>
 <p class="lede">A searchable library of what this literature actually says. Every quotation was compared with the
-source text character by character when this page was built${verified === nPass && nPass ? " — all of them matched" : ""}.
-Browse by <a href="codes/">theme</a>, by <a href="sources/">paper</a>, or search <a href="passages/">every passage</a>.</p>
+source text character by character when this page was built${verified === nPass && nPass ? " — all of them matched" : ""}.</p>
+${model.syntheses.length ? `<p class="lede"><strong>New here?</strong> Start with the
+<a href="overviews/">${plural(model.syntheses.length, "overview", "overviews")}</a> — a short review per theme,
+written from the coded passages, with every quotation linked back to the paper it came from. Then browse by
+<a href="codes/">theme</a>, by <a href="sources/">paper</a>, or search <a href="passages/">every passage</a>.</p>`
+ : `<p class="lede">Browse by <a href="codes/">theme</a>, by <a href="sources/">paper</a>, or search
+<a href="passages/">every passage</a>.</p>`}
 <div class="grid cards">
 ${tiles.map(([n, u, href]) => `<a class="card tile" href="${href}"><span class="n">${n}</span><br><span class="u">${esc(u)}</span></a>`).join("\n")}
 </div>
@@ -600,10 +623,14 @@ ${cb.question ? `<p class="small muted">${esc(cb.question)}</p>` : ""}
 <thead><tr><th>Code</th><th>What it means</th><th class="num">Passages</th><th class="num">Sources</th></tr></thead>
 <tbody>
 ${rows.map((r) => `<tr>
-  <td><a href="${encodeURIComponent(cb.slug)}/${encodeURIComponent(r.code)}.html">${esc(r.label || r.code)}</a></td>
+  <td>${r.nP || r.nS
+    ? `<a href="${encodeURIComponent(cb.slug)}/${encodeURIComponent(r.code)}.html">${esc(r.label || r.code)}</a>`
+    : `<span class="muted">${esc(r.label || r.code)}</span>`}</td>
   <td class="muted">${esc(r.definition || "")}</td>
   <td class="num">${r.nP || ""}</td><td class="num">${r.nS || ""}</td>
 </tr>`).join("\n")}
+${rows.every((r) => !r.nP && !r.nS)
+  ? `<tr><td colspan="4" class="muted">Nothing has been coded against this scheme yet.</td></tr>` : ""}
 </tbody></table></div>`).join("\n")}`,
   });
 }
@@ -806,15 +833,30 @@ ${aCodes.map((ac) => `<tr>
 }
 
 function overviewsIndexPage(model) {
+  const groups = new Map();
+  for (const s of model.syntheses) {
+    const key = s._group ? s._group.slug : "";
+    if (!groups.has(key)) groups.set(key, { cb: s._group, items: [] });
+    groups.get(key).items.push(s);
+  }
+  // Biggest scheme first, ungrouped last: a reader scanning for orientation wants
+  // the theories before the odds and ends.
+  const ordered = [...groups.values()].sort((a, b) =>
+    (a.cb ? 0 : 1) - (b.cb ? 0 : 1) || b.items.length - a.items.length);
+  const section = (g) => `
+<h2>${g.cb ? esc(g.cb.title) : "Other overviews"}</h2>
+${g.cb && g.cb.question ? `<p class="small muted">${esc(g.cb.question)}</p>` : ""}
+<ul class="plain">
+${g.items.map((s) => `<li><a href="${encodeURIComponent(s.synthesis_id)}.html">${esc(s.title || s.synthesis_id)}</a>
+  <span class="small muted">${s.claims ? `— ${plural(s.claims.length, "claim", "claims")}` : ""}</span></li>`).join("\n")}
+</ul>`;
   return page({
     title: `Overviews — ${model.title}`, rel: "overviews/index.html", model, active: "overviews",
     body: `<h1>Overviews</h1>
-<p class="lede">Written from the coded passages. Every quotation in them links back to the passage it came from,
-and was re-checked against the source when this page was built.</p>
-<ul class="plain">
-${model.syntheses.map((s) => `<li><a href="${encodeURIComponent(s.synthesis_id)}.html">${esc(s.title || s.synthesis_id)}</a>
-  <span class="small muted">— ${esc(s.type || "")}${s.claims ? ` · ${plural(s.claims.length, "claim", "claims")}` : ""}</span></li>`).join("\n")}
-</ul>`,
+<p class="lede">${plural(model.syntheses.length, "short review", "short reviews")} of what this literature says,
+one per theme, written from the coded passages. Every quotation links back to the passage it came from and was
+re-checked against the source when this page was built. <strong>Start here</strong> if you want the lay of the land.</p>
+${ordered.map(section).join("\n")}`,
   });
 }
 
