@@ -370,6 +370,39 @@ input[type=search],select{font:inherit;font-family:ui-sans-serif,system-ui,sans-
 ul.plain{list-style:none;padding:0;margin:0}
 ul.plain li{padding:.35rem 0;border-bottom:1px solid var(--line)}
 .defbox{background:var(--accent-soft);border-radius:10px;padding:.7rem .9rem;margin:.3rem 0 1rem;max-width:70ch}
+/* --- two-pane browsing: a list that never goes away, and a pane beside it --- */
+.split{display:grid;grid-template-columns:20rem minmax(0,1fr);gap:1.3rem;align-items:start;margin-top:1rem}
+.side{position:sticky;top:3.6rem;max-height:calc(100vh - 5rem);overflow:auto;overscroll-behavior:contain;
+  background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:.75rem .85rem;
+  font-family:ui-sans-serif,system-ui,sans-serif;font-size:.86rem}
+.side h2{font-size:.92rem;margin:.1rem 0 .5rem}
+.side details{border-top:1px solid var(--line);padding:.3rem 0}
+.side details:first-of-type{border-top:0}
+.side summary{cursor:pointer;font-weight:600;padding:.22rem 0;list-style:none;display:flex;gap:.4rem;align-items:baseline}
+.side summary::-webkit-details-marker{display:none}
+.side summary::before{content:"▸";color:var(--muted);font-size:.8em}
+.side details[open]>summary::before{content:"▾"}
+.side summary .n{margin-left:auto;color:var(--accent);font-weight:400;font-size:.76rem}
+.side label{display:flex;gap:.45rem;align-items:baseline;padding:.15rem .25rem;border-radius:6px;cursor:pointer}
+.side label:hover{background:var(--chip)}
+.side label>span:first-of-type{flex:1}
+.side label .n{color:var(--muted);font-variant-numeric:tabular-nums;font-size:.76rem}
+.side label.off{opacity:.4}
+.side input[type=checkbox]{margin:0;accent-color:var(--accent);flex:none;position:relative;top:1px}
+.side .sidesearch{width:100%;margin-bottom:.1rem}
+.side ul.ovlist{list-style:none;padding:0;margin:0}
+.side ul.ovlist a{display:block;padding:.26rem .4rem;border-radius:6px;color:var(--ink);line-height:1.3}
+.side ul.ovlist a:hover{background:var(--chip);text-decoration:none}
+.side ul.ovlist a.on{background:var(--accent-soft);color:var(--accent);font-weight:600}
+.pane{min-width:0}
+/* Only the lazily-built list opts into this: a card the reader can deep-link to
+   must not be skipped, and .reading collapses under it (see above). */
+.lazy .passage{content-visibility:auto;contain-intrinsic-size:auto 190px}
+@media (max-width:860px){
+  .split{grid-template-columns:1fr}
+  .side{position:static;max-height:20rem}
+}
+@media print{.side{display:none}.split{display:block}}
 footer{max-width:var(--maxw);margin:0 auto;padding:1.5rem 1rem 3rem;color:var(--muted);font-size:.8rem;
   font-family:ui-sans-serif,system-ui,sans-serif;border-top:1px solid var(--line)}
 @media print{
@@ -430,6 +463,50 @@ const JS = `
     sels.forEach(function(s){s.addEventListener("change",apply);});
     if(q)q.addEventListener("input",apply);
     if(sels.length||q)apply();
+
+    // Two-pane browsing, on the pages that ask for it. The data rides in
+    // data/browse.js as a <script src>, so this still works from file://.
+    var host=document.querySelector("[data-browse]");
+    if(host&&window.UPCB&&window.__UPCB_DATA){
+      var B=window.__UPCB_DATA, base=host.getAttribute("data-base")||"";
+      UPCB.init({
+        sources:B.sources, codebooks:B.codebooks, badges:B.badges,
+        files:B.files?base+B.files:null,
+        hrefSource:function(p){
+          var src=B.sources[p.s]||{};
+          return base+"sources/"+encodeURIComponent(src.sl||"")+".html#ex="+encodeURIComponent(p.id);
+        },
+        hrefCode:function(slug,code){
+          return base+"codes/"+encodeURIComponent(slug)+"/"+encodeURIComponent(code)+".html";
+        }
+      });
+      var only=host.getAttribute("data-only"), omit=host.getAttribute("data-omit");
+      var items=B.passages;
+      if(only) items=items.filter(function(p){
+        for(var i=0;i<p.g.length;i++) if(p.g[i][0]+":"+p.g[i][1]===only) return true;
+        return false;
+      });
+      host.innerHTML="";
+      UPCB.browse(host,items,{omit:omit?[omit]:[]});
+    }
+
+    // The overviews list: filtered in place, never replaced.
+    var sf=document.querySelector("[data-sidefilter]");
+    if(sf)sf.addEventListener("input",function(){
+      var t=sf.value.toLowerCase().trim();
+      [].slice.call(document.querySelectorAll("#ov-side details[data-ovg]")).forEach(function(d){
+        var any=0;
+        [].slice.call(d.querySelectorAll("li")).forEach(function(li){
+          var ok=!t||li.textContent.toLowerCase().indexOf(t)>=0;
+          li.hidden=!ok; if(ok)any++;
+        });
+        d.hidden=!any; if(t&&any)d.open=true;
+      });
+    });
+    // Keep the review being read in view when a long list opens at the top.
+    var ovSide=document.getElementById("ov-side");
+    if(ovSide&&window.UPCB)UPCB.reveal(ovSide,ovSide.querySelector("a.on"));
+
     // CSV of whatever is currently shown.
     var dl=document.querySelector("[data-export]");
     if(dl)dl.addEventListener("click",function(){
@@ -449,7 +526,279 @@ const JS = `
 })();
 `;
 
-function page({ title, rel, body, model, active, extraHead = "" }) {
+// The browse engine, shared by both shapes of the site.
+//
+// One renderer for a passage card, and one two-pane browser: a sidebar of
+// checkable facets on the left that never scrolls away, and a lazily-rendered
+// list on the right. Filtering runs over the data, never over the DOM — walking
+// 3,220 articles and reading their textContent on every keystroke is what made
+// the old page unusable — and only the cards near the viewport are built.
+//
+// Both clients hand it a context with the two things that differ between them:
+// how to link to a source, and how to link to a code.
+const BROWSE_JS = String.raw`
+(function(){
+  var X=null, CHUNK=30, codeDef={};
+  var E=function(s){return String(s==null?"":s).replace(/&/g,"&amp;").replace(/</g,"&lt;")
+      .replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#39;");};
+  var PL=function(n,a,b){return n+" "+(n===1?a:b);};
+
+  function init(ctx){
+    X=ctx; codeDef={};
+    X.codebooks.forEach(function(cb){ cb.codes.forEach(function(c){
+      codeDef[cb.slug+":"+c.code]={cb:cb,c:c}; }); });
+    return API;
+  }
+  function label(slug,code){ var d=codeDef[slug+":"+code]; return d?d.c.label:code; }
+
+  // ---- one passage, rendered one way ----
+
+  function badge(b,terse){
+    var t=X.badges[b]||X.badges.unverifiable;
+    var cls=b==="failed"?"badge bad":(b==="paraphrase"||b==="unverifiable")?"badge plain":"badge";
+    return '<span class="'+cls+'"'+(terse?"":' title="'+E(t[2])+'"')+'>'+t[0]+" "+E(t[1])+"</span>";
+  }
+  function chip(g,terse){
+    var d=codeDef[g[0]+":"+g[1]], lbl=d?d.c.label:g[1];
+    var tip=d&&d.c.def?d.c.label+": "+d.c.def:lbl;
+    if(g[4]) tip+="\nWhy: "+g[4];
+    if(g[3]) tip+="\nConfidence: "+g[3];
+    return '<span class="chip"'+(terse?"":' title="'+E(tip)+'"')+'>'+
+      '<a href="'+E(X.hrefCode(g[0],g[1]))+'">'+E(lbl)+' <span class="who">'+E(g[2])+"</span></a></span>";
+  }
+  function card(p,opts){
+    opts=opts||{};
+    var s=X.sources[p.s]||{}, bad=p.b==="failed";
+    var body;
+    if(p.q){
+      var q="<mark>"+E(p.q)+"</mark>";
+      body=(opts.context!==false&&(p.x||p.y))
+        ? '<blockquote class="ctx">…'+E((p.x||"").slice(-220))+q+E((p.y||"").slice(0,220))+"…</blockquote>"
+        : "<blockquote>"+q+"</blockquote>";
+      if(bad&&p.act) body+='<p class="small" style="color:var(--warn)">The source now reads: “'+E(p.act.slice(0,240))+'”</p>';
+    } else { body='<p class="note">'+E(p.n)+"</p>"; }
+    var where=[p.l?"line "+p.l:"",""].filter(Boolean).join(" · ");
+    var pdfLink=(X.files&&s.p&&p.pg)
+      ? ' <a class="muted" href="'+X.files+"/"+encodeURI(s.p)+"#page="+p.pg+'" target="_blank" rel="noopener"'+
+        ' title="Open the original PDF at this page">page '+p.pg+" ↗</a>"
+      : (p.pg?' <span class="muted">page '+p.pg+"</span>":"");
+    return '<article class="passage'+(bad?" bad":"")+'" id="'+E(p.id)+'" data-row'+
+      ' data-code="'+E(p.g.map(function(g){return g[0]+":"+g[1];}).join("|"))+'"'+
+      ' data-coder="'+E(p.g.map(function(g){return g[2];}).join("|"))+'"'+
+      ' data-year="'+E(s.y||"")+'"'+
+      ' data-search="'+E([s.t,s.k].concat(p.g.map(function(g){return label(g[0],g[1])+" "+g[2];})).join(" "))+'">'+
+      body+
+      (p.dis?'<div class="disagree">Coders disagree here — both judgements are kept and shown.</div>':"")+
+      '<div class="meta">'+badge(p.b,!!opts.terse)+
+      (p.st?'<span class="badge plain">'+E(p.st)+"</span>":"")+
+      p.g.map(function(g){return chip(g,!!opts.terse);}).join(" ")+
+      '<span class="spacer"></span><a class="muted" href="'+E(X.hrefSource(p))+'">'+
+      (opts.showSource===false?E(where||"in context"):E(s.k||"")+(where?" · "+E(where):""))+" →</a>"+pdfLink+
+      "</div></article>";
+  }
+
+  // ---- the two-pane browser ----
+
+  // Everything a filter needs, computed once: the codes and coders as flat
+  // strings, and one lowercase haystack per passage.
+  function prep(items){
+    if(items.__prepped) return;
+    items.forEach(function(p){
+      var s=X.sources[p.s]||{};
+      p._c=p.g.map(function(g){return g[0]+":"+g[1];});
+      p._k=p.g.map(function(g){return g[2];});
+      p._h=((p.q||"")+" "+(p.n||"")+" "+(s.t||"")+" "+(s.k||"")+" "+(s.a||"")+" "+(s.y||"")+" "+
+            p.g.map(function(g){return label(g[0],g[1])+" "+g[2];}).join(" ")).toLowerCase();
+    });
+    items.__prepped=1;
+  }
+
+  function browse(host,items,opts){
+    opts=opts||{};
+    prep(items);
+
+    // groups: one per codebook that anything is coded against, plus the coders
+    var omit=opts.omit||[], groups=[];
+    X.codebooks.forEach(function(cb){
+      if(omit.indexOf(cb.slug)>=0) return;
+      var codes=[];
+      cb.codes.forEach(function(c){
+        var key=cb.slug+":"+c.code, n=0;
+        items.forEach(function(p){ if(p._c.indexOf(key)>=0) n++; });
+        if(n) codes.push({key:key,label:c.label,def:c.def,n:n});
+      });
+      codes.sort(function(a,b){return b.n-a.n;});
+      if(codes.length) groups.push({id:cb.slug,title:cb.title,question:cb.question||"",kind:"code",codes:codes});
+    });
+    // The scheme that covers most of the list goes first, and is the one opened:
+    // a sidebar whose first section is a scheme almost nothing was coded against
+    // teaches the reader that the sidebar is not worth opening.
+    groups.forEach(function(g){
+      g.total=items.filter(function(p){
+        for(var i=0;i<p._c.length;i++) if(p._c[i].indexOf(g.id+":")===0) return true;
+        return false; }).length;
+    });
+    groups.sort(function(a,b){return b.total-a.total;});
+    var coders={};
+    items.forEach(function(p){ p._k.forEach(function(k){ coders[k]=(coders[k]||0)+1; }); });
+    var ck=Object.keys(coders);
+    if(ck.length>1){
+      groups.push({id:"__coder",title:"Coder",kind:"coder",question:"Who made the judgement.",
+        codes:ck.sort().map(function(k){return {key:k,label:k,def:"",n:coders[k]};})});
+    }
+
+    var sel={};           // group id -> array of checked keys
+    groups.forEach(function(g){ sel[g.id]=[]; });
+    var terms=[], matches=items.slice(), drawn=0;
+
+    host.innerHTML=
+      '<div class="split">'+
+      '<aside class="side" id="pfacets">'+
+        '<input type="search" class="sidesearch" id="pq" placeholder="Search every passage…">'+
+        '<p class="small muted" id="pcount" style="margin:.5rem 0 .3rem"></p>'+
+        '<p class="small" style="margin:0 0 .5rem"><button class="btn" id="pclear">Clear all</button> '+
+        '<button class="btn" id="pcsv">Download CSV</button></p>'+
+        groups.map(function(g,i){
+          return '<details'+(i===0?" open":"")+' data-g="'+E(g.id)+'"><summary>'+E(g.title)+
+            '<span class="n" data-gn></span></summary>'+
+            (g.question?'<p class="small muted" style="margin:.1rem 0 .3rem">'+E(g.question)+"</p>":"")+
+            g.codes.map(function(c){
+              return '<label'+(c.def?' title="'+E(c.def)+'"':"")+'><input type="checkbox" data-f="'+
+                E(g.id)+'" value="'+E(c.key)+'"><span>'+E(c.label)+'</span><span class="n">'+c.n+"</span></label>";
+            }).join("")+"</details>";
+        }).join("")+
+      "</aside>"+
+      '<section class="pane"><div class="lazy" id="plist"></div>'+
+      '<div id="pmore"></div></section></div>';
+
+    var list=host.querySelector("#plist"), more=host.querySelector("#pmore");
+    var countEl=host.querySelector("#pcount"), q=host.querySelector("#pq");
+
+    function keep(p,skip){
+      for(var i=0;i<groups.length;i++){
+        var g=groups[i]; if(g.id===skip) continue;
+        var want=sel[g.id]; if(!want.length) continue;
+        var have=g.kind==="coder"?p._k:p._c, ok=false;
+        for(var k=0;k<want.length;k++){ if(have.indexOf(want[k])>=0){ok=true;break;} }
+        if(!ok) return false;
+      }
+      for(var t=0;t<terms.length;t++){ if(p._h.indexOf(terms[t])<0) return false; }
+      return true;
+    }
+
+    // A facet's own counts ignore its own selection, or every unchecked sibling
+    // reads zero and the reader cannot see what else is there.
+    function recount(){
+      groups.forEach(function(g){
+        var pool=items.filter(function(p){return keep(p,g.id);});
+        var seen={};
+        pool.forEach(function(p){
+          var have=g.kind==="coder"?p._k:p._c;
+          have.forEach(function(h){ seen[h]=(seen[h]||0)+1; });
+        });
+        var box=host.querySelector('details[data-g="'+g.id.replace(/"/g,"")+'"]');
+        if(!box) return;
+        [].slice.call(box.querySelectorAll("label")).forEach(function(lb){
+          var cbx=lb.querySelector("input"), n=seen[cbx.value]||0;
+          lb.querySelector(".n").textContent=n;
+          lb.className=(n||cbx.checked)?"":"off";
+        });
+        var chosen=sel[g.id].length;
+        box.querySelector("[data-gn]").textContent=chosen?chosen+" chosen":"";
+      });
+    }
+
+    function draw(n){
+      var frag=[], end=Math.min(matches.length,drawn+n);
+      // Not terse: only what is on screen is built, so a chip can afford to carry
+      // its definition, its coder's reason and the confidence in a tooltip again.
+      for(var i=drawn;i<end;i++) frag.push(card(matches[i],{context:false}));
+      if(frag.length) list.insertAdjacentHTML("beforeend",frag.join(""));
+      drawn=end;
+      more.innerHTML = drawn<matches.length
+        ? '<p class="small muted" id="psent">Showing '+drawn+" of "+matches.length+
+          '. <button class="btn" id="pmorebtn">Show more</button></p>' : "";
+      var b=host.querySelector("#pmorebtn");
+      if(b) b.addEventListener("click",function(){draw(CHUNK*3);});
+      if(io&&drawn<matches.length) io.observe(host.querySelector("#psent"));
+    }
+
+    // Printing draws everything that matches: a code page printed as a reading
+    // list must not stop at whatever the reader had scrolled past.
+    if(window.matchMedia){ try{ window.matchMedia("print").addListener(function(m){ if(m.matches) draw(matches.length); }); }catch(e){} }
+    window.addEventListener("beforeprint",function(){ draw(matches.length); });
+
+    var io=null;
+    if(window.IntersectionObserver){
+      io=new IntersectionObserver(function(es){
+        es.forEach(function(e){ if(e.isIntersecting){ io.unobserve(e.target); draw(CHUNK*2); } });
+      },{rootMargin:"900px"});
+    }
+
+    function apply(){
+      matches=items.filter(function(p){return keep(p,null);});
+      drawn=0; list.innerHTML="";
+      countEl.textContent=matches.length===items.length
+        ? PL(items.length,"passage","passages")
+        : matches.length+" of "+items.length+" passages";
+      draw(CHUNK*2);
+      recount();
+    }
+
+    host.addEventListener("change",function(e){
+      var t=e.target; if(!t||t.getAttribute("data-f")==null) return;
+      var g=t.getAttribute("data-f"), v=t.value, at=sel[g].indexOf(v);
+      if(t.checked){ if(at<0) sel[g].push(v); } else if(at>=0) sel[g].splice(at,1);
+      apply();
+    });
+    var timer=null;
+    q.addEventListener("input",function(){
+      clearTimeout(timer);
+      timer=setTimeout(function(){
+        terms=q.value.toLowerCase().trim().split(/\s+/).filter(Boolean);
+        apply();
+      },60);
+    });
+    host.querySelector("#pclear").addEventListener("click",function(){
+      groups.forEach(function(g){sel[g.id]=[];});
+      [].slice.call(host.querySelectorAll('input[data-f]')).forEach(function(c){c.checked=false;});
+      q.value=""; terms=[]; apply();
+    });
+    host.querySelector("#pcsv").addEventListener("click",function(){
+      var head=["quote","source","year","doi","page","codes","coders","checked"],out=[head.join(",")];
+      matches.forEach(function(p){
+        var s=X.sources[p.s]||{};
+        var f=[p.q||p.n, (s.k||"")+" — "+(s.t||""), s.y||"", s.d||"", p.pg||"",
+               p.g.map(function(g){return g[0]+":"+g[1];}).join("; "),
+               p.g.map(function(g){return g[2];}).join("; "),
+               (X.badges[p.b]||[])[1]||""];
+        out.push(f.map(function(v){return '"'+String(v==null?"":v).replace(/"/g,'""')+'"';}).join(","));
+      });
+      var a=document.createElement("a");
+      a.href=URL.createObjectURL(new Blob([out.join("\n")],{type:"text/csv"}));
+      a.download="passages.csv"; document.body.appendChild(a); a.click();
+      document.body.removeChild(a); URL.revokeObjectURL(a.href);
+    });
+
+    apply();
+  }
+
+  // scrollIntoView would scroll the window as well as the list, throwing the
+  // reader down the page every time they picked something. This moves only the
+  // list, and only when the thing is actually out of sight.
+  function reveal(box,el){
+    if(!box||!el) return;
+    var r=el.getBoundingClientRect(), b=box.getBoundingClientRect();
+    if(r.top>=b.top&&r.bottom<=b.bottom) return;
+    box.scrollTop+=(r.top-b.top)-box.clientHeight/2+r.height/2;
+  }
+
+  var API={init:init,card:card,chip:chip,badge:badge,browse:browse,label:label,reveal:reveal,esc:E,plural:PL};
+  window.UPCB=API;
+})();
+`;
+
+function page({ title, rel, body, model, active, extraHead = "", data = false }) {
   const up = rel.split("/").length - 1;
   const base = up ? "../".repeat(up) : "";
   const nav = [
@@ -470,6 +819,7 @@ function page({ title, rel, body, model, active, extraHead = "" }) {
 <title>${esc(title)}</title>
 <link rel="stylesheet" href="${base}assets/site.css">
 ${extraHead}
+${data ? `<script src="${base}data/browse.js" defer></script>` : ""}
 <script src="${base}assets/site.js" defer></script>
 </head><body>
 <header class="top"><div class="in">
@@ -640,30 +990,17 @@ function codePage(model, cb, code) {
   const passages = rec ? rec.passages.map((id) => model.passageById.get(id)).filter(Boolean) : [];
   const sourcesCoded = rec ? [...rec.sources] : [];
   const base = "../../";
-  const years = [...new Set(passages.map((p) => p.year).filter(Boolean))].sort();
-  const coders = [...new Set(passages.flatMap((p) => p.codings.map((c) => c.coder)))].sort();
-  const otherBooks = model.codebooks.filter((b) => b.codebook_id !== cb.codebook_id);
   return page({
-    title: `${code.label || code.code} — ${cb.title}`, rel: `codes/${cb.slug}/${code.code}.html`, model, active: "codes",
+    title: `${code.label || code.code} — ${cb.title}`, rel: `codes/${cb.slug}/${code.code}.html`, model, active: "codes", data: true,
     body: `<p class="small muted"><a href="${base}codes/">Codes</a> › ${esc(cb.title)}</p>
 <h1>${esc(code.label || code.code)}</h1>
 ${code.definition ? `<div class="defbox">${esc(code.definition)}${
   (code.examples || []).length ? `<div class="small muted" style="margin-top:.4rem">For example: “${esc(code.examples[0])}”</div>` : ""}</div>` : ""}
-<p class="lede">${plural(passages.length, "passage", "passages")} in ${plural(sourcesCoded.length, "source", "sources")}.</p>
-<div class="filters sans small">
-  <input type="search" data-q placeholder="Search these passages…" style="min-width:16rem">
-  ${otherBooks.map((b) => {
-    const opts = (b.codes || []).filter((c) => model.codeIndex.has(`${b.codebook_id}:${c.code}`));
-    return opts.length ? `<select data-filter="code"><option value="">Any ${esc(b.title.toLowerCase())}</option>
-      ${opts.map((c) => `<option value="${attr(b.slug + ":" + c.code)}">${esc(c.label || c.code)}</option>`).join("")}
-    </select>` : "";
-  }).join("")}
-  ${years.length > 1 ? `<select data-filter="year"><option value="">Any year</option>${years.map((y) => `<option>${esc(y)}</option>`).join("")}</select>` : ""}
-  ${coders.length > 1 ? `<select data-filter="coder"><option value="">Any coder</option>${coders.map((c) => `<option>${esc(c)}</option>`).join("")}</select>` : ""}
-  <span class="muted" data-count data-one="passage shown" data-many="passages shown"></span>
-  <button class="btn" data-export>Download CSV</button>
-</div>
-${passages.length ? passages.map((p) => passageHtml(p, model, base)).join("\n")
+<p class="lede">${plural(passages.length, "passage", "passages")} in ${plural(sourcesCoded.length, "source", "sources")}${
+  passages.length ? ". Narrow them on the left — those counts are within this code." : ""}.</p>
+${passages.length
+  ? `<div data-browse data-base="${base}" data-only="${attr(cb.slug + ":" + code.code)}" data-omit="${attr(cb.slug)}"></div>
+<noscript>${passages.map((p) => passageHtml(p, model, base)).join("\n")}</noscript>`
   : `<p class="muted">No passages carry this code yet.</p>`}`,
   });
 }
@@ -783,25 +1120,17 @@ function renderReading(text, passages) {
 }
 
 function passagesPage(model) {
-  const withQuote = model.passages;
-  const books = model.codebooks;
   return page({
-    title: `Passages — ${model.title}`, rel: "passages/index.html", model, active: "passages",
+    title: `Passages — ${model.title}`, rel: "passages/index.html", model, active: "passages", data: true,
     body: `<h1>Passages</h1>
-<p class="lede">Every coded passage in the corpus. Search the words, or narrow by code, coder or year.</p>
-<div class="filters sans small">
-  <input type="search" data-q placeholder="Search every passage…" style="min-width:22rem">
-  ${books.map((b) => {
-    const opts = (b.codes || []).filter((c) => model.codeIndex.has(`${b.codebook_id}:${c.code}`));
-    return opts.length ? `<select data-filter="code"><option value="">Any ${esc(b.title.toLowerCase())}</option>
-      ${opts.map((c) => `<option value="${attr(b.slug + ":" + c.code)}">${esc(c.label || c.code)}</option>`).join("")}
-    </select>` : "";
-  }).join("")}
-  <span class="muted" data-count data-one="passage shown" data-many="passages shown"></span>
-</div>
-<p class="small muted">Searching matches the quotation itself as well as its codes, source and coder.
-To download a set of passages as a spreadsheet, open the code page for it.</p>
-${withQuote.map((p) => passageHtml(p, model, "../", { context: false, compact: true })).join("\n")}`,
+<p class="lede">Every coded passage in the corpus — ${plural(model.passages.length, "passage", "passages")}
+from ${plural(model.sources.length, "paper", "papers")}. Tick codes on the left to narrow the list. Ticks inside
+one scheme widen the set; ticks across two schemes narrow it, so <em>MLP</em> plus <em>Power</em> shows only
+passages carrying both.</p>
+<div data-browse data-base="../"></div>
+<noscript><p class="banner">This page builds its list as you filter, so it needs JavaScript.
+Every other page here works without it — browse by <a href="../codes/">theme</a> or by
+<a href="../sources/">paper</a> instead.</p></noscript>`,
   });
 }
 
@@ -832,7 +1161,9 @@ ${aCodes.map((ac) => `<tr>
   });
 }
 
-function overviewsIndexPage(model) {
+// --- overviews: one list, always beside whatever is being read ---------------
+
+function overviewGroups(model) {
   const groups = new Map();
   for (const s of model.syntheses) {
     const key = s._group ? s._group.slug : "";
@@ -841,26 +1172,22 @@ function overviewsIndexPage(model) {
   }
   // Biggest scheme first, ungrouped last: a reader scanning for orientation wants
   // the theories before the odds and ends.
-  const ordered = [...groups.values()].sort((a, b) =>
-    (a.cb ? 0 : 1) - (b.cb ? 0 : 1) || b.items.length - a.items.length);
-  const section = (g) => `
-<h2>${g.cb ? esc(g.cb.title) : "Other overviews"}</h2>
-${g.cb && g.cb.question ? `<p class="small muted">${esc(g.cb.question)}</p>` : ""}
-<ul class="plain">
-${g.items.map((s) => `<li><a href="${encodeURIComponent(s.synthesis_id)}.html">${esc(s.title || s.synthesis_id)}</a>
-  <span class="small muted">${s.claims ? `— ${plural(s.claims.length, "claim", "claims")}` : ""}</span></li>`).join("\n")}
-</ul>`;
-  return page({
-    title: `Overviews — ${model.title}`, rel: "overviews/index.html", model, active: "overviews",
-    body: `<h1>Overviews</h1>
-<p class="lede">${plural(model.syntheses.length, "short review", "short reviews")} of what this literature says,
-one per theme, written from the coded passages. Every quotation links back to the passage it came from and was
-re-checked against the source when this page was built. <strong>Start here</strong> if you want the lay of the land.</p>
-${ordered.map(section).join("\n")}`,
-  });
+  return [...groups.values()].sort((a, b) => (a.cb ? 0 : 1) - (b.cb ? 0 : 1) || b.items.length - a.items.length);
 }
 
-function overviewPage(model, syn, root) {
+function overviewSide(model, selectedId) {
+  return `<aside class="side" id="ov-side">
+<input type="search" class="sidesearch" data-sidefilter placeholder="Filter these reviews…">
+${overviewGroups(model).map((g) => `<details open data-ovg>
+<summary>${g.cb ? esc(g.cb.title) : "Other overviews"}<span class="n">${g.items.length}</span></summary>
+${g.cb && g.cb.question ? `<p class="small muted" style="margin:.1rem 0 .3rem">${esc(g.cb.question)}</p>` : ""}
+<ul class="ovlist">${g.items.map((s) => `<li><a class="${s.synthesis_id === selectedId ? "on" : ""}"
+  href="${encodeURIComponent(s.synthesis_id)}.html">${esc(s.title || s.synthesis_id)}</a></li>`).join("")}</ul>
+</details>`).join("\n")}
+</aside>`;
+}
+
+function overviewBodyHtml(model, syn, root) {
   const base = "../";
   let body = "";
   const outPath = syn.output && syn.output.path;
@@ -886,10 +1213,7 @@ function overviewPage(model, syn, root) {
     .replace(/^#{1,6}\s*(.+)$/gm, (m, t) => `<h2>${t}</h2>`)
     .replace(/\n{2,}/g, "\n<p></p>\n");
   const claims = syn.claims || [];
-  return page({
-    title: `${syn.title || syn.synthesis_id} — ${model.title}`, rel: `overviews/${syn.synthesis_id}.html`, model, active: "overviews",
-    body: `<p class="small muted"><a href="${base}overviews/">Overviews</a></p>
-<h1>${esc(syn.title || syn.synthesis_id)}</h1>
+  return `<h1 style="margin-top:0">${esc(syn.title || syn.synthesis_id)}</h1>
 <div class="card" style="max-width:74ch">${rendered || `<p class="muted">No text.</p>`}</div>
 ${claims.length ? `<h2>What this says, and what backs it</h2>
 <div class="wrap"><table><thead><tr><th>Claim</th><th>Passages</th></tr></thead><tbody>
@@ -897,7 +1221,36 @@ ${claims.map((c) => `<tr><td>${esc(c.text)}</td><td>${(c.evidence_ids || []).map
     const p = model.passageById.get(id);
     return p ? `<a href="${base}sources/${encodeURIComponent(p.source_slug)}.html#ex=${encodeURIComponent(id)}">${esc(p.cite)}</a>` : esc(id);
   }).join("; ")}</td></tr>`).join("\n")}
-</tbody></table></div>` : ""}`,
+</tbody></table></div>` : ""}`;
+}
+
+const OVERVIEW_LEDE = (model) =>
+  `<p class="lede">${plural(model.syntheses.length, "short review", "short reviews")} of what this literature says,
+one per theme, written from the coded passages. <strong>Start here</strong> if you want the lay of the land.</p>`;
+
+function overviewsIndexPage(model) {
+  return page({
+    title: `Overviews — ${model.title}`, rel: "overviews/index.html", model, active: "overviews",
+    body: `<h1>Overviews</h1>${OVERVIEW_LEDE(model)}
+<div class="split">${overviewSide(model, null)}
+<section class="pane"><div class="card" style="max-width:74ch">
+<p>Pick a review on the left. There ${model.syntheses.length === 1 ? "is one" : `are ${model.syntheses.length}`},
+one per theme, each written only from passages in this corpus. The list stays where it is while you read, so you
+can work down a scheme in one sitting.</p>
+<p class="small muted">Every quotation in a review links to the passage it came from, and every citation to the
+paper. A review is written by a model from coded passages: the quotations in it were checked character by
+character, the sentences around them were not.</p>
+</div></section></div>`,
+  });
+}
+
+function overviewPage(model, syn, root) {
+  return page({
+    title: `${syn.title || syn.synthesis_id} — ${model.title}`,
+    rel: `overviews/${syn.synthesis_id}.html`, model, active: "overviews",
+    body: `<h1>Overviews</h1>${OVERVIEW_LEDE(model)}
+<div class="split">${overviewSide(model, syn.synthesis_id)}
+<section class="pane">${overviewBodyHtml(model, syn, root)}</section></div>`,
   });
 }
 
@@ -917,7 +1270,19 @@ export function writeSite(root, opts = {}) {
 
   fs.mkdirSync(outDir, { recursive: true });
   w("assets/site.css", CSS);
-  w("assets/site.js", JS);
+  // The browse engine first, then the page script that mounts it.
+  w("assets/site.js", BROWSE_JS + "\n" + JS);
+
+  // The same compact records the single file carries, as a plain script the
+  // browsing pages load with <script src> — no fetch, so `file://` still works.
+  {
+    const { sources, passages, codebooks } = browsePayload(model);
+    w("data/browse.js", `window.__UPCB_DATA=${j({
+      sources, passages, codebooks,
+      badges: BADGE_TEXT,
+      files: opts.bundle ? "files" : null,
+    })};\n`);
+  }
 
   w("index.html", homePage(model));
   w("codes/index.html", codesIndexPage(model));
@@ -1032,49 +1397,25 @@ const CLIENT_ONE = String.raw`
   D.sources.forEach(function(s){ s.g.forEach(function(g){ touch(g[0]+":"+g[1]).s[s.i]=1; }); });
   var passagesOf={}; D.passages.forEach(function(p){ (passagesOf[p.s]=passagesOf[p.s]||[]).push(p); });
 
-  function badge(b,terse){
-    var t=D.badges[b]||D.badges.unverifiable;
-    var cls=b==="failed"?"badge bad":(b==="paraphrase"||b==="unverifiable")?"badge plain":"badge";
-    return '<span class="'+cls+'"'+(terse?"":' title="'+E(t[2])+'"')+'>'+t[0]+" "+E(t[1])+"</span>";
-  }
-  function chip(g,terse){
-    var d=codeDef[g[0]+":"+g[1]], lbl=d?d.c.label:g[1];
-    var tip=d&&d.c.def?d.c.label+": "+d.c.def:lbl;
-    if(g[4]) tip+="\nWhy: "+g[4];
-    if(g[3]) tip+="\nConfidence: "+g[3];
-    return '<span class="chip"'+(terse?"":' title="'+E(tip)+'"')+'>'+
-      '<a href="#/code/'+encodeURIComponent(g[0])+"/"+encodeURIComponent(g[1])+'">'+
-      E(lbl)+' <span class="who">'+E(g[2])+"</span></a></span>";
-  }
-  function passageCard(p,opts){
-    opts=opts||{};
-    var s=D.sources[p.s]||{}, bad=p.b==="failed";
-    var body;
-    if(p.q){
-      var q="<mark>"+E(p.q)+"</mark>";
-      body=(opts.context!==false&&(p.x||p.y))
-        ? '<blockquote class="ctx">…'+E((p.x||"").slice(-220))+q+E((p.y||"").slice(0,220))+"…</blockquote>"
-        : "<blockquote>"+q+"</blockquote>";
-      if(bad&&p.act) body+='<p class="small" style="color:var(--warn)">The source now reads: “'+E(p.act.slice(0,240))+'”</p>';
-    } else { body='<p class="note">'+E(p.n)+"</p>"; }
-    var where=[p.l?"line "+p.l:""].filter(Boolean).join(" · ");
-    var pdfLink=(D.files&&s.p&&p.pg)
-      ? ' <a class="muted" href="'+D.files+"/"+encodeURI(s.p)+"#page="+p.pg+'" target="_blank" rel="noopener"'+
-        ' title="Open the original PDF at this page">page '+p.pg+" ↗</a>"
-      : (p.pg?' <span class="muted">page '+p.pg+"</span>":"");
-    return '<article class="passage'+(bad?" bad":"")+'" id="'+E(p.id)+'" data-row'+
-      ' data-code="'+E(p.g.map(function(g){return g[0]+":"+g[1];}).join("|"))+'"'+
-      ' data-coder="'+E(p.g.map(function(g){return g[2];}).join("|"))+'"'+
-      ' data-year="'+E(s.y||"")+'"'+
-      ' data-search="'+E([s.t,s.k].concat(p.g.map(function(g){var d=codeDef[g[0]+":"+g[1]];return (d?d.c.label:g[1])+" "+g[2];})).join(" "))+'">'+
-      body+
-      (p.dis?'<div class="disagree">Coders disagree here — both judgements are kept and shown.</div>':"")+
-      '<div class="meta">'+badge(p.b,!!opts.terse)+
-      (p.st?'<span class="badge plain">'+E(p.st)+"</span>":"")+
-      p.g.map(function(g){return chip(g,!!opts.terse);}).join(" ")+
-      '<span class="spacer"></span><a class="muted" href="#/source/'+p.s+"?ex="+encodeURIComponent(p.id)+'">'+
-      (opts.showSource===false?E(where||"in context"):E(s.k||"")+(where?" · "+E(where):""))+" →</a>"+pdfLink+
-      "</div></article>";
+  // One renderer for a passage, shared with the folder site: UPCB, defined by the
+  // browse engine in the script above this one.
+  UPCB.init({
+    sources:D.sources, codebooks:D.codebooks, badges:D.badges, files:D.files,
+    hrefSource:function(p){ return "#/source/"+p.s+"?ex="+encodeURIComponent(p.id); },
+    hrefCode:function(slug,code){ return "#/code/"+encodeURIComponent(slug)+"/"+encodeURIComponent(code); }
+  });
+  var badge=UPCB.badge, chip=UPCB.chip, passageCard=UPCB.card;
+
+  // Reading copies are parsed on demand. They are four fifths of this file, and
+  // parsing all of them into memory before the first paint cost seconds for a
+  // reader who may never open a single paper.
+  var textCache={};
+  function textOf(i){
+    if(!(i in textCache)){
+      var el=document.getElementById("upc-t"+i);
+      textCache[i]=el?JSON.parse(el.textContent):"";
+    }
+    return textCache[i];
   }
 
   // ---- views ----
@@ -1118,29 +1459,28 @@ const CLIENT_ONE = String.raw`
           "</tbody></table></div>";
       }).join("");
   };
-  V.code=function(a){
-    var cb=bySlug[a[0]]; if(!cb) return "<h1>Unknown scheme</h1>";
+  function codeList(a){
+    var cb=bySlug[a[0]]; if(!cb) return null;
     var c=null; cb.codes.forEach(function(x){ if(x.code===a[1]) c=x; });
-    if(!c) return "<h1>Unknown code</h1>";
+    if(!c) return null;
     var r=codeIndex[cb.slug+":"+c.code]||{p:[],s:{}};
-    var list=r.p.map(function(id){return byId[id];}).filter(Boolean);
-    var others=D.codebooks.filter(function(x){return x.slug!==cb.slug;});
-    var years={}; list.forEach(function(p){var y=(D.sources[p.s]||{}).y; if(y)years[y]=1;});
-    var coders={}; list.forEach(function(p){p.g.forEach(function(g){coders[g[2]]=1;});});
-    return '<p class="small muted" id="crumb"><a href="#/codes">Codes</a> › '+E(cb.title)+"</p><h1>"+E(c.label)+"</h1>"+
-      (c.def?'<div class="defbox">'+E(c.def)+"</div>":"")+
-      '<p class="lede">'+PL(list.length,"passage","passages")+" in "+PL(Object.keys(r.s).length,"source","sources")+".</p>"+
-      '<div class="filters sans small"><input type="search" data-q placeholder="Search these passages…" style="min-width:16rem">'+
-      others.map(function(b){
-        var opts=b.codes.filter(function(x){return codeIndex[b.slug+":"+x.code];});
-        return opts.length?'<select data-filter="code"><option value="">Any '+E(b.title.toLowerCase())+"</option>"+
-          opts.map(function(x){return '<option value="'+E(b.slug+":"+x.code)+'">'+E(x.label)+"</option>";}).join("")+"</select>":"";
-      }).join("")+
-      (Object.keys(coders).length>1?'<select data-filter="coder"><option value="">Any coder</option>'+
-        Object.keys(coders).sort().map(function(x){return "<option>"+E(x)+"</option>";}).join("")+"</select>":"")+
-      '<span class="muted" data-count data-one="passage shown" data-many="passages shown"></span>'+
-      '<button class="btn" data-export>Download CSV</button></div>'+
-      (list.length?list.map(function(p){return passageCard(p,{});}).join(""):'<p class="muted">No passages carry this code yet.</p>');
+    return {cb:cb, c:c, r:r, list:r.p.map(function(id){return byId[id];}).filter(Boolean)};
+  }
+  V.code=function(a){
+    var x=codeList(a);
+    if(!x) return "<h1>Unknown code</h1>";
+    return '<p class="small muted" id="crumb"><a href="#/codes">Codes</a> › '+E(x.cb.title)+"</p><h1>"+E(x.c.label)+"</h1>"+
+      (x.c.def?'<div class="defbox">'+E(x.c.def)+"</div>":"")+
+      '<p class="lede">'+PL(x.list.length,"passage","passages")+" in "+
+        PL(Object.keys(x.r.s).length,"source","sources")+
+        (x.list.length?". Narrow them on the left — those counts are within this code.":"")+"</p>"+
+      (x.list.length?'<div id="browse"></div>':'<p class="muted">No passages carry this code yet.</p>');
+  };
+  V.code.mount=function(a){
+    var x=codeList(a); if(!x||!x.list.length) return;
+    // This code's own scheme is left out: every passage here carries it, so the
+    // section would hold one row reading what the heading already says.
+    UPCB.browse(document.getElementById("browse"),x.list,{omit:[x.cb.slug]});
   };
   V.sources=function(){
     var rows=D.sources.slice().sort(function(a,b){return String(a.k).localeCompare(String(b.k));});
@@ -1160,8 +1500,8 @@ const CLIENT_ONE = String.raw`
     var mine=passagesOf[s.i]||[];
     var bits=[s.a,s.y?String(s.y):"",s.c].filter(Boolean).join(" · ");
     var reading="";
-    if(D.withText&&D.texts[s.i]){
-      var text=D.texts[s.i], marks=[];
+    if(D.withText&&textOf(s.i)){
+      var text=textOf(s.i), marks=[];
       mine.forEach(function(p){ if(!p.q)return; var i=text.indexOf(p.q);
         if(i>=0) marks.push({a:i,b:i+p.q.length,id:p.id,bad:p.b==="failed"}); });
       marks.sort(function(x,y){return x.a-y.a;});
@@ -1182,57 +1522,98 @@ const CLIENT_ONE = String.raw`
       (reading?'<h2>The text this was checked against</h2><p class="small muted">Extracted from the PDF. Highlighted spans are the passages above.</p>'+reading:"");
   };
   V.passages=function(){
-    return "<h1>Passages</h1><p class=\"lede\">Every coded passage in the corpus. Search the words, or narrow by code.</p>"+
-      '<div class="filters sans small"><input type="search" data-q placeholder="Search every passage…" style="min-width:22rem">'+
-      D.codebooks.map(function(b){
-        var opts=b.codes.filter(function(x){return codeIndex[b.slug+":"+x.code];});
-        return opts.length?'<select data-filter="code"><option value="">Any '+E(b.title.toLowerCase())+"</option>"+
-          opts.map(function(x){return '<option value="'+E(b.slug+":"+x.code)+'">'+E(x.label)+"</option>";}).join("")+"</select>":"";
-      }).join("")+
-      '<span class="muted" data-count data-one="passage shown" data-many="passages shown"></span>'+
-      '<button class="btn" data-export>Download CSV</button></div>'+
-      D.passages.map(function(p){return passageCard(p,{context:false,terse:true});}).join("");
+    return "<h1>Passages</h1><p class=\"lede\">Every coded passage in the corpus — "+
+      PL(D.passages.length,"passage","passages")+" from "+PL(D.sources.length,"paper","papers")+
+      ". Tick codes on the left to narrow the list. Ticks inside one scheme widen the set; "+
+      "ticks across two schemes narrow it, so <em>MLP</em> plus <em>Power</em> shows only passages carrying both.</p>"+
+      '<div id="browse"></div>';
   };
-  V.overviews=function(){
+  V.passages.mount=function(){
+    UPCB.browse(document.getElementById("browse"),D.passages,{});
+  };
+
+  // ---- overviews: a list that never goes away, and the review beside it ----
+
+  function ovGroups(){
     var groups={},order=[];
     D.overviews.forEach(function(o){ var k=o.grp||"";
       if(!groups[k]){groups[k]=[];order.push(k);} groups[k].push(o); });
     order.sort(function(a,b){ return (a?0:1)-(b?0:1) || groups[b].length-groups[a].length; });
-    return "<h1>Overviews</h1><p class=\"lede\">"+PL(D.overviews.length,"short review","short reviews")+
-      " of what this literature says, one per theme, written from the coded passages. Every quotation links back to "+
-      "the passage it came from. <strong>Start here</strong> if you want the lay of the land.</p>"+
-      order.map(function(k){
-        var cb=bySlug[k];
-        return "<h2>"+E(cb?cb.title:"Other overviews")+"</h2>"+
-          (cb&&cb.question?'<p class="small muted">'+E(cb.question)+"</p>":"")+
-          '<ul class="plain">'+groups[k].map(function(o){
-            return '<li><a href="#/overview/'+encodeURIComponent(o.id)+'">'+E(o.t)+"</a>"+
-              '<span class="small muted"> — '+PL(o.cl.length,"claim","claims")+"</span></li>";
-          }).join("")+"</ul>";
-      }).join("");
-  };
-  V.overview=function(a){
-    var o=null; D.overviews.forEach(function(x){ if(x.id===a[0]) o=x; });
-    if(!o) return "<h1>Unknown overview</h1>";
+    return {groups:groups,order:order};
+  }
+  function overviewBody(id){
+    var o=null; D.overviews.forEach(function(x){ if(x.id===id) o=x; });
+    if(!o) return '<div class="card" style="max-width:74ch"><p>'+
+      "Pick a review on the left. There "+(D.overviews.length===1?"is one":"are "+D.overviews.length)+
+      ", one per theme, each written only from passages in this corpus and each 400–700 words. "+
+      "The list stays where it is while you read, so you can work down a scheme in one sitting.</p>"+
+      '<p class="small muted">Every quotation in a review links to the passage it came from, and every '+
+      "citation to the paper. A review is written by a model from coded passages: the quotations in it "+
+      "were checked character by character, the sentences around them were not.</p></div>";
     var html=E(o.md)
-      .replace(/&quot;([^&]*?)&quot;\s*\[(ext-[0-9a-f]{12})\]/g,function(m,q,id){
-        var p=byId[id]; if(!p) return m;
+      .replace(/&quot;([^&]*?)&quot;\s*\[(ext-[0-9a-f]{12})\]/g,function(m,q,id2){
+        var p=byId[id2]; if(!p) return m;
         var ok=p.b.indexOf("verified")===0;
-        return '<a href="#/source/'+p.s+"?ex="+encodeURIComponent(id)+'">“'+q+'”</a> <span class="small">'+
+        return '<a href="#/source/'+p.s+"?ex="+encodeURIComponent(id2)+'">“'+q+'”</a> <span class="small">'+
           (ok?"✓":"⚠")+" "+E((D.sources[p.s]||{}).k||"")+"</span>";})
-      .replace(/\[(ext-[0-9a-f]{12})\]/g,function(m,id){
-        var p=byId[id]; if(!p) return m;
-        return '<a class="small" href="#/source/'+p.s+"?ex="+encodeURIComponent(id)+'">'+E((D.sources[p.s]||{}).k||"")+"</a>";})
+      .replace(/\[(ext-[0-9a-f]{12})\]/g,function(m,id2){
+        var p=byId[id2]; if(!p) return m;
+        return '<a class="small" href="#/source/'+p.s+"?ex="+encodeURIComponent(id2)+'">'+E((D.sources[p.s]||{}).k||"")+"</a>";})
       .replace(/^#{1,6}\s*(.+)$/gm,function(m,t){return "<h2>"+t+"</h2>";})
       .replace(/\n{2,}/g,"\n<p></p>\n");
-    return '<p class="small muted" id="crumb"><a href="#/overviews">Overviews</a></p><h1>'+E(o.t)+"</h1>"+
+    return "<h1 style=\"margin-top:0\">"+E(o.t)+"</h1>"+
       '<div class="card" style="max-width:74ch">'+html+"</div>"+
       (o.cl.length?"<h2>What this says, and what backs it</h2><div class=\"wrap\"><table><thead><tr><th>Claim</th>"+
         "<th>Passages</th></tr></thead><tbody>"+o.cl.map(function(c){
-          return "<tr><td>"+E(c[0])+"</td><td>"+c[1].map(function(id){ var p=byId[id];
-            return p?'<a href="#/source/'+p.s+"?ex="+encodeURIComponent(id)+'">'+E((D.sources[p.s]||{}).k||"")+"</a>":E(id);
+          return "<tr><td>"+E(c[0])+"</td><td>"+c[1].map(function(id2){ var p=byId[id2];
+            return p?'<a href="#/source/'+p.s+"?ex="+encodeURIComponent(id2)+'">'+E((D.sources[p.s]||{}).k||"")+"</a>":E(id2);
           }).join("; ")+"</td></tr>";}).join("")+"</tbody></table></div>":"");
+  }
+  function markOverview(id){
+    [].slice.call(document.querySelectorAll("#ov-side a[data-ov]")).forEach(function(a){
+      var on=a.getAttribute("data-ov")===id;
+      a.className=on?"on":"";
+      if(on){ var d=a.parentNode; while(d&&d.tagName!=="DETAILS") d=d.parentNode;
+        if(d) d.open=true; UPCB.reveal(document.getElementById("ov-side"),a); }
+    });
+  }
+  V.overviews=function(a){
+    var sel=(a&&a[0])||"", g=ovGroups();
+    return "<h1>Overviews</h1><p class=\"lede\">"+PL(D.overviews.length,"short review","short reviews")+
+      " of what this literature says, one per theme, written from the coded passages. "+
+      "<strong>Start here</strong> if you want the lay of the land.</p>"+
+      '<div class="split" id="ov-split"><aside class="side" id="ov-side">'+
+      '<input type="search" class="sidesearch" id="ovq" placeholder="Filter these reviews…">'+
+      g.order.map(function(k){
+        var cb=bySlug[k], items=g.groups[k];
+        return '<details open data-ovg="'+E(k)+'"><summary>'+E(cb?cb.title:"Other overviews")+
+          '<span class="n">'+items.length+"</span></summary>"+
+          (cb&&cb.question?'<p class="small muted" style="margin:.1rem 0 .3rem">'+E(cb.question)+"</p>":"")+
+          '<ul class="ovlist">'+items.map(function(o){
+            return '<li><a data-ov="'+E(o.id)+'" class="'+(o.id===sel?"on":"")+'" href="#/overviews/'+
+              encodeURIComponent(o.id)+'">'+E(o.t)+"</a></li>";
+          }).join("")+"</ul></details>";
+      }).join("")+
+      '</aside><section class="pane" id="ov-pane">'+overviewBody(sel)+"</section></div>";
   };
+  V.overviews.mount=function(a){
+    markOverview((a&&a[0])||"");
+    var q=document.getElementById("ovq"); if(!q) return;
+    q.addEventListener("input",function(){
+      var t=q.value.toLowerCase().trim();
+      [].slice.call(document.querySelectorAll("#ov-side details[data-ovg]")).forEach(function(d){
+        var any=0;
+        [].slice.call(d.querySelectorAll("li")).forEach(function(li){
+          var ok=!t||li.textContent.toLowerCase().indexOf(t)>=0;
+          li.hidden=!ok; if(ok) any++;
+        });
+        d.hidden=!any; if(t&&any) d.open=true;
+      });
+    });
+  };
+  // Deep links written before the two-pane layout said #/overview/<id>.
+  V.overview=function(a){ return V.overviews(a); };
+  V.overview.mount=V.overviews.mount;
   V.matrix=function(){
     if(!D.matrix) return "<h1>No matrix configured</h1>";
     var A=bySlug[D.matrix[0]],B=bySlug[D.matrix[1]];
@@ -1303,21 +1684,38 @@ const CLIENT_ONE = String.raw`
   if(D.overviews.length) NAV.push(["#/overviews","Overviews","overviews"]);
   if(D.matrix) NAV.push(["#/matrix","Matrix","matrix"]);
 
+  var lastView="";
   function route(){
     var h=(location.hash||"#/").replace(/^#/,"");
     var qi=h.indexOf("?"), qs=""; if(qi>=0){qs=h.slice(qi+1); h=h.slice(0,qi);}
     var parts=h.split("/").filter(Boolean).map(decodeURIComponent);
     var view=parts.shift()||"home";
     var fn=V[view]||V.home;
+
+    // Moving between overviews swaps only the reading pane. Re-rendering the
+    // whole view would rebuild the list too, losing its scroll position, its
+    // open sections and whatever the reader had typed into its filter — which
+    // is the one thing this layout exists to prevent.
+    if((view==="overviews"||view==="overview")&&(lastView==="overviews"||lastView==="overview")
+       &&document.getElementById("ov-split")){
+      document.getElementById("ov-pane").innerHTML=overviewBody(parts[0]||"");
+      markOverview(parts[0]||"");
+      lastView=view; window.scrollTo(0,0);
+      return;
+    }
+
     if(D.failures){
       app.innerHTML='<div class="banner"><strong>'+PL(D.failures,"quotation does","quotations do")+
         " not match the source.</strong> They are shown with a warning wherever they appear.</div>";
     } else { app.innerHTML=""; }
     app.innerHTML+=fn(parts,qs);
+    var navKey=view==="overview"?"overviews":view==="code"?"codes":view==="source"?"sources":view;
     document.getElementById("nav").innerHTML=NAV.map(function(n){
-      return '<a class="'+(n[2]===view||(view==="home"&&n[2]==="home")?"on":"")+'" href="'+n[0]+'">'+n[1]+"</a>";
+      return '<a class="'+(n[2]===navKey?"on":"")+'" href="'+n[0]+'">'+n[1]+"</a>";
     }).join("");
     wire();
+    if(fn.mount) fn.mount(parts,qs);
+    lastView=view;
     window.scrollTo(0,0);
     var m=/(?:^|&)ex=([^&]+)/.exec(qs);
     if(m){
@@ -1353,22 +1751,49 @@ const CLIENT_ONE = String.raw`
  * context and every overview — about a fifth of the size, and still the thing
  * most readers came for.
  */
-export function writeSingleFile(root, opts = {}) {
-  const loaded = U.loadCorpus(root);
-  const model = buildSiteModel(loaded, opts);
-  const withText = opts.withText !== false;
-
-  // Compact payload. Context is recomputed from the text at render time rather
-  // than stored twice, and keys are short because they repeat 3,000 times.
+/**
+ * The compact record the browse engine reads, built once and used by both
+ * shapes of the site so a passage cannot look like one thing in the file and
+ * another in the folder. Context is recomputed from the text at render time
+ * rather than stored twice, and the keys are one letter because they repeat
+ * once per passage — three thousand times in a real corpus.
+ */
+function browsePayload(model) {
   const srcIndex = new Map();
   const sources = model.sources.map((s, i) => {
     srcIndex.set(s.id, i);
     return {
-      i, t: s.title, a: s.authors, y: s.year, d: s.doi, c: s.container, k: s.cite,
+      i, t: s.title, a: s.authors, y: s.year, d: s.doi, c: s.container, k: s.cite, sl: s.slug,
       p: s.pdfRep ? path.basename(s.pdfRep.path) : "",
       g: s.codings.map((c) => [c.codebook_slug, c.code != null ? c.code : c.value, c.coder, c.confidence, c.rationale || ""]),
     };
   });
+  const passages = model.passages.map((p) => ({
+    id: p.id,
+    s: srcIndex.has(p.source_id) ? srcIndex.get(p.source_id) : -1,
+    q: p.quote,
+    n: p.note,
+    b: p.badge,
+    st: p.status === "active" ? "" : p.status,
+    l: p.line_range ? p.line_range.start : 0,
+    pg: p.page || 0,
+    x: p.before, y: p.after, act: p.badge === "failed" ? p.actual : null,
+    g: p.codings.map((c) => [c.codebook_slug, c.code != null ? c.code : c.value, c.coder, c.confidence, c.rationale || ""]),
+    dis: p.disagreements.length ? 1 : 0,
+  }));
+  const codebooks = model.codebooks.map((cb) => ({
+    slug: cb.slug, title: cb.title, question: cb.question || "",
+    unit: cb.unit || "passage",
+    codes: (cb.codes || []).map((c) => ({ code: c.code, label: c.label || c.code, def: c.definition || "" })),
+  }));
+  return { srcIndex, sources, passages, codebooks };
+}
+
+export function writeSingleFile(root, opts = {}) {
+  const loaded = U.loadCorpus(root);
+  const model = buildSiteModel(loaded, opts);
+  const withText = opts.withText !== false;
+  const { sources, passages, codebooks } = browsePayload(model);
 
   const texts = [];
   if (withText) {
@@ -1384,28 +1809,6 @@ export function writeSingleFile(root, opts = {}) {
       texts.push(body);
     }
   }
-
-  const passages = model.passages.map((p) => ({
-    id: p.id,
-    s: srcIndex.has(p.source_id) ? srcIndex.get(p.source_id) : -1,
-    q: p.quote,
-    n: p.note,
-    b: p.badge,
-    st: p.status === "active" ? "" : p.status,
-    l: p.line_range ? p.line_range.start : 0,
-    pg: p.page || 0,
-    // Offsets let the reader show the passage in place without storing context twice.
-    o: (p.actual != null && p.quote) ? [p.beforeLen || 0, 0] : null,
-    x: p.before, y: p.after, act: p.badge === "failed" ? p.actual : null,
-    g: p.codings.map((c) => [c.codebook_slug, c.code != null ? c.code : c.value, c.coder, c.confidence, c.rationale || ""]),
-    dis: p.disagreements.length ? 1 : 0,
-  }));
-
-  const codebooks = model.codebooks.map((cb) => ({
-    slug: cb.slug, title: cb.title, question: cb.question || "",
-    unit: cb.unit || "passage",
-    codes: (cb.codes || []).map((c) => ({ code: c.code, label: c.label || c.code, def: c.definition || "" })),
-  }));
 
   const overviews = model.syntheses.map((syn) => {
     let body = "";
@@ -1431,8 +1834,16 @@ export function writeSingleFile(root, opts = {}) {
     failures: model.failures,
     withText,
     badges: BADGE_TEXT,
-    sources, texts, passages, codebooks, overviews,
+    sources, passages, codebooks, overviews,
   };
+
+  // Each reading copy gets its own island, parsed only when its paper is opened.
+  // They are four fifths of this file; parsing all of them into one object before
+  // the first paint cost seconds and a large heap for a reader who may never open
+  // a paper at all. `<` is escaped, so no copy can close the tag that holds it.
+  const textIslands = texts.map((t, i) => (t
+    ? `<script type="application/json" id="upc-t${i}">${j(t)}</script>`
+    : "")).join("\n");
 
   const html = `<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
@@ -1459,6 +1870,8 @@ nav a{cursor:pointer}
 <script type="application/json" id="upc-data">${
     JSON.stringify(payload).replace(/</g, "\\u003c")
   }</script>
+${textIslands}
+<script>${BROWSE_JS}</script>
 <script>${CLIENT_ONE}</script>
 </body></html>
 `;

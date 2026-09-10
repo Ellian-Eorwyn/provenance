@@ -23,7 +23,7 @@ import { buildProvGraph } from "../skill/universal-provenance/scripts/prov.mjs";
 import { buildVaultPlan, writeVault, loadProfile, renderCallout, serializeFrontmatter,
   stripBoilerplate, yamlScalar } from "../skill/universal-provenance/scripts/obsidian.mjs";
 import { validateCorpus, anchorCmd, codeCmd, codebookCmd, batchCmd, mintBatchCmd, locateCmd, satisfiesRequirement, specVersion, addSourceCmd, addSynthesisCmd } from "../skill/universal-provenance/scripts/upc.mjs";
-import { buildSiteModel } from "../skill/universal-provenance/scripts/site.mjs";
+import { buildSiteModel, writeSite, writeSingleFile } from "../skill/universal-provenance/scripts/site.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
@@ -1433,6 +1433,32 @@ ok("filename rejects reserved", !checkFilename("sources/con/x.md").ok);
   ok("add synthesis: it lands where loadCorpus looks",
      fs.existsSync(path.join(dir, "syntheses", okSyn.synthesis_id, "synthesis.json")));
 
+  // The overviews list is the navigation, so it is on the page beside whatever
+  // is being read — not replaced by it. Both shapes have to do this.
+  {
+    clearRepCache();
+    const out = fs.mkdtempSync(path.join(os.tmpdir(), "upc-ov-"));
+    writeSite(dir, { out });
+    const idx = fs.readFileSync(path.join(out, "overviews", "index.html"), "utf8");
+    const one = fs.readFileSync(path.join(out, "overviews", okSyn.synthesis_id + ".html"), "utf8");
+    ok("overviews: the index is a list beside a pane", /class="split"/.test(idx) && /id="ov-side"/.test(idx));
+    ok("overviews: reading one keeps the whole list on the page",
+       /id="ov-side"/.test(one) && one.includes(okSyn.synthesis_id + ".html"));
+    ok("overviews: the one being read is marked in that list", /<a class="on"/.test(one));
+    ok("overviews: the list can be filtered without leaving the page", /data-sidefilter/.test(one));
+
+    clearRepCache();
+    const file = path.join(out, "one.html");
+    writeSingleFile(dir, { out: file });
+    const html = fs.readFileSync(file, "utf8");
+    ok("one file: reading copies are parsed on demand, not all at once",
+       /id="upc-t0"/.test(html) && !/"texts":/.test(html));
+    ok("one file: moving between overviews swaps the pane, not the list",
+       /ov-pane"\)\.innerHTML=overviewBody/.test(html));
+    ok("one file: it carries the same browse engine as the folder", /window\.UPCB=API/.test(html));
+    fs.rmSync(out, { recursive: true, force: true });
+  }
+
   // Rule 2.4: prose that never names its source is caught before writing.
   const uncited = path.join(stage, "uncited.md");
   fs.writeFileSync(uncited, `# Overview\n\nAs it says, "The regime resists change." [${eid}].\n`);
@@ -1485,6 +1511,43 @@ ok("filename rejects reserved", !checkFilename("sources/con/x.md").ok);
 
   fs.rmSync(dir, { recursive: true, force: true });
   fs.rmSync(stage, { recursive: true, force: true });
+}
+
+// --- corpus.json is an index, not the register of what exists ---
+//
+// Reading the sources index *instead of* scanning made it self-perpetuating: a
+// source directory written by anything else could never be found, `regen` kept
+// rebuilding the index from the same short list, and `validate` reported the new
+// source as an orphan no amount of regenerating could adopt. Found the day a
+// corrected paper was added to a finished 178-paper corpus.
+{
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "upc-index-"));
+  const stamp = { produced_by: { tool: "t", method: "import" }, created_at: "2026-01-01T00:00:00Z" };
+  const mk = (slug, url) => {
+    fs.mkdirSync(path.join(dir, "sources", slug), { recursive: true });
+    fs.writeFileSync(path.join(dir, "sources", slug, "source.json"), JSON.stringify({
+      source_id: mintSrcId({ canonicalUrl: url }), source_kind: "url", title: slug,
+      retrieval: { original_url: url, fetch_status: "success" },
+      representations: [], provenance: stamp,
+    }, null, 2));
+  };
+  mk("listed", "https://example.org/listed");
+  mk("only-on-disk", "https://example.org/orphan");
+  fs.writeFileSync(path.join(dir, "corpus.json"), JSON.stringify({
+    upc_spec_version: specVersion(), corpus_id: "cor-000000000009", title: "Index fixture",
+    sections: { sources: "sources/" },
+    // the index names one of the two
+    sources: [{ source_id: mintSrcId({ canonicalUrl: "https://example.org/listed" }),
+                path: "sources/listed/", title: "listed", primary_url: "", sha256: "" }],
+  }, null, 2));
+
+  const loaded = loadCorpus(dir);
+  eq("index: a source the index does not name is still found", loaded.sources.length, 2);
+  ok("index: the one it does name is not read twice",
+     new Set(loaded.sources.map((x) => x.dirRel)).size === 2);
+  eq("index: an indexed path keeps its directory, trailing slash trimmed",
+     loaded.sources.map((x) => x.dirRel).sort().join(","), "sources/listed,sources/only-on-disk");
+  fs.rmSync(dir, { recursive: true, force: true });
 }
 
 // --- the site projection: a library, and §09's code rules enforced by it ---
@@ -1566,6 +1629,43 @@ ok("filename rejects reserved", !checkFilename("sources/con/x.md").ok);
   ok("site: a summary is not a quotation", model.passages.some((x) => !x.quote && x.note && x.badge === "paraphrase"));
   eq("site: per-code counts separate passages from sources",
      model.codeIndex.get(`${cbk.codebook_id}:mlp`).sources.size, 1);
+
+  // --- what the two shapes of the site actually render ---
+  //
+  // The model tests above prove the data is right. These prove the pages built
+  // from it are: a reader who cannot filter, or whose list vanishes when they
+  // click, has a library they will not use.
+  {
+    const out = fs.mkdtempSync(path.join(os.tmpdir(), "upc-sitew-"));
+    const res = writeSite(dir, { out });
+    const read = (rel) => fs.readFileSync(path.join(out, rel), "utf8");
+    ok("site: the folder builds", res.status === "ok" && res.pages > 0);
+
+    const codeHtml = read(`codes/${cbk.slug}/mlp.html`);
+    ok("site: a code page mounts the browser rather than dumping every passage",
+       /data-browse/.test(codeHtml));
+    ok("site: a code page leaves out the scheme it is already filtered by",
+       /data-omit="theory"/.test(codeHtml) && /data-only="theory:mlp"/.test(codeHtml));
+    ok("site: a code page still renders its passages for a reader without scripts",
+       /<noscript>[\s\S]*blockquote/.test(codeHtml));
+    ok("site: only the browsing pages carry the passage data",
+       /data\/browse\.js/.test(codeHtml) && !/data\/browse\.js/.test(read("sources/" + slug + ".html")));
+
+    const browse = read("data/browse.js");
+    ok("site: the data island is a plain script, never a fetch", /^window\.__UPCB_DATA=/.test(browse));
+    ok("site: the island carries each source's page name so links resolve", /"sl":/.test(browse));
+
+    const passHtml = read("passages/index.html");
+    ok("site: the passages page ships a mount point, not three thousand articles",
+       /data-browse/.test(passHtml) && !/blockquote/.test(passHtml));
+
+    const js = read("assets/site.js");
+    ok("site: the browse engine ships with the page script", /window\.UPCB=API/.test(js));
+    ok("site: filtering reads the data, never the rendered DOM",
+       /p\._h\.indexOf/.test(js) && /content-visibility/.test(read("assets/site.css")));
+
+    fs.rmSync(out, { recursive: true, force: true });
+  }
 
   // A drifted locator must surface as a failure, and its code must inherit it.
   {

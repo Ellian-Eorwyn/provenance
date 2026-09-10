@@ -1024,32 +1024,42 @@ export function loadCorpus(root) {
     return r.records.map((obj) => ({ obj, from: relOrAbs, tag }));
   };
 
-  // --- Sources ---
+  // --- Sources: the index AND the declared directory, unioned ---
+  //
+  // The index in corpus.json is an ordering hint that `regen` maintains, not the
+  // authority on what exists: corpus.json is machine-owned and regenerable
+  // (spec/01), and the objects on disk are the truth. Reading the index
+  // *instead of* scanning made it self-perpetuating — once it held anything, a
+  // source directory written by any other tool could never be discovered, and
+  // `regen` rebuilt the index from the same short list it had just failed to
+  // extend, so `validate` reported the new source as an orphan that no amount of
+  // regenerating could adopt. The same rule governs syntheses below.
   const sources = [];
+  const seenSource = new Set();
   const sourcesDir = sections.sources || "sources/";
-  const pushSource = (dirRel, sjsonAbs) => {
+  const pushSource = (dirRelRaw, sjsonAbs) => {
+    const dirRel = String(dirRelRaw || "").replace(/\/+$/, "");
+    if (seenSource.has(dirRel)) return;
     if (fs.existsSync(sjsonAbs)) {
+      seenSource.add(dirRel);
       try { sources.push({ obj: readJSON(sjsonAbs), dirRel, file: sjsonAbs }); }
       catch (e) { diagnostics.push({ code: "schema_invalid", object: dirRel, detail: "source.json parse: " + e.message }); }
     } else {
       diagnostics.push({ code: "missing_source_json", object: dirRel, detail: sjsonAbs });
     }
   };
-  if (Array.isArray(corpus.sources) && corpus.sources.length) {
-    for (const entry of corpus.sources) {
-      const rel = entry.path;
-      const { abs, contained, symlinkEscape } = resolveInside(absRoot, rel);
-      if (!contained) { diagnostics.push({ code: symlinkEscape ? "symlink_escape" : "path_escape", object: entry.source_id || rel, detail: rel }); continue; }
-      // path may be a directory (canonical) or a source.json file (alt layout)
-      const isFile = fs.existsSync(abs) && fs.statSync(abs).isFile();
-      const sjson = isFile ? abs : path.join(abs, "source.json");
-      const dirRel = (isFile ? path.dirname(rel) : rel).replace(/\/+$/, "");
-      pushSource(dirRel, sjson);
-    }
-  } else {
+  for (const entry of (Array.isArray(corpus.sources) ? corpus.sources : [])) {
+    const rel = entry.path;
+    const { abs, contained, symlinkEscape } = resolveInside(absRoot, rel);
+    if (!contained) { diagnostics.push({ code: symlinkEscape ? "symlink_escape" : "path_escape", object: entry.source_id || rel, detail: rel }); continue; }
+    // path may be a directory (canonical) or a source.json file (alt layout)
+    const isFile = fs.existsSync(abs) && fs.statSync(abs).isFile();
+    pushSource(isFile ? path.dirname(rel) : rel, isFile ? abs : path.join(abs, "source.json"));
+  }
+  {
     const { abs: base, contained } = resolveInside(absRoot, sourcesDir);
-    if (contained && fs.existsSync(base)) {
-      for (const name of fs.readdirSync(base)) {
+    if (contained && fs.existsSync(base) && fs.statSync(base).isDirectory()) {
+      for (const name of fs.readdirSync(base).sort()) {
         const sjson = path.join(base, name, "source.json");
         if (fs.existsSync(sjson)) pushSource(path.join(sourcesDir, name).replace(/\\/g, "/"), sjson);
       }

@@ -62,7 +62,7 @@ function findSpecDirs() {
 
 // The VERSION file at the spec root is the single source of truth for the spec
 // version; the fallback exists only so a detached scripts/ copy still reports.
-const FALLBACK_SPEC_VERSION = "1.8.0";
+const FALLBACK_SPEC_VERSION = "1.10.0";
 function specVersion() {
   try {
     const { specRoot } = findSpecDirs();

@@ -3,6 +3,50 @@
 All notable changes to the Universal Provenance Corpus (UPC) standard.
 Versioning is semantic (§00 Versioning policy).
 
+## 1.10.0 — 2026-09-10
+
+**Backward-compatible (additive) minor release: the library becomes browsable.**
+No schema, vocabulary, id recipe or gate changed; schema `$id`s stay at `1.8.0`.
+
+### Fixed — a source the index did not name could never be adopted
+
+`loadCorpus` read `corpus.sources` **instead of** scanning the sources directory,
+which made the index self-perpetuating: a source written by any other tool was
+invisible, `regen` rebuilt the index from the same short list it had just failed
+to extend, and `validate` then reported the new directory as an orphan
+(`manifest_source_unlisted`) that no amount of regenerating could fix. The index
+and the directory are now unioned, exactly as syntheses have been since 1.9.0 —
+corpus.json is machine-owned and regenerable (§01), so the objects on disk are
+the truth and the index is only an ordering hint. Found by adding one corrected
+paper to a finished 178-paper corpus.
+
+### Changed — how a reader narrows three thousand passages
+
+Both shapes of `upc export --format site` now browse the same way, from one
+shared engine:
+
+- **A sidebar of checkable codes** replaces the row of dropdowns. Ticks inside
+  one scheme widen the set, ticks across two narrow it, and each code's count is
+  computed *ignoring its own scheme's ticks* — otherwise every unchecked sibling
+  reads zero and the reader cannot see what else is there. The scheme covering
+  most of the list is first and open.
+- **The list is built as it is scrolled**, thirty at a time. Filtering runs over
+  the data; the previous page walked every rendered article and read its
+  `textContent` on each keystroke. Measured on 3,239 passages: the page now
+  builds 60 cards and ~1,100 DOM nodes instead of 3,239 and ~40,000, and a filter
+  applies in 2–9 ms.
+- **Counts and exports cover the whole filtered set**, never what happens to be
+  rendered, and printing draws everything that matches first.
+- **Overviews are a list beside a reading pane.** Picking one swaps the pane
+  only: the list keeps its scroll position, its open sections and its filter.
+- Code pages use the same sidebar, minus the scheme they are already filtered by.
+
+### Changed — the one-file export starts faster
+
+Reading copies now ride in their own JSON islands, parsed when a paper is opened
+rather than all at once with the rest of the payload. On the 178-paper corpus
+that is 17 MB of the 21 that no longer has to be parsed to show the first page.
+
 ## 1.9.0 — 2026-09-09
 
 **Backward-compatible (additive) minor release: the library as one file.** No

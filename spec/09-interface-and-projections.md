@@ -262,6 +262,12 @@ Normative requirements, in addition to everything the browser must already do:
 6. A two-codebook matrix, where offered, counts **passages carrying both codes**
    and MUST say so. A cell with no passages shows nothing, not a zero dressed up
    as a finding.
+7. A projection MAY render only part of a long list at a time. If it does, every
+   count it displays and every export it offers MUST cover the whole filtered
+   set, and printing MUST include all of it. A number that silently means "the
+   first sixty" is the same failure as a count that does not state its unit, and
+   a spreadsheet that quietly stops where the reader stopped scrolling is worse:
+   it looks complete.
 
 ### The Obsidian vault export
 
