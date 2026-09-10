@@ -1058,6 +1058,10 @@ const CLIENT_ONE = String.raw`
       if(bad&&p.act) body+='<p class="small" style="color:var(--warn)">The source now reads: “'+E(p.act.slice(0,240))+'”</p>';
     } else { body='<p class="note">'+E(p.n)+"</p>"; }
     var where=[p.l?"line "+p.l:""].filter(Boolean).join(" · ");
+    var pdfLink=(D.files&&s.p&&p.pg)
+      ? ' <a class="muted" href="'+D.files+"/"+encodeURI(s.p)+"#page="+p.pg+'" target="_blank" rel="noopener"'+
+        ' title="Open the original PDF at this page">page '+p.pg+" ↗</a>"
+      : (p.pg?' <span class="muted">page '+p.pg+"</span>":"");
     return '<article class="passage'+(bad?" bad":"")+'" id="'+E(p.id)+'" data-row'+
       ' data-code="'+E(p.g.map(function(g){return g[0]+":"+g[1];}).join("|"))+'"'+
       ' data-coder="'+E(p.g.map(function(g){return g[2];}).join("|"))+'"'+
@@ -1069,7 +1073,8 @@ const CLIENT_ONE = String.raw`
       (p.st?'<span class="badge plain">'+E(p.st)+"</span>":"")+
       p.g.map(function(g){return chip(g,!!opts.terse);}).join(" ")+
       '<span class="spacer"></span><a class="muted" href="#/source/'+p.s+"?ex="+encodeURIComponent(p.id)+'">'+
-      (opts.showSource===false?E(where||"in context"):E(s.k||"")+(where?" · "+E(where):""))+" →</a></div></article>";
+      (opts.showSource===false?E(where||"in context"):E(s.k||"")+(where?" · "+E(where):""))+" →</a>"+pdfLink+
+      "</div></article>";
   }
 
   // ---- views ----
@@ -1168,7 +1173,8 @@ const CLIENT_ONE = String.raw`
       reading='<div class="reading" id="reading">'+out.split(/\n{2,}/).map(function(x){return "<p>"+x+"</p>";}).join("")+"</div>";
     }
     return '<p class="small muted" id="crumb"><a href="#/sources">Sources</a></p><h1>'+E(s.t)+"</h1>"+
-      '<p class="lede">'+E(bits)+(s.d?' · <a href="https://doi.org/'+encodeURIComponent(s.d)+'">doi:'+E(s.d)+"</a>":"")+"</p>"+
+      '<p class="lede">'+E(bits)+(s.d?' · <a href="https://doi.org/'+encodeURIComponent(s.d)+'">doi:'+E(s.d)+"</a>":"")+
+        ((D.files&&s.p)?' · <a href="'+D.files+"/"+encodeURI(s.p)+'" target="_blank" rel="noopener">open the PDF ↗</a>':"")+"</p>"+
       (s.g.length?'<div class="card"><div class="small muted">Judgements about this paper as a whole</div>'+
         '<div class="meta" style="margin-top:.4rem">'+s.g.map(function(g){return chip(g);}).join(" ")+"</div></div>":"")+
       "<h2>Passages ("+mine.length+")</h2>"+
@@ -1387,6 +1393,7 @@ export function writeSingleFile(root, opts = {}) {
     b: p.badge,
     st: p.status === "active" ? "" : p.status,
     l: p.line_range ? p.line_range.start : 0,
+    pg: p.page || 0,
     // Offsets let the reader show the passage in place without storing context twice.
     o: (p.actual != null && p.quote) ? [p.beforeLen || 0, 0] : null,
     x: p.before, y: p.after, act: p.badge === "failed" ? p.actual : null,
@@ -1417,6 +1424,7 @@ export function writeSingleFile(root, opts = {}) {
   });
 
   const payload = {
+    files: opts.files || null,   // relative folder holding the PDFs, when bundled
     title: model.title,
     spec: model.specVersion || "",
     matrix: model.matrix || null,
@@ -1458,8 +1466,30 @@ nav a{cursor:pointer}
   const out = path.resolve(opts.out || path.join(root, "corpus.html"));
   fs.mkdirSync(path.dirname(out), { recursive: true });
   U.atomicWriteFile(out, html);
+
+  // The PDFs cannot go inside the file — 343 MB of them base64s to well over
+  // twice that — so `--bundle` puts them in a folder beside it, named after the
+  // file, and the page links resolve into it. The HTML still opens on its own;
+  // without the folder it simply does not offer the PDF.
+  let copied = 0;
+  if (opts.files) {
+    const dir = path.join(path.dirname(out), opts.files);
+    fs.mkdirSync(dir, { recursive: true });
+    for (const s of model.sources) {
+      if (!s.pdfRep) continue;
+      const entry = (loaded.representations || []).find((r) => r.obj.representation_id === s.pdfRep.representation_id);
+      if (!entry || !entry.contained || !fs.existsSync(entry.abs)) continue;
+      const dest = path.join(dir, path.basename(s.pdfRep.path));
+      if (!fs.existsSync(dest) || fs.statSync(dest).size !== fs.statSync(entry.abs).size) {
+        fs.copyFileSync(entry.abs, dest);
+      }
+      copied++;
+    }
+  }
+
   return {
     status: "ok", out, bytes: Buffer.byteLength(html, "utf8"),
+    pdfs_bundled: copied, files_dir: opts.files || null,
     counts: {
       sources: sources.length,
       passages: passages.filter((p) => p.q).length,

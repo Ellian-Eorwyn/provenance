@@ -8,6 +8,17 @@ Versioning is semantic (§00 Versioning policy).
 **Backward-compatible (additive) minor release: the library as one file.** No
 schema, vocabulary, id recipe or gate changed; schema `$id`s stay at `1.8.0`.
 
+### Added — the PDFs, and a page number to open them at
+
+- `--format site-one --bundle` copies the original PDFs into a folder beside the
+  file and links **every passage to its own page** in them. They cannot go inside
+  the file: 343 MB of PDFs base64s to well over twice that. The file still opens
+  without the folder; it simply does not offer the PDF.
+- The page comes from a `secondary_locators` entry of type `page`, which is
+  advisory and excluded from the `ext-` identity recipe — so recording one
+  re-mints nothing and cannot affect whether a quotation verifies. A page is
+  navigation, never evidence.
+
 ### Added — `upc export --format site-one`
 
 - The same library as **one self-contained HTML file**: stylesheet, data, every

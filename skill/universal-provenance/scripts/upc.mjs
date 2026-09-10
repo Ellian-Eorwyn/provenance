@@ -2046,15 +2046,19 @@ async function main() {
         // export had two options; with --into/--strip/--profile it would happily
         // read a flag's argument as the corpus directory.
         const VALUE_FLAGS = new Set(["--format", "-o", "--into", "--profile", "--strip",
-          "--frontmatter", "--filenames", "--image-names", "--domain", "--matrix"]);
+          "--frontmatter", "--filenames", "--image-names", "--domain", "--matrix", "--files"]);
         const dir = rest.find((a, i) => !a.startsWith("-") && !(i > 0 && VALUE_FLAGS.has(rest[i - 1])));
         const format = arg(rest, "--format");
         const out = arg(rest, "-o");
         if (!dir || !format) { process.stderr.write("usage: upc export <dir> --format bibtex|ris|csl-json|jsonl|markdown|ro-crate|prov|obsidian|site|site-one [-o <dir|file>] [--copy] [--bundle] [--single-file] [--no-text] [--matrix <a>:<b>]\n"); process.exit(2); }
         if (format === "site-one" || (format === "site" && rest.includes("--single-file"))) {
           const mx = arg(rest, "--matrix");
+          const filesArg = arg(rest, "--files");
           print(writeSingleFile(dir, {
             out, matrix: mx ? mx.split(":") : null, withText: !rest.includes("--no-text"),
+            // --bundle puts the PDFs in a folder named after the file
+            files: filesArg || (rest.includes("--bundle")
+              ? path.basename(out || "corpus.html").replace(/\.html?$/i, "") + "_files" : null),
           }));
           break;
         }
