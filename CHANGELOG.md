@@ -3,6 +3,27 @@
 All notable changes to the Universal Provenance Corpus (UPC) standard.
 Versioning is semantic (§00 Versioning policy).
 
+## 1.8.1 — 2026-09-09
+
+**Patch release: three bugs that only a real corpus could surface.** No schema,
+vocabulary, id recipe or gate changed; schema `$id`s stay at `1.8.0`.
+
+- **Large reports were silently truncated when piped.** Every command that printed
+  a report and then called `process.exit()` discarded whatever stdout had not yet
+  drained — 64 KB on a pipe. A 923 KB validation report for a 178-source corpus
+  arrived cut in half and parsed as nothing. The Obsidian export already
+  documented this hazard and set `process.exitCode`; every other command now does
+  the same.
+- **The synthesis index was self-perpetuating.** `loadCorpus` read corpus.json's
+  `syntheses` index *instead of* scanning the declared directory, so once the
+  index held anything, a synthesis written later could never be discovered — and
+  `regen` rebuilt the index from the same short list it had just failed to extend.
+  The index is an ordering hint, not the authority on what exists.
+- **`upc add synthesis` checked sources but not passages.** Rule 2.4 requires the
+  output to cite every id its claims depend on; the guard covered only the source
+  ids, so prose whose claim cited a passage it never marked was written and then
+  failed validation.
+
 ## 1.8.0 — 2026-09-09
 
 **Backward-compatible (additive) minor release: getting documents in, and getting
