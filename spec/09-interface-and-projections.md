@@ -259,6 +259,17 @@ Normative requirements, in addition to everything the browser must already do:
    without its coder, a disagreement is displayed rather than resolved, a code on
    a failing span is marked as detached, a definition is at most one interaction
    away, and every count states its unit.
+
+   One relaxation, for this audience only: the site MAY carry a code's coder one
+   interaction away — in the chip's tooltip, with its confidence and rationale —
+   rather than printed beside every code, **provided every view that shows codes
+   states visibly what kind of coder made them** ("Codes were assigned by a
+   language model"). A reader of the literature needs to know that a code is a
+   model's judgement; the handle of the model that made it is noise to them, and
+   repeated on every chip it buries the codes it annotates. The guarantee the rule
+   exists for — a judgement never passes for a fact — survives; only its
+   placement moves. The verification browser (`index.html`) keeps the coder
+   printed.
 6. A two-codebook matrix, where offered, counts **passages carrying both codes**
    and MUST say so. A cell with no passages shows nothing, not a zero dressed up
    as a finding.

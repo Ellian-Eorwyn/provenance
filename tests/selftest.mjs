@@ -23,7 +23,7 @@ import { buildProvGraph } from "../skill/universal-provenance/scripts/prov.mjs";
 import { buildVaultPlan, writeVault, loadProfile, renderCallout, serializeFrontmatter,
   stripBoilerplate, yamlScalar } from "../skill/universal-provenance/scripts/obsidian.mjs";
 import { validateCorpus, anchorCmd, codeCmd, codebookCmd, batchCmd, mintBatchCmd, locateCmd, satisfiesRequirement, specVersion, addSourceCmd, addSynthesisCmd } from "../skill/universal-provenance/scripts/upc.mjs";
-import { buildSiteModel, writeSite, writeSingleFile } from "../skill/universal-provenance/scripts/site.mjs";
+import { buildSiteModel, writeSite, writeSingleFile, renderOverviewMarkdown } from "../skill/universal-provenance/scripts/site.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
@@ -1446,6 +1446,8 @@ ok("filename rejects reserved", !checkFilename("sources/con/x.md").ok);
        /id="ov-side"/.test(one) && one.includes(okSyn.synthesis_id + ".html"));
     ok("overviews: the one being read is marked in that list", /<a class="on"/.test(one));
     ok("overviews: the list can be filtered without leaving the page", /data-sidefilter/.test(one));
+    ok("overviews: the folder renders the list of papers as a list", /<ul class="refs"><li>/.test(one));
+    ok("overviews: a bare source id becomes a link to its paper", /<ul class="refs"><li><a class="small" href="\.\.\/sources\//.test(one));
 
     clearRepCache();
     const file = path.join(out, "one.html");
@@ -1456,6 +1458,8 @@ ok("filename rejects reserved", !checkFilename("sources/con/x.md").ok);
     ok("one file: moving between overviews swaps the pane, not the list",
        /ov-pane"\)\.innerHTML=overviewBody/.test(html));
     ok("one file: it carries the same browse engine as the folder", /window\.UPCB=API/.test(html));
+    ok("one file: overviews arrive rendered by the same function as the folder",
+       html.includes('"h":"') && !html.includes('"md":') && html.includes('\\u003cul class=\\"refs\\">'));
     fs.rmSync(out, { recursive: true, force: true });
   }
 
@@ -1511,6 +1515,41 @@ ok("filename rejects reserved", !checkFilename("sources/con/x.md").ok);
 
   fs.rmSync(dir, { recursive: true, force: true });
   fs.rmSync(stage, { recursive: true, force: true });
+}
+
+// --- an overview's markdown, as a reader should see it ---
+//
+// Found on the live site: the list of papers each overview drew on rendered as
+// one run-on line, raw source ids in backticks, each paper's citation repeated
+// once per passage. The input below is the shape synthesize.py writes.
+{
+  const P = (id, src, citeText, slug) => [id, { id, source_id: src, cite: citeText, badge: "verified-to-transcript", source_slug: slug }];
+  const model = {
+    passageById: new Map([P("ext-aaaaaaaaaaaa", "src-111111111111", "Geels 2017", "s1"),
+                          P("ext-bbbbbbbbbbbb", "src-111111111111", "Geels 2017", "s1"),
+                          P("ext-cccccccccccc", "src-222222222222", "Mu 2026", "s2")]),
+    sourceById: new Map([["src-111111111111", { id: "src-111111111111", cite: "Geels 2017", slug: "s1" }],
+                         ["src-222222222222", { id: "src-222222222222", cite: "Mu 2026", slug: "s2" }]]),
+  };
+  const links = { passage: (p) => `P:${p.id}`, source: (x) => `S:${x.id}` };
+  const md = "Regimes resist change [ext-aaaaaaaaaaaa]. Both agree [ext-bbbbbbbbbbbb] [ext-cccccccccccc].\n" +
+             "*correction: [ext-23574d3b878]*\n\n## Passages this draws on\n\n" +
+             "- A paper about regimes · `src-111111111111` · [ext-aaaaaaaaaaaa] [ext-bbbbbbbbbbbb]\n" +
+             "- Another <b>paper</b> · `src-222222222222` · [ext-cccccccccccc]\n";
+  const html = renderOverviewMarkdown(md, model, links);
+  const items = html.match(/<li>[\s\S]*?<\/li>/g) || [];
+  ok("overview md: the papers it drew on are a real list", /<ul class="refs">/.test(html) && items.length === 2);
+  ok("overview md: no raw source id or backtick reaches the reader", !/`/.test(html) && !/>\s*src-/.test(html));
+  ok("overview md: each paper links to its page", items[0].includes('href="S:src-111111111111"') && items[1].includes('href="S:src-222222222222"'));
+  ok("overview md: a paper's passages are numbered links, not its citation repeated",
+     /passages<\/span> <a class="pn" href="P:ext-aaaaaaaaaaaa"[^>]*>1<\/a> <a class="pn" href="P:ext-bbbbbbbbbbbb"[^>]*>2<\/a>/.test(items[0]) &&
+     (items[0].match(/Geels 2017<\/a>/g) || []).length === 1);
+  ok("overview md: one passage says 'passage'", /passage<\/span> <a class="pn"/.test(items[1]));
+  ok("overview md: citations side by side in prose are separated", /Geels 2017<\/a>; <a class="small" href="P:ext-cccccccccccc">Mu 2026<\/a>/.test(html));
+  ok("overview md: italics render, and a malformed marker stays plain text", html.includes("<em>correction: [ext-23574d3b878]</em>"));
+  ok("overview md: markup in the text is escaped, never obeyed", html.includes("Another &lt;b&gt;paper&lt;/b&gt;") && !html.includes("<b>"));
+  ok("overview md: the heading is a heading", html.includes("<h2>Passages this draws on</h2>"));
+  eq("overview md: the prose is one paragraph", (html.match(/<p>/g) || []).length, 1);
 }
 
 // --- corpus.json is an index, not the register of what exists ---
@@ -1659,7 +1698,14 @@ ok("filename rejects reserved", !checkFilename("sources/con/x.md").ok);
     ok("site: the passages page ships a mount point, not three thousand articles",
        /data-browse/.test(passHtml) && !/blockquote/.test(passHtml));
 
+    // Who coded it: in the tooltip, with one visible sentence per view instead.
+    const srcHtml = read("sources/" + slug + ".html");
+    ok("site: a chip no longer prints its coder's name", !/class="who"/.test(srcHtml));
+    ok("site: the coder, confidence and reason ride in the chip's tooltip", /title="[^"]*Coded by (ellie|model-a)/.test(srcHtml));
+    ok("site: the source page says visibly that codes are judgements, and by whom", /Codes were assigned by /.test(srcHtml));
+
     const js = read("assets/site.js");
+    ok("site: the browse sidebar carries the same sentence", /Hover a code to see who assigned it/.test(js));
     ok("site: the browse engine ships with the page script", /window\.UPCB=API/.test(js));
     ok("site: filtering reads the data, never the rendered DOM",
        /p\._h\.indexOf/.test(js) && /content-visibility/.test(read("assets/site.css")));

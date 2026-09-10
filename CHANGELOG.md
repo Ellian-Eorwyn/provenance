@@ -3,6 +3,36 @@
 All notable changes to the Universal Provenance Corpus (UPC) standard.
 Versioning is semantic (§00 Versioning policy).
 
+## 1.11.0 — 2026-09-10
+
+**Backward-compatible (additive) minor release: overviews readable, codes
+uncluttered.** No schema, vocabulary, id recipe or gate changed; schema `$id`s
+stay at `1.8.0`. One projection rule is relaxed, for the reader's site only.
+
+### Fixed — an overview's list of papers rendered as one line
+
+Every overview ends with the papers it drew on, written as a markdown list. Both
+shapes of the site rendered overview text with their own small converter that
+knew paragraphs and headings but not lists, so the list ran together into one
+block — raw source ids in backticks, and each paper's citation repeated once per
+passage. Found on the hosted site. There is now one renderer,
+`renderOverviewMarkdown`, run at build time for both shapes; the single file
+carries its output instead of raw markdown, so the two cannot disagree again.
+Lists render as lists, a source id becomes a link to its paper, a paper's
+passages become small numbered links, and adjacent citations in prose are
+separated. Everything is escaped before any rule applies.
+
+### Changed — who made a code moves into its tooltip (spec/09, site only)
+
+Every chip printed its coder's handle ("forge-27b-v1 (model)"): identical on every
+chip of a single-coder corpus, and meaningless to a reader of the literature. The
+site now carries the coder — with the confidence and the rationale — in the
+chip's tooltip, and every view that shows codes says once, visibly, what kind of
+coder made them ("Codes were assigned by a language model"). spec/09's
+requirement 5 for the reader's site gains exactly this relaxation. The guarantee
+the rule exists for — a model's judgement never passes for a fact — is kept; only
+its placement moves. The verification browser still prints the coder.
+
 ## 1.10.0 — 2026-09-10
 
 **Backward-compatible (additive) minor release: the library becomes browsable.**

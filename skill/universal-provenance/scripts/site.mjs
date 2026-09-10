@@ -395,6 +395,13 @@ ul.plain li{padding:.35rem 0;border-bottom:1px solid var(--line)}
 .side ul.ovlist a:hover{background:var(--chip);text-decoration:none}
 .side ul.ovlist a.on{background:var(--accent-soft);color:var(--accent);font-weight:600}
 .pane{min-width:0}
+/* the papers an overview drew on */
+.card ul.refs{padding-left:1.15rem;margin:.4rem 0 .2rem}
+.card ul.refs li{margin:.4rem 0;line-height:1.45}
+a.pn{display:inline-block;min-width:1.5em;text-align:center;font:600 .72rem/1.5 ui-sans-serif,system-ui,sans-serif;
+  border:1px solid var(--line);border-radius:6px;padding:0 .3em;margin:0 .06em;text-decoration:none}
+a.pn:hover{background:var(--accent-soft);text-decoration:none}
+.card code{font-size:.85em;background:var(--chip);border-radius:4px;padding:0 .25em}
 /* Only the lazily-built list opts into this: a card the reader can deep-link to
    must not be skipped, and .reading collapses under it (see above). */
 .lazy .passage{content-visibility:auto;contain-intrinsic-size:auto 190px}
@@ -470,7 +477,7 @@ const JS = `
     if(host&&window.UPCB&&window.__UPCB_DATA){
       var B=window.__UPCB_DATA, base=host.getAttribute("data-base")||"";
       UPCB.init({
-        sources:B.sources, codebooks:B.codebooks, badges:B.badges,
+        sources:B.sources, codebooks:B.codebooks, badges:B.badges, coderKind:B.ck,
         files:B.files?base+B.files:null,
         hrefSource:function(p){
           var src=B.sources[p.s]||{};
@@ -558,13 +565,23 @@ const BROWSE_JS = String.raw`
     var cls=b==="failed"?"badge bad":(b==="paraphrase"||b==="unverifiable")?"badge plain":"badge";
     return '<span class="'+cls+'"'+(terse?"":' title="'+E(t[2])+'"')+'>'+t[0]+" "+E(t[1])+"</span>";
   }
-  function chip(g,terse){
+  // Who made a judgement lives in the chip's tooltip, with its confidence and
+  // reason. Each view also says once, visibly, what kind of coder made its codes
+  // (codeNote) — so a model's judgement never passes for a fact (spec/09).
+  function chip(g){
     var d=codeDef[g[0]+":"+g[1]], lbl=d?d.c.label:g[1];
-    var tip=d&&d.c.def?d.c.label+": "+d.c.def:lbl;
-    if(g[4]) tip+="\nWhy: "+g[4];
-    if(g[3]) tip+="\nConfidence: "+g[3];
-    return '<span class="chip"'+(terse?"":' title="'+E(tip)+'"')+'>'+
-      '<a href="'+E(X.hrefCode(g[0],g[1]))+'">'+E(lbl)+' <span class="who">'+E(g[2])+"</span></a></span>";
+    var kind=(X.coderKind||{})[g[2]];
+    var tip=(d&&d.c.def?d.c.label+": "+d.c.def+"\n":"")+"Coded by "+g[2]+(kind?" ("+kind+")":"")+
+      (g[3]?" · confidence "+g[3]:"")+(g[4]?"\nWhy: "+g[4]:"");
+    return '<span class="chip" title="'+E(tip)+'">'+
+      '<a href="'+E(X.hrefCode(g[0],g[1]))+'">'+E(lbl)+"</a></span>";
+  }
+  function codeNote(){
+    var k={}, ck=X.coderKind||{};
+    Object.keys(ck).forEach(function(c){ k[ck[c]||"other"]=1; });
+    var who=k.model&&k.human?"a language model and by people":k.human?"people":k.model?"a language model":"";
+    return (who?"Codes were assigned by "+who+". ":"Codes are judgements, not checks. ")+
+      "Hover a code to see who assigned it, how sure they were, and why.";
   }
   function card(p,opts){
     opts=opts||{};
@@ -656,6 +673,7 @@ const BROWSE_JS = String.raw`
       '<aside class="side" id="pfacets">'+
         '<input type="search" class="sidesearch" id="pq" placeholder="Search every passage…">'+
         '<p class="small muted" id="pcount" style="margin:.5rem 0 .3rem"></p>'+
+        '<p class="small muted" style="margin:0 0 .5rem">'+E(codeNote())+"</p>"+
         '<p class="small" style="margin:0 0 .5rem"><button class="btn" id="pclear">Clear all</button> '+
         '<button class="btn" id="pcsv">Download CSV</button></p>'+
         groups.map(function(g,i){
@@ -793,7 +811,7 @@ const BROWSE_JS = String.raw`
     box.scrollTop+=(r.top-b.top)-box.clientHeight/2+r.height/2;
   }
 
-  var API={init:init,card:card,chip:chip,badge:badge,browse:browse,label:label,reveal:reveal,esc:E,plural:PL};
+  var API={init:init,card:card,chip:chip,badge:badge,browse:browse,label:label,reveal:reveal,codeNote:codeNote,esc:E,plural:PL};
   window.UPCB=API;
 })();
 `;
@@ -833,7 +851,7 @@ ${data ? `<script src="${base}data/browse.js" defer></script>` : ""}
 <footer>
   Built from a Universal Provenance Corpus (spec ${esc(model.specVersion || "")}).
   Every quotation here was compared with the source text character by character when this page was built.
-  A <em>code</em> is somebody's judgement about a passage — always shown with who made it — and is never a check mark.
+  A <em>code</em> is somebody's judgement about a passage — hover it to see who made it — and is never a check mark.
 </footer>
 </body></html>
 `;
@@ -847,20 +865,26 @@ function badgeHtml(badge, terse) {
   return `<span class="${cls}"${terse ? "" : ` title="${attr(why)}"`}>${icon} ${esc(label)}</span>`;
 }
 
-function chipHtml(c, base, detached, terse) {
+function chipHtml(c, base, detached) {
   const label = esc(c.label || c.code || c.value);
-  const who = esc(c.coder) + (c.coder_kind ? ` (${esc(c.coder_kind)})` : "");
+  // Who made the judgement lives in the tooltip, with its confidence and reason;
+  // each page also says once, visibly, what kind of coder made its codes (§09).
   const title = [c.definition ? `${c.label}: ${c.definition}` : c.label,
-                 c.rationale ? `Why: ${c.rationale}` : "",
-                 c.confidence ? `Confidence: ${c.confidence}` : ""].filter(Boolean).join("\n");
+                 `Coded by ${c.coder}${c.coder_kind ? ` (${c.coder_kind})` : ""}${c.confidence ? ` · confidence ${c.confidence}` : ""}`,
+                 c.rationale ? `Why: ${c.rationale}` : ""].filter(Boolean).join("\n");
   const href = c.code != null ? `${base}codes/${encodeURIComponent(c.codebook_slug)}/${encodeURIComponent(c.code)}.html` : null;
-  const inner = `${label} <span class="who">${who}</span>`;
-  // On a page that lists the whole corpus, the definition rides on the code page
-  // one click away rather than in every row's title attribute — that tooltip is
-  // the single largest thing in a row, and §09 asks only that a definition be at
-  // most one interaction away.
-  return `<span class="chip${detached ? " detached" : ""}" data-id="${attr(c.coding_id)}"${
-    terse ? "" : ` title="${attr(title)}"`}>${href ? `<a href="${href}">${inner}</a>` : inner}</span>`;
+  return `<span class="chip${detached ? " detached" : ""}" data-id="${attr(c.coding_id)}" title="${attr(title)}">${
+    href ? `<a href="${href}">${label}</a>` : label}</span>`;
+}
+
+/** The one visible sentence that replaces a coder name on every chip. */
+function codeNote(model) {
+  const kinds = new Set();
+  for (const x of [...model.passages, ...model.sources]) for (const c of x.codings) kinds.add(c.coder_kind || "other");
+  const who = kinds.has("model") && kinds.has("human") ? "a language model and by people"
+            : kinds.has("human") ? "people" : kinds.has("model") ? "a language model" : "";
+  return (who ? `Codes were assigned by ${who}. ` : "Codes are judgements, not checks. ") +
+    "Hover a code to see who assigned it, how sure they were, and why.";
 }
 
 function passageHtml(p, model, base, { showSource = true, context = true, compact = false } = {}) {
@@ -948,7 +972,7 @@ ${nNote ? `<p class="small muted">${plural(nNote, "passage is", "passages are")}
 <p class="small"><strong>A passage</strong> is a span of text from one paper, quoted exactly.
 <strong>A check mark</strong> means the quotation matched the paper's text when this site was built.
 <strong>A code</strong> is a judgement someone made about that passage — which theory it invokes, which dimension it speaks to.
-Codes always show who made them, and where two coders disagree both judgements are shown. Nothing is resolved for you.</p>
+Hover a code to see who made it and why; where two coders disagree, both judgements are shown. Nothing is resolved for you.</p>
 </div>`,
   });
 }
@@ -1041,6 +1065,7 @@ function sourcePage(model, s, textInfo) {
     body: `<p class="small muted"><a href="${base}sources/">Sources</a></p>
 <h1>${esc(s.title)}</h1>
 <p class="lede">${esc(bits)}${s.doi ? ` · <a href="https://doi.org/${encodeURIComponent(s.doi)}">doi:${esc(s.doi)}</a>` : ""}</p>
+${s.codings.length || s.passages.some((p) => p.codings.length) ? `<p class="small muted">${esc(codeNote(model))}</p>` : ""}
 ${s.codings.length ? `<div class="card"><div class="small muted">Judgements about this paper as a whole</div>
   <div class="meta" style="margin-top:.4rem">${s.codings.map((c) => chipHtml(c, base, false)).join(" ")}</div></div>` : ""}
 
@@ -1187,6 +1212,89 @@ ${g.cb && g.cb.question ? `<p class="small muted" style="margin:.1rem 0 .3rem">$
 </aside>`;
 }
 
+// --- overview prose: one renderer for both shapes -------------------------------
+//
+// A synthesis is markdown written by a model, and a reader should see its
+// structure — paragraphs, headings, and the list of papers it drew on — not a
+// run-on block. It is rendered once, here, for both shapes: the single file and
+// the folder each had their own copy and both showed that list as one line of
+// text. The grammar is deliberately small — what synthesize.py writes, plus
+// italics and inline code. Everything is escaped first; nothing in the markdown
+// becomes markup except through the rules below.
+export function renderOverviewMarkdown(md, model, links) {
+  const cite = (p) => esc(p.cite || "");
+  const passageHref = (p) => attr(links.passage(p));
+  const inline = (raw, inRefs) => esc(raw)
+    // "quotation" [ext-id] — a linked quotation, badged by whether it verified
+    .replace(/&quot;([^&]*?)&quot;\s*\[(ext-[0-9a-f]{12})\]/g, (m, q, id) => {
+      const p = model.passageById.get(id);
+      if (!p) return m;
+      const ok = U.VERIFIED_BADGES.has(p.badge);
+      return `<a href="${passageHref(p)}" title="${attr((BADGE_TEXT[p.badge] || [])[1] || "")}">“${q}”</a>` +
+        ` <span class="small">${ok ? "✓" : "⚠"} ${cite(p)}</span>`;
+    })
+    // a source id, backticked or bare — the paper it names, as a link
+    .replace(/`?(src-[0-9a-f]{12})`?/g, (m, id) => {
+      const src = model.sourceById.get(id);
+      return src ? `<a class="small" href="${attr(links.source(src))}">${esc(src.cite)}</a>` : m;
+    })
+    // bare markers, one or a run of them
+    .replace(/\[(ext-[0-9a-f]{12})\](?:[ ,;]*\[ext-[0-9a-f]{12}\])*/g, (run) => {
+      const ids = run.match(/ext-[0-9a-f]{12}/g);
+      if (inRefs) {
+        // The item already names its paper, so its passages are just numbered.
+        const nums = ids.map((id, i) => {
+          const p = model.passageById.get(id);
+          return p ? `<a class="pn" href="${passageHref(p)}" title="${attr(p.cite + " — passage " + (i + 1))}">${i + 1}</a>`
+                   : esc(`[${id}]`);
+        });
+        return `<span class="small muted">${ids.length === 1 ? "passage" : "passages"}</span> ${nums.join(" ")}`;
+      }
+      return ids.map((id) => {
+        const p = model.passageById.get(id);
+        return p ? `<a class="small" href="${passageHref(p)}">${cite(p)}</a>` : esc(`[${id}]`);
+      }).join("; ");
+    })
+    .replace(/`([^`\n]+)`/g, "<code>$1</code>")
+    .replace(/(^|[^*\w])\*([^*\s][^*\n]*?)\*(?=[^*\w]|$)/g, "$1<em>$2</em>");
+
+  const html = [];
+  let para = [], list = null;
+  const bullet = /^\s*(?:[-*+]|(\d+)[.)])\s+(.*)$/;
+  const flushPara = () => {
+    if (para.length) html.push(`<p>${inline(para.join(" "), false)}</p>`);
+    para = [];
+  };
+  const flushList = () => {
+    if (!list) return;
+    const refs = list.items.some((it) => /src-[0-9a-f]{12}/.test(it));
+    const tag = list.ordered ? "ol" : "ul";
+    html.push(`<${tag}${refs ? ' class="refs"' : ""}>` +
+      list.items.map((it) => `<li>${inline(it, refs)}</li>`).join("") + `</${tag}>`);
+    list = null;
+  };
+  for (const line of String(md || "").replace(/\r\n/g, "\n").split("\n")) {
+    if (!line.trim()) { flushPara(); flushList(); continue; }
+    const h = /^(#{1,6})\s+(.*)$/.exec(line);
+    if (h) {
+      flushPara(); flushList();
+      html.push(h[1].length <= 2 ? `<h2>${inline(h[2], false)}</h2>` : `<h3>${inline(h[2], false)}</h3>`);
+      continue;
+    }
+    const b = bullet.exec(line);
+    if (b) {
+      flushPara();
+      if (!list) list = { ordered: b[1] != null, items: [] };
+      list.items.push(b[2]);
+      continue;
+    }
+    if (list) { list.items[list.items.length - 1] += " " + line.trim(); continue; }   // a wrapped item
+    para.push(line.trim());
+  }
+  flushPara(); flushList();
+  return html.join("\n");
+}
+
 function overviewBodyHtml(model, syn, root) {
   const base = "../";
   let body = "";
@@ -1198,20 +1306,10 @@ function overviewBodyHtml(model, syn, root) {
   // The page already shows the title, so drop a leading H1 that repeats it.
   body = body.replace(/^\s*#\s+.*\n+/, "");
   // Render the marker grammar: "…" [ext-id] becomes a linked, badged quotation.
-  const rendered = esc(body)
-    .replace(/&quot;([^&]*?)&quot;\s*\[(ext-[0-9a-f]{12})\]/g, (m, q, id) => {
-      const p = model.passageById.get(id);
-      if (!p) return m;
-      const ok = U.VERIFIED_BADGES.has(p.badge);
-      return `<a href="${base}sources/${encodeURIComponent(p.source_slug)}.html#ex=${encodeURIComponent(id)}"
-        title="${attr((BADGE_TEXT[p.badge] || [])[1] || "")}">“${q}”</a> <span class="small">${ok ? "✓" : "⚠"} ${esc(p.cite)}</span>`;
-    })
-    .replace(/\[(ext-[0-9a-f]{12})\]/g, (m, id) => {
-      const p = model.passageById.get(id);
-      return p ? `<a class="small" href="${base}sources/${encodeURIComponent(p.source_slug)}.html#ex=${encodeURIComponent(id)}">${esc(p.cite)}</a>` : m;
-    })
-    .replace(/^#{1,6}\s*(.+)$/gm, (m, t) => `<h2>${t}</h2>`)
-    .replace(/\n{2,}/g, "\n<p></p>\n");
+  const rendered = renderOverviewMarkdown(body, model, {
+    passage: (p) => `${base}sources/${encodeURIComponent(p.source_slug)}.html#ex=${encodeURIComponent(p.id)}`,
+    source: (src) => `${base}sources/${encodeURIComponent(src.slug)}.html`,
+  });
   const claims = syn.claims || [];
   return `<h1 style="margin-top:0">${esc(syn.title || syn.synthesis_id)}</h1>
 <div class="card" style="max-width:74ch">${rendered || `<p class="muted">No text.</p>`}</div>
@@ -1276,9 +1374,9 @@ export function writeSite(root, opts = {}) {
   // The same compact records the single file carries, as a plain script the
   // browsing pages load with <script src> — no fetch, so `file://` still works.
   {
-    const { sources, passages, codebooks } = browsePayload(model);
+    const { sources, passages, codebooks, ck } = browsePayload(model);
     w("data/browse.js", `window.__UPCB_DATA=${j({
-      sources, passages, codebooks,
+      sources, passages, codebooks, ck,
       badges: BADGE_TEXT,
       files: opts.bundle ? "files" : null,
     })};\n`);
@@ -1400,7 +1498,7 @@ const CLIENT_ONE = String.raw`
   // One renderer for a passage, shared with the folder site: UPCB, defined by the
   // browse engine in the script above this one.
   UPCB.init({
-    sources:D.sources, codebooks:D.codebooks, badges:D.badges, files:D.files,
+    sources:D.sources, codebooks:D.codebooks, badges:D.badges, files:D.files, coderKind:D.ck,
     hrefSource:function(p){ return "#/source/"+p.s+"?ex="+encodeURIComponent(p.id); },
     hrefCode:function(slug,code){ return "#/code/"+encodeURIComponent(slug)+"/"+encodeURIComponent(code); }
   });
@@ -1436,8 +1534,8 @@ const CLIENT_ONE = String.raw`
       }).join("")+"</div>"+
       "<h2>How to read this</h2><div class=\"card\"><p class=\"small\"><strong>A passage</strong> is a span of text from one "+
       "paper, quoted exactly. <strong>A check mark</strong> means the quotation matched the paper's text when this file was "+
-      "built. <strong>A code</strong> is a judgement someone made about that passage. Codes always show who made them, and "+
-      "where two coders disagree both judgements are shown. Nothing is resolved for you.</p></div>";
+      "built. <strong>A code</strong> is a judgement someone made about that passage. Hover a code to see who made it and why; "+
+      "where two coders disagree, both judgements are shown. Nothing is resolved for you.</p></div>";
   };
   V.codes=function(){
     return "<h1>Codes</h1><p class=\"lede\">Each codebook asks one question of the literature. Counts state what they "+
@@ -1515,6 +1613,7 @@ const CLIENT_ONE = String.raw`
     return '<p class="small muted" id="crumb"><a href="#/sources">Sources</a></p><h1>'+E(s.t)+"</h1>"+
       '<p class="lede">'+E(bits)+(s.d?' · <a href="https://doi.org/'+encodeURIComponent(s.d)+'">doi:'+E(s.d)+"</a>":"")+
         ((D.files&&s.p)?' · <a href="'+D.files+"/"+encodeURI(s.p)+'" target="_blank" rel="noopener">open the PDF ↗</a>':"")+"</p>"+
+      ((s.g.length||mine.some(function(p){return p.g.length;}))?'<p class="small muted">'+E(UPCB.codeNote())+"</p>":"")+
       (s.g.length?'<div class="card"><div class="small muted">Judgements about this paper as a whole</div>'+
         '<div class="meta" style="margin-top:.4rem">'+s.g.map(function(g){return chip(g);}).join(" ")+"</div></div>":"")+
       "<h2>Passages ("+mine.length+")</h2>"+
@@ -1550,17 +1649,7 @@ const CLIENT_ONE = String.raw`
       '<p class="small muted">Every quotation in a review links to the passage it came from, and every '+
       "citation to the paper. A review is written by a model from coded passages: the quotations in it "+
       "were checked character by character, the sentences around them were not.</p></div>";
-    var html=E(o.md)
-      .replace(/&quot;([^&]*?)&quot;\s*\[(ext-[0-9a-f]{12})\]/g,function(m,q,id2){
-        var p=byId[id2]; if(!p) return m;
-        var ok=p.b.indexOf("verified")===0;
-        return '<a href="#/source/'+p.s+"?ex="+encodeURIComponent(id2)+'">“'+q+'”</a> <span class="small">'+
-          (ok?"✓":"⚠")+" "+E((D.sources[p.s]||{}).k||"")+"</span>";})
-      .replace(/\[(ext-[0-9a-f]{12})\]/g,function(m,id2){
-        var p=byId[id2]; if(!p) return m;
-        return '<a class="small" href="#/source/'+p.s+"?ex="+encodeURIComponent(id2)+'">'+E((D.sources[p.s]||{}).k||"")+"</a>";})
-      .replace(/^#{1,6}\s*(.+)$/gm,function(m,t){return "<h2>"+t+"</h2>";})
-      .replace(/\n{2,}/g,"\n<p></p>\n");
+    var html=o.h||"";   // rendered at build time by renderOverviewMarkdown
     return "<h1 style=\"margin-top:0\">"+E(o.t)+"</h1>"+
       '<div class="card" style="max-width:74ch">'+html+"</div>"+
       (o.cl.length?"<h2>What this says, and what backs it</h2><div class=\"wrap\"><table><thead><tr><th>Claim</th>"+
@@ -1786,14 +1875,21 @@ function browsePayload(model) {
     unit: cb.unit || "passage",
     codes: (cb.codes || []).map((c) => ({ code: c.code, label: c.label || c.code, def: c.definition || "" })),
   }));
-  return { srcIndex, sources, passages, codebooks };
+  // coder handle -> kind (model / human), for the tooltips and the one visible note
+  const ck = {};
+  for (const x of [...model.passages, ...model.sources]) for (const c of x.codings) if (c.coder) ck[c.coder] = c.coder_kind || "";
+  return { srcIndex, sources, passages, codebooks, ck };
 }
 
 export function writeSingleFile(root, opts = {}) {
   const loaded = U.loadCorpus(root);
   const model = buildSiteModel(loaded, opts);
   const withText = opts.withText !== false;
-  const { sources, passages, codebooks } = browsePayload(model);
+  const { srcIndex, sources, passages, codebooks, ck } = browsePayload(model);
+  const oneLinks = {
+    passage: (p) => `#/source/${srcIndex.get(p.source_id)}?ex=${encodeURIComponent(p.id)}`,
+    source: (src) => `#/source/${srcIndex.get(src.id)}`,
+  };
 
   const texts = [];
   if (withText) {
@@ -1821,7 +1917,8 @@ export function writeSingleFile(root, opts = {}) {
       id: syn.synthesis_id,
       t: syn.title || syn.synthesis_id,
       grp: syn._group ? syn._group.slug : "",
-      md: body.replace(/^\s*#\s+.*\n+/, ""),
+      // Rendered here, by the same function as the folder's pages.
+      h: renderOverviewMarkdown(body.replace(/^\s*#\s+.*\n+/, ""), model, oneLinks),
       cl: (syn.claims || []).map((c) => [c.text, c.evidence_ids || []]),
     };
   });
@@ -1834,7 +1931,7 @@ export function writeSingleFile(root, opts = {}) {
     failures: model.failures,
     withText,
     badges: BADGE_TEXT,
-    sources, passages, codebooks, overviews,
+    sources, passages, codebooks, overviews, ck,
   };
 
   // Each reading copy gets its own island, parsed only when its paper is opened.
@@ -1865,7 +1962,7 @@ nav a{cursor:pointer}
 <footer>
   Built from a Universal Provenance Corpus (spec ${esc(model.specVersion || "")}). Every quotation here was
   compared with the source text character by character when this file was built. A <em>code</em> is somebody's
-  judgement about a passage — always shown with who made it — and is never a check mark.
+  judgement about a passage — hover it to see who made it — and is never a check mark.
 </footer>
 <script type="application/json" id="upc-data">${
     JSON.stringify(payload).replace(/</g, "\\u003c")
