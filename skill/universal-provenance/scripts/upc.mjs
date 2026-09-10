@@ -62,7 +62,7 @@ function findSpecDirs() {
 
 // The VERSION file at the spec root is the single source of truth for the spec
 // version; the fallback exists only so a detached scripts/ copy still reports.
-const FALLBACK_SPEC_VERSION = "1.11.0";
+const FALLBACK_SPEC_VERSION = "1.12.0";
 function specVersion() {
   try {
     const { specRoot } = findSpecDirs();
@@ -1555,6 +1555,13 @@ function addSynthesisCmd(root, obj, opts = {}) {
                       expected: q.slice(0, 90), got: mk.quote.slice(0, 90) });
     }
   }
+  // A theme link that names no code would reach readers as a dead end. Catch it
+  // here, like a misquotation, rather than on the page.
+  const codesBySlug = new Map((loaded.codebooks || []).filter((c) => c.obj)
+    .map((c) => [c.obj.slug, new Set((c.obj.codes || []).map((x) => x.code))]));
+  for (const m of text.matchAll(/\[theme:([a-z0-9-]+)\/([a-z0-9-]+)\]/g)) {
+    if (!(codesBySlug.get(m[1]) || new Set()).has(m[2])) failures.push({ marker: m[0], reason: "no such code in this corpus" });
+  }
   if (failures.length && !opts.allowUnverified) {
     return { status: "refused", wrote: 0, failures,
              detail: "the output misquotes the passages it cites; nothing was written" };
@@ -1588,11 +1595,23 @@ function addSynthesisCmd(root, obj, opts = {}) {
   const base = (loaded.sections && loaded.sections.syntheses) || "syntheses/";
   const stamp = obj.provenance || { produced_by: { tool: opts.tool || "upc", method: "model" }, created_at: nowStamp() };
   stamp.created_at = stamp.created_at || nowStamp();
-  stamp.derived_from = stamp.derived_from || {
-    ...(evidenceIds.length ? { extraction_ids: evidenceIds } : {}),
-    ...(sourceIds.length ? { source_ids: sourceIds } : {}),
-    ...(repRefs.length ? { representation_refs: repRefs } : {}),
-  };
+  // Derive what the prose depends on and merge in whatever the caller adds — the
+  // overviews a summary was built from, say. Letting a caller's derived_from
+  // *replace* the derived one recorded a synthesis as built from nothing it cites.
+  const given = stamp.derived_from || {};
+  const merged = { ...given };
+  const union = (key, ids) => { if (ids.length) merged[key] = [...new Set([...(given[key] || []), ...ids])]; };
+  union("extraction_ids", evidenceIds);
+  union("source_ids", sourceIds);
+  union("representation_refs", repRefs);
+  const known = new Set((loaded.syntheses || []).map((x) => x.obj && x.obj.synthesis_id).filter(Boolean));
+  const unknownSyn = (merged.synthesis_ids || []).filter((id) => !known.has(id));
+  if (unknownSyn.length && !opts.allowUnverified) {
+    return { status: "refused", wrote: 0,
+             failures: unknownSyn.map((id) => ({ marker: id, reason: "no such synthesis in this corpus" })),
+             detail: "derived_from names a synthesis that is not in the corpus; nothing was written" };
+  }
+  stamp.derived_from = merged;
   // The digest is over the representations this prose was written from — the
   // bytes that would have to change for it to be stale.
   if (!stamp.input_digest) {

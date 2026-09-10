@@ -255,20 +255,49 @@ export function buildSiteModel(loaded, opts = {}) {
       labelOwner.set(key, labelOwner.has(key) ? null : { cb, code: c });
     }
   }
-  const syntheses = (loaded.syntheses || []).map((s) => {
-    const o = s.obj;
+  // A summary placed on the home page is not one of the themed overviews: it is
+  // not listed, counted or grouped with them.
+  const isHome = (o) => ((o.ext || {})["upc-site"] || {}).placement === "home";
+  const allSyn = (loaded.syntheses || []).map((x) => x.obj).filter(Boolean);
+  const syntheses = allSyn.filter((o) => !isHome(o)).map((o) => {
     const declared = ((o.ext || {})["upc-corpus"] || {}).codebook;
-    const owner = declared
-      ? { cb: codebooks.find((c) => c.slug === declared), code: null }
-      : labelOwner.get(String(o.title || "").toLowerCase());
-    return { ...o, _group: owner && owner.cb ? owner.cb : null };
+    const title = String(o.title || "").toLowerCase();
+    let owner = null;
+    if (declared) {
+      const cb = codebooks.find((c) => c.slug === declared);
+      owner = cb ? { cb, code: (cb.codes || []).find((c) => (c.label || c.code).toLowerCase() === title) || null } : null;
+    } else {
+      owner = labelOwner.get(title) || null;
+    }
+    return { ...o, _group: owner && owner.cb ? owner.cb : null, _code: owner && owner.code ? owner.code.code : null };
   });
+  // The overview written for each code. A link that names a theme resolves
+  // through this, not through an overview id: ids are content hashes (spec/06),
+  // so re-running an overview mints a new one and a hard-coded link would die.
+  const overviewByCode = new Map();
+  for (const x of syntheses) if (x._group && x._code) overviewByCode.set(`${x._group.slug}:${x._code}`, x);
+  // Newest placed summary wins; its prose is read here so either shape can render it.
+  let homeSummary = null;
+  const homes = allSyn.filter(isHome).sort((a, b) =>
+    String((b.provenance || {}).created_at || "").localeCompare(String((a.provenance || {}).created_at || "")));
+  if (homes.length) {
+    const h = homes[0];
+    let md = "";
+    const outPath = h.output && h.output.path;
+    if (outPath) {
+      const { abs, contained } = U.resolveInside(loaded.root, outPath);
+      if (contained && fs.existsSync(abs)) md = fs.readFileSync(abs, "utf8");
+    }
+    const want = h.output && h.output.sha256;
+    homeSummary = { ...h, md: md.replace(/^\s*#\s+.*\n+/, ""),
+                    _changed: !!(want && md && "sha256:" + U.sha256Hex(Buffer.from(md, "utf8")) !== want) };
+  }
 
   return {
     title: (loaded.corpus && loaded.corpus.title) || "Research corpus",
     specVersion: loaded.corpus && loaded.corpus.upc_spec_version,
     sources, sourceById, passages, passageById,
-    codebooks, cbkById, codeIndex, syntheses,
+    codebooks, cbkById, codeIndex, syntheses, homeSummary, overviewByCode, homeCandidates: homes.length,
     coders: [...new Set(passages.flatMap((p) => p.codings.map((c) => c.coder)).concat(sources.flatMap((s) => s.codings.map((c) => c.coder))))],
     failures,
     generatedFrom: loaded.root,
@@ -402,6 +431,14 @@ a.pn{display:inline-block;min-width:1.5em;text-align:center;font:600 .72rem/1.5 
   border:1px solid var(--line);border-radius:6px;padding:0 .3em;margin:0 .06em;text-decoration:none}
 a.pn:hover{background:var(--accent-soft);text-decoration:none}
 .card code{font-size:.85em;background:var(--chip);border-radius:4px;padding:0 .25em}
+/* the home page's summary of what the literature says */
+.homesum{margin:1.1rem 0 1.5rem;max-width:80ch;border-left:3px solid var(--accent)}
+.homesum h2{margin:.1rem 0 .35rem}
+.homesum h3{font-size:1rem;margin:1.05rem 0 .3rem}
+.homesum ul{padding-left:1.15rem;margin:.3rem 0}
+.homesum li{margin:.4rem 0;line-height:1.5}
+.homesum details.refs-fold{margin-top:.9rem;border-top:1px solid var(--line);padding-top:.5rem}
+.homesum details.refs-fold>summary{cursor:pointer;font:.84rem ui-sans-serif,system-ui,sans-serif;color:var(--muted)}
 /* Only the lazily-built list opts into this: a card the reader can deep-link to
    must not be skipped, and .reading collapses under it (see above). */
 .lazy .passage{content-visibility:auto;contain-intrinsic-size:auto 190px}
@@ -813,6 +850,10 @@ const BROWSE_JS = String.raw`
 
   var API={init:init,card:card,chip:chip,badge:badge,browse:browse,label:label,reveal:reveal,codeNote:codeNote,esc:E,plural:PL};
   window.UPCB=API;
+  // Printing includes everything: open whatever the reader left folded.
+  window.addEventListener("beforeprint",function(){
+    [].slice.call(document.querySelectorAll("details")).forEach(function(d){ d.open=true; });
+  });
 })();
 `;
 
@@ -877,12 +918,17 @@ function chipHtml(c, base, detached) {
     href ? `<a href="${href}">${label}</a>` : label}</span>`;
 }
 
-/** The one visible sentence that replaces a coder name on every chip. */
-function codeNote(model) {
+/** Who made this corpus's codes: "a language model", "people", both, or "". */
+function codedBy(model) {
   const kinds = new Set();
   for (const x of [...model.passages, ...model.sources]) for (const c of x.codings) kinds.add(c.coder_kind || "other");
-  const who = kinds.has("model") && kinds.has("human") ? "a language model and by people"
-            : kinds.has("human") ? "people" : kinds.has("model") ? "a language model" : "";
+  return kinds.has("model") && kinds.has("human") ? "a language model and by people"
+       : kinds.has("human") ? "people" : kinds.has("model") ? "a language model" : "";
+}
+
+/** The one visible sentence that replaces a coder name on every chip. */
+function codeNote(model) {
+  const who = codedBy(model);
   return (who ? `Codes were assigned by ${who}. ` : "Codes are judgements, not checks. ") +
     "Hover a code to see who assigned it, how sure they were, and why.";
 }
@@ -943,6 +989,7 @@ function passageHtml(p, model, base, { showSource = true, context = true, compac
 // --- pages ----------------------------------------------------------------
 
 function homePage(model) {
+  const hc = homeCard(model, folderLinks(""));
   const nPass = model.passages.filter((p) => p.quote).length;
   const nNote = model.passages.length - nPass;
   const verified = model.passages.filter((p) => U.VERIFIED_BADGES.has(p.badge)).length;
@@ -957,7 +1004,8 @@ function homePage(model) {
     body: `<h1>${esc(model.title)}</h1>
 <p class="lede">A searchable library of what this literature actually says. Every quotation was compared with the
 source text character by character when this page was built${verified === nPass && nPass ? " — all of them matched" : ""}.</p>
-${model.syntheses.length ? `<p class="lede"><strong>New here?</strong> Start with the
+${hc ? `<section class="card homesum"><h2>${esc(hc.t)}</h2><p class="small muted">${hc.note}</p>${hc.h}</section>` : ""}
+${model.syntheses.length ? `<p class="lede">${hc ? "<strong>Go deeper:</strong> read the" : "<strong>New here?</strong> Start with the"}
 <a href="overviews/">${plural(model.syntheses.length, "overview", "overviews")}</a> — a short review per theme,
 written from the coded passages, with every quotation linked back to the paper it came from. Then browse by
 <a href="codes/">theme</a>, by <a href="sources/">paper</a>, or search <a href="passages/">every passage</a>.</p>`
@@ -1009,6 +1057,14 @@ ${rows.every((r) => !r.nP && !r.nS)
   });
 }
 
+/** "528 passages from 120 papers, plus 3 papers coded as a whole" — never one mixed number. */
+function countsLede(passages, allSources) {
+  const fromPapers = new Set(passages.map((p) => p.source_id)).size;
+  const wholeOnly = Math.max(0, allSources.length - fromPapers);
+  return `${plural(passages.length, "passage", "passages")} from ${plural(fromPapers, "paper", "papers")}` +
+    (wholeOnly ? `, plus ${plural(wholeOnly, "paper", "papers")} coded as a whole` : "");
+}
+
 function codePage(model, cb, code) {
   const rec = model.codeIndex.get(`${cb.codebook_id}:${code.code}`);
   const passages = rec ? rec.passages.map((id) => model.passageById.get(id)).filter(Boolean) : [];
@@ -1020,7 +1076,7 @@ function codePage(model, cb, code) {
 <h1>${esc(code.label || code.code)}</h1>
 ${code.definition ? `<div class="defbox">${esc(code.definition)}${
   (code.examples || []).length ? `<div class="small muted" style="margin-top:.4rem">For example: “${esc(code.examples[0])}”</div>` : ""}</div>` : ""}
-<p class="lede">${plural(passages.length, "passage", "passages")} in ${plural(sourcesCoded.length, "source", "sources")}${
+<p class="lede">${countsLede(passages, sourcesCoded)}${
   passages.length ? ". Narrow them on the left — those counts are within this code." : ""}.</p>
 ${passages.length
   ? `<div data-browse data-base="${base}" data-only="${attr(cb.slug + ":" + code.code)}" data-omit="${attr(cb.slug)}"></div>
@@ -1221,16 +1277,27 @@ ${g.cb && g.cb.question ? `<p class="small muted" style="margin:.1rem 0 .3rem">$
 // text. The grammar is deliberately small — what synthesize.py writes, plus
 // italics and inline code. Everything is escaped first; nothing in the markdown
 // becomes markup except through the rules below.
-export function renderOverviewMarkdown(md, model, links) {
+export function renderOverviewMarkdown(md, model, links, opts = {}) {
   const cite = (p) => esc(p.cite || "");
+  const unesc = (t) => t.replace(/&#39;/g, "'").replace(/&quot;/g, '"').replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">").replace(/&amp;/g, "&");
   const passageHref = (p) => attr(links.passage(p));
   const inline = (raw, inRefs) => esc(raw)
     // "quotation" [ext-id] — a linked quotation, badged by whether it verified
-    .replace(/&quot;([^&]*?)&quot;\s*\[(ext-[0-9a-f]{12})\]/g, (m, q, id) => {
+    // Up to the closing &quot;, not the first "&": escaping turns ' and & into
+    // entities, and a pattern that stopped there never recognised such a
+    // quotation — it showed as plain text, unlinked and unbadged. \s? is the
+    // gate's own spacing rule (upc_common.parseQuoteMarkers).
+    .replace(/&quot;((?:(?!&quot;)[^\n])+?)&quot;\s?\[(ext-[0-9a-f]{12})\]/g, (m, q, id) => {
       const p = model.passageById.get(id);
       if (!p) return m;
-      const ok = U.VERIFIED_BADGES.has(p.badge);
-      return `<a href="${passageHref(p)}" title="${attr((BADGE_TEXT[p.badge] || [])[1] || "")}">“${q}”</a>` +
+      // ✓ only when the words quoted here are the passage's own words *and* the
+      // passage still matches its paper — re-checked at every build, so prose
+      // edited after it passed the gate cannot keep a check mark it lost.
+      const same = unesc(q) === p.quote;
+      const ok = same && U.VERIFIED_BADGES.has(p.badge);
+      const why = same ? (BADGE_TEXT[p.badge] || [])[1] || "" : "Doesn't match the passage it cites";
+      return `<a href="${passageHref(p)}" title="${attr(why)}">“${q}”</a>` +
         ` <span class="small">${ok ? "✓" : "⚠"} ${cite(p)}</span>`;
     })
     // a source id, backticked or bare — the paper it names, as a link
@@ -1255,6 +1322,40 @@ export function renderOverviewMarkdown(md, model, links) {
         return p ? `<a class="small" href="${passageHref(p)}">${cite(p)}</a>` : esc(`[${id}]`);
       }).join("; ");
     })
+    // [theme:<slug>/<code>] — the theme by name, linked to its current overview,
+    // with live counts that state their unit. Numbers are never typed into prose,
+    // so a rebuild cannot leave them stale.
+    .replace(/\[theme:([a-z0-9-]+)\/([a-z0-9-]+)\]/g, (m, slug, code) => {
+      const cb = model.codebooks.find((c) => c.slug === slug);
+      const def = cb && (cb.codes || []).find((c) => c.code === code);
+      if (!def) return `<span class="muted">${esc(slug + "/" + code)} (not in this corpus)</span>`;
+      const rec = model.codeIndex.get(`${cb.codebook_id}:${code}`);
+      const nP = rec ? rec.passages.length : 0, nS = rec ? rec.sources.size : 0;
+      // codeIndex.sources mixes papers with coded passages and papers coded as a
+      // whole; beside a passage count only the former is true (spec/09).
+      const nPP = rec ? new Set(rec.passages.map((i) => (model.passageById.get(i) || {}).source_id).filter(Boolean)).size : 0;
+      const ov = model.overviewByCode && model.overviewByCode.get(`${slug}:${code}`);
+      const label = esc(def.label || code);
+      const name = ov && links.overview ? `<a href="${attr(links.overview(ov))}">${label}</a>`
+        : rec && links.code ? `<a href="${attr(links.code(slug, code))}">${label}</a>` : label;
+      const n = rec && links.code
+        ? ` <a class="small muted" href="${attr(links.code(slug, code))}">(${nP
+            ? `${plural(nP, "passage", "passages")} from ${plural(nPP, "paper", "papers")}`
+            : `${plural(nS, "paper", "papers")} coded as a whole`})</a>`
+        : "";
+      return name + n;
+    })
+    // [view:<name>] — one of the site's own views.
+    .replace(/\[view:(matrix|passages|overviews|codes|sources)\]/g, (m, name) => {
+      let text = { passages: "every passage", overviews: "the overviews", codes: "the codes", sources: "the papers" }[name];
+      if (name === "matrix") {
+        const [a, b] = model.matrix || [];
+        const A = model.codebooks.find((c) => c.slug === a), B = model.codebooks.find((c) => c.slug === b);
+        if (!A || !B) return "the comparison table (not built for this site)";
+        text = `${A.title} × ${B.title}`;
+      }
+      return links.view ? `<a href="${attr(links.view(name))}">${esc(text)}</a>` : esc(text);
+    })
     .replace(/`([^`\n]+)`/g, "<code>$1</code>")
     .replace(/(^|[^*\w])\*([^*\s][^*\n]*?)\*(?=[^*\w]|$)/g, "$1<em>$2</em>");
 
@@ -1269,8 +1370,13 @@ export function renderOverviewMarkdown(md, model, links) {
     if (!list) return;
     const refs = list.items.some((it) => /src-[0-9a-f]{12}/.test(it));
     const tag = list.ordered ? "ol" : "ul";
-    html.push(`<${tag}${refs ? ' class="refs"' : ""}>` +
-      list.items.map((it) => `<li>${inline(it, refs)}</li>`).join("") + `</${tag}>`);
+    const block = `<${tag}${refs ? ' class="refs"' : ""}>` +
+      list.items.map((it) => `<li>${inline(it, refs)}</li>`).join("") + `</${tag}>`;
+    // On a page meant to be read in a minute, the papers behind a summary fold
+    // away — present, printable, and one click from every claim.
+    html.push(refs && opts.foldRefs
+      ? `<details class="refs-fold"><summary>${plural(list.items.length, "paper", "papers")} this draws on</summary>${block}</details>`
+      : block);
     list = null;
   };
   for (const line of String(md || "").replace(/\r\n/g, "\n").split("\n")) {
@@ -1295,6 +1401,53 @@ export function renderOverviewMarkdown(md, model, links) {
   return html.join("\n");
 }
 
+const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August",
+                "September", "October", "November", "December"];
+const longDate = (iso) => {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso || ""));
+  return m ? `${+m[3]} ${MONTHS[+m[2] - 1]} ${m[1]}` : String(iso || "");
+};
+
+/** Where every kind of link points, for a folder page `base` levels deep. */
+function folderLinks(base) {
+  const e = encodeURIComponent;
+  return {
+    passage: (p) => `${base}sources/${e(p.source_slug)}.html#ex=${e(p.id)}`,
+    source: (src) => `${base}sources/${e(src.slug)}.html`,
+    overview: (syn) => `${base}overviews/${e(syn.synthesis_id)}.html`,
+    code: (slug, code) => `${base}codes/${e(slug)}/${e(code)}.html`,
+    view: (name) => base + ({ matrix: "matrix.html", passages: "passages/", overviews: "overviews/",
+                              codes: "codes/", sources: "sources/" }[name] || ""),
+  };
+}
+
+/** The placed home summary, rendered for either shape: {t, note, h}, or null. */
+function homeCard(model, links) {
+  const h = model.homeSummary;
+  if (!h) return null;
+  const prov = h.provenance || {};
+  const by = prov.produced_by || {};
+  const author = by.method === "model" ? `a language model${by.model ? ` (${by.model})` : ""}` : (by.tool || "its author");
+  const df = prov.derived_from || {};
+  const nPass = (df.extraction_ids || []).length, nPap = (df.source_ids || []).length;
+  const who = codedBy(model);
+  // The site's own rule (spec/09): a model's judgement must never pass for a
+  // fact. So the card says who wrote it, when and from what, which parts were
+  // checked and which were not, and what its counts can and cannot mean — all
+  // read from the record, none of it typed.
+  const note = `Written by ${esc(author)}${prov.created_at ? ` on ${esc(longDate(prov.created_at))}` : ""}, from the ` +
+    `${plural(model.syntheses.length, "overview", "overviews")}` +
+    (nPass ? ` and ${plural(nPass, "passage", "passages")} from ${plural(nPap, "paper", "papers")}` : "") + ". " +
+    "Any quotation in it was checked against its paper character by character when this page was built; " +
+    "the sentences around them are the model's reading and were not." +
+    (who ? ` Theme counts are passages coded by ${esc(who)}: they show where the literature talks about a theme, ` +
+           "not how strong the evidence is." : "");
+  const changed = h._changed
+    ? '<p class="small" style="color:var(--warn)">⚠ This text was changed after its quotations were checked.</p>' : "";
+  return { t: h.title || "What the literature says", note,
+           h: changed + renderOverviewMarkdown(h.md, model, links, { foldRefs: true }) };
+}
+
 function overviewBodyHtml(model, syn, root) {
   const base = "../";
   let body = "";
@@ -1306,10 +1459,7 @@ function overviewBodyHtml(model, syn, root) {
   // The page already shows the title, so drop a leading H1 that repeats it.
   body = body.replace(/^\s*#\s+.*\n+/, "");
   // Render the marker grammar: "…" [ext-id] becomes a linked, badged quotation.
-  const rendered = renderOverviewMarkdown(body, model, {
-    passage: (p) => `${base}sources/${encodeURIComponent(p.source_slug)}.html#ex=${encodeURIComponent(p.id)}`,
-    source: (src) => `${base}sources/${encodeURIComponent(src.slug)}.html`,
-  });
+  const rendered = renderOverviewMarkdown(body, model, folderLinks(base));
   const claims = syn.claims || [];
   return `<h1 style="margin-top:0">${esc(syn.title || syn.synthesis_id)}</h1>
 <div class="card" style="max-width:74ch">${rendered || `<p class="muted">No text.</p>`}</div>
@@ -1449,6 +1599,8 @@ export function writeSite(root, opts = {}) {
     pages: written.filter((f) => f.endsWith(".html")).length,
     files: written.length,
     copied,
+    home_summary: model.homeSummary ? model.homeSummary.synthesis_id : null,
+    home_candidates: model.homeCandidates,
     counts: {
       sources: model.sources.length,
       passages: model.passages.filter((p) => p.quote).length,
@@ -1525,7 +1677,8 @@ const CLIENT_ONE = String.raw`
     return "<h1>"+E(D.title)+"</h1>"+
       '<p class="lede">A searchable library of what this literature actually says. Every quotation was compared '+
       "with the source text character by character when this file was built"+(D.failures?"":" — all of them matched")+".</p>"+
-      (D.overviews.length?'<p class="lede"><strong>New here?</strong> Start with the <a href="#/overviews">'+
+      (D.home?'<section class="card homesum"><h2>'+E(D.home.t)+'</h2><p class="small muted">'+D.home.note+"</p>"+D.home.h+"</section>":"")+
+      (D.overviews.length?'<p class="lede">'+(D.home?"<strong>Go deeper:</strong> read the":"<strong>New here?</strong> Start with the")+' <a href="#/overviews">'+
         PL(D.overviews.length,"overview","overviews")+"</a> — a short review per theme, written from the coded "+
         'passages, with every quotation linked back to the paper it came from. Then browse by <a href="#/codes">theme</a>, '+
         'by <a href="#/sources">paper</a>, or search <a href="#/passages">every passage</a>.</p>':"")+
@@ -1569,8 +1722,10 @@ const CLIENT_ONE = String.raw`
     if(!x) return "<h1>Unknown code</h1>";
     return '<p class="small muted" id="crumb"><a href="#/codes">Codes</a> › '+E(x.cb.title)+"</p><h1>"+E(x.c.label)+"</h1>"+
       (x.c.def?'<div class="defbox">'+E(x.c.def)+"</div>":"")+
-      '<p class="lede">'+PL(x.list.length,"passage","passages")+" in "+
-        PL(Object.keys(x.r.s).length,"source","sources")+
+      '<p class="lede">'+(function(){ var ps={}; x.list.forEach(function(p){ ps[p.s]=1; });
+        var pp=Object.keys(ps).length, whole=Math.max(0,Object.keys(x.r.s).length-pp);
+        return PL(x.list.length,"passage","passages")+" from "+PL(pp,"paper","papers")+
+          (whole?", plus "+PL(whole,"paper","papers")+" coded as a whole":""); })()+
         (x.list.length?". Narrow them on the left — those counts are within this code.":"")+"</p>"+
       (x.list.length?'<div id="browse"></div>':'<p class="muted">No passages carry this code yet.</p>');
   };
@@ -1889,6 +2044,9 @@ export function writeSingleFile(root, opts = {}) {
   const oneLinks = {
     passage: (p) => `#/source/${srcIndex.get(p.source_id)}?ex=${encodeURIComponent(p.id)}`,
     source: (src) => `#/source/${srcIndex.get(src.id)}`,
+    overview: (syn) => `#/overviews/${encodeURIComponent(syn.synthesis_id)}`,
+    code: (slug, code) => `#/code/${encodeURIComponent(slug)}/${encodeURIComponent(code)}`,
+    view: (name) => `#/${name}`,
   };
 
   const texts = [];
@@ -1923,6 +2081,8 @@ export function writeSingleFile(root, opts = {}) {
     };
   });
 
+  const home = homeCard(model, oneLinks);
+
   const payload = {
     files: opts.files || null,   // relative folder holding the PDFs, when bundled
     title: model.title,
@@ -1931,7 +2091,7 @@ export function writeSingleFile(root, opts = {}) {
     failures: model.failures,
     withText,
     badges: BADGE_TEXT,
-    sources, passages, codebooks, overviews, ck,
+    sources, passages, codebooks, overviews, ck, home,
   };
 
   // Each reading copy gets its own island, parsed only when its paper is opened.
@@ -2000,6 +2160,8 @@ ${textIslands}
   return {
     status: "ok", out, bytes: Buffer.byteLength(html, "utf8"),
     pdfs_bundled: copied, files_dir: opts.files || null,
+    home_summary: model.homeSummary ? model.homeSummary.synthesis_id : null,
+    home_candidates: model.homeCandidates,
     counts: {
       sources: sources.length,
       passages: passages.filter((p) => p.q).length,

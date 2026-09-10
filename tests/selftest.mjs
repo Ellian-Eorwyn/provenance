@@ -1463,6 +1463,61 @@ ok("filename rejects reserved", !checkFilename("sources/con/x.md").ok);
     fs.rmSync(out, { recursive: true, force: true });
   }
 
+  // A summary placed on the home page: gated like any synthesis, recorded as
+  // drawing on the overview it names, shown on Home, never among the overviews.
+  {
+    clearRepCache();
+    const homeMd = path.join(stage, "home.md");
+    fs.writeFileSync(homeMd, `# Home\n\nAs one paper puts it, "The regime resists change." [${eid}]\n\n- The paper · \`${sid}\` · [${eid}]\n`);
+    const homeObj = { type: "answer", title: "What the literature says", question: "What does it say?",
+      claims: [{ claim_id: "cl-h1", text: "Regimes resist.", evidence_ids: [eid] }],
+      ext: { "upc-site": { placement: "home" } },
+      provenance: { produced_by: { tool: "selftest", model: "test-model", method: "model" },
+                    derived_from: { synthesis_ids: [okSyn.synthesis_id] } } };
+    const placed = addSynthesisCmd(dir, homeObj, { output: homeMd, tool: "selftest" });
+    eq("home summary: added through the same gate", placed.status, "ok");
+    const hj = JSON.parse(fs.readFileSync(path.join(dir, "syntheses", placed.synthesis_id, "synthesis.json"), "utf8"));
+    ok("home summary: derived_from keeps what it cites and adds the overview it names",
+       (hj.provenance.derived_from.extraction_ids || []).includes(eid) && (hj.provenance.derived_from.source_ids || []).includes(sid) &&
+       JSON.stringify(hj.provenance.derived_from.synthesis_ids) === JSON.stringify([okSyn.synthesis_id]));
+    clearRepCache();
+    eq("home summary: the corpus still validates", validateCorpus(dir).status, "passed");
+    clearRepCache();
+    eq("home summary: naming an overview that does not exist is refused",
+       addSynthesisCmd(dir, { ...homeObj, title: "Ghost", provenance: { produced_by: { tool: "t", method: "model" },
+         derived_from: { synthesis_ids: ["syn-000000000000"] } } }, { output: homeMd, tool: "selftest" }).status, "refused");
+    const themeMd = path.join(stage, "theme.md");
+    fs.writeFileSync(themeMd, `Themes: [theme:nobook/nothing]. "The regime resists change." [${eid}]\n\n- The paper · \`${sid}\` · [${eid}]\n`);
+    clearRepCache();
+    eq("home summary: a theme link to a code that does not exist is refused",
+       addSynthesisCmd(dir, { ...homeObj, title: "Bad theme", provenance: { produced_by: { tool: "t", method: "model" } } },
+                       { output: themeMd, tool: "selftest" }).status, "refused");
+
+    clearRepCache();
+    const out = fs.mkdtempSync(path.join(os.tmpdir(), "upc-home-"));
+    const res = writeSite(dir, { out });
+    const idx = fs.readFileSync(path.join(out, "index.html"), "utf8");
+    ok("home summary: the home page carries it, headed", idx.includes('<section class="card homesum"><h2>What the literature says</h2>'));
+    ok("home summary: it says who wrote it, and that its own sentences were not checked",
+       /Written by a language model \(test-model\)/.test(idx) && /the model's reading and were not\./.test(idx));
+    ok("home summary: its quotation is linked and checked", /“The regime resists change\.”<\/a> <span class="small">✓/.test(idx));
+    ok("home summary: its papers fold away", idx.includes('<details class="refs-fold"><summary>1 paper this draws on</summary>'));
+    ok("home summary: with it above, the overviews are where to go deeper", idx.includes("<strong>Go deeper:</strong>"));
+    const ovIdx = fs.readFileSync(path.join(out, "overviews", "index.html"), "utf8");
+    ok("home summary: never listed among the overviews", ovIdx.includes(okSyn.synthesis_id) && !ovIdx.includes(placed.synthesis_id));
+    ok("home summary: no overview page is written for it", !fs.existsSync(path.join(out, "overviews", placed.synthesis_id + ".html")));
+    eq("home summary: the export says which summary it showed", res.home_summary, placed.synthesis_id);
+    const file = path.join(out, "one.html");
+    writeSingleFile(dir, { out: file });
+    const payload = JSON.parse(fs.readFileSync(file, "utf8").match(/<script type="application\/json" id="upc-data">([\s\S]*?)<\/script>/)[1]);
+    ok("one file: carries the summary, rendered, with its authorship", payload.home && payload.home.t === "What the literature says" &&
+       /✓/.test(payload.home.h) && /Written by a language model/.test(payload.home.note));
+    ok("one file: and keeps it out of the overviews", !payload.overviews.some((o) => o.id === placed.synthesis_id));
+    fs.rmSync(out, { recursive: true, force: true });
+    // Leave the fixture as the tests below expect it: they count its syntheses.
+    fs.rmSync(path.join(dir, "syntheses", placed.synthesis_id), { recursive: true, force: true });
+  }
+
   // Rule 2.4: prose that never names its source is caught before writing.
   const uncited = path.join(stage, "uncited.md");
   fs.writeFileSync(uncited, `# Overview\n\nAs it says, "The regime resists change." [${eid}].\n`);
@@ -1550,6 +1605,68 @@ ok("filename rejects reserved", !checkFilename("sources/con/x.md").ok);
   ok("overview md: markup in the text is escaped, never obeyed", html.includes("Another &lt;b&gt;paper&lt;/b&gt;") && !html.includes("<b>"));
   ok("overview md: the heading is a heading", html.includes("<h2>Passages this draws on</h2>"));
   eq("overview md: the prose is one paragraph", (html.match(/<p>/g) || []).length, 1);
+}
+
+// --- quotations, theme links and views in overview prose ---
+//
+// A quotation containing an apostrophe or an ampersand was never recognised (the
+// pattern stopped at the first "&" of the escaped text), and ✓ said only that
+// the passage matched its paper, not that the quoted words were the passage's.
+{
+  const Q = (id, quote, src = "src-111111111111") =>
+    [id, { id, source_id: src, cite: "Geels 2017", badge: "verified-to-transcript", source_slug: "s1", quote }];
+  const theory = { codebook_id: "cbk-000000000001", slug: "theory", title: "Theory",
+    codes: [{ code: "mlp", label: "Multi-level perspective" }, { code: "tis", label: "Technological innovation systems" },
+            { code: "spt", label: "Social practice theory" }] };
+  const dimension = { codebook_id: "cbk-000000000002", slug: "dimension", title: "Dimension", codes: [{ code: "power", label: "Power" }] };
+  const model = {
+    passageById: new Map([Q("ext-aaaaaaaaaaaa", "the regime's core"), Q("ext-bbbbbbbbbbbb", "R&D matters"),
+                          Q("ext-cccccccccccc", "plain words", "src-222222222222")]),
+    sourceById: new Map([["src-111111111111", { id: "src-111111111111", cite: "Geels 2017", slug: "s1" }],
+                         ["src-222222222222", { id: "src-222222222222", cite: "Mu 2026", slug: "s2" }]]),
+    codebooks: [theory, dimension],
+    codeIndex: new Map([
+      ["cbk-000000000001:mlp", { passages: ["ext-aaaaaaaaaaaa", "ext-bbbbbbbbbbbb", "ext-cccccccccccc"],
+                                 sources: new Set(["src-111111111111", "src-222222222222", "src-333333333333"]) }],
+      ["cbk-000000000001:tis", { passages: ["ext-aaaaaaaaaaaa"], sources: new Set(["src-111111111111"]) }],
+      ["cbk-000000000001:spt", { passages: [], sources: new Set(["src-111111111111", "src-222222222222"]) }],
+    ]),
+    overviewByCode: new Map([["theory:mlp", { synthesis_id: "syn-000000000001", title: "Multi-level perspective" }]]),
+    matrix: ["theory", "dimension"],
+  };
+  const links = { passage: (x) => `P:${x.id}`, source: (x) => `S:${x.id}`, overview: (o) => `O:${o.synthesis_id}`,
+                  code: (sl, c) => `C:${sl}/${c}`, view: (n) => `V:${n}` };
+  const r = (md, o) => renderOverviewMarkdown(md, model, links, o);
+
+  ok("prose quote: an apostrophe no longer hides a quotation",
+     /<a href="P:ext-aaaaaaaaaaaa"[^>]*>“the regime&#39;s core”<\/a> <span class="small">✓/.test(r(`As they put it, "the regime's core" [ext-aaaaaaaaaaaa].`)));
+  ok("prose quote: nor does an ampersand",
+     /<a href="P:ext-bbbbbbbbbbbb"[^>]*>“R&amp;D matters”<\/a> <span class="small">✓/.test(r(`"R&D matters" [ext-bbbbbbbbbbbb]`)));
+  const wrong = r(`"the regime's heart" [ext-aaaaaaaaaaaa]`);
+  ok("prose quote: words that are not the passage's own lose the check mark",
+     wrong.includes("⚠") && !wrong.includes("✓") && wrong.includes("Doesn&#39;t match the passage it cites"));
+  ok("prose quote: two spaces before the marker is not a quotation, as the gate says",
+     !/“plain words”/.test(r(`"plain words"  [ext-cccccccccccc]`)));
+
+  const t = r("[theme:theory/mlp] [theme:theory/tis] [theme:theory/spt] [theme:theory/nope] [theme:nobook/x]");
+  ok("theme: named, and linked to its current overview", t.includes('<a href="O:syn-000000000001">Multi-level perspective</a>'));
+  ok("theme: counts say passages and the papers they come from, not a mixed total", t.includes("(3 passages from 2 papers)"));
+  ok("theme: one passage from one paper reads in the singular", t.includes("(1 passage from 1 paper)"));
+  ok("theme: a code with no overview links its code page", t.includes('<a href="C:theory/tis">Technological innovation systems</a>'));
+  ok("theme: a code coded only on whole papers says so", t.includes("(2 papers coded as a whole)"));
+  ok("theme: a code that does not exist is visibly inert, never a dead link",
+     t.includes("theory/nope (not in this corpus)") && t.includes("nobook/x (not in this corpus)") && !t.includes('href="C:theory/nope"'));
+
+  ok("view: the matrix is named from its two codebooks", r("[view:matrix]").includes('<a href="V:matrix">Theory × Dimension</a>'));
+  ok("view: every passage", r("[view:passages]").includes('<a href="V:passages">every passage</a>'));
+  const noMatrix = renderOverviewMarkdown("[view:matrix]", { ...model, matrix: null }, links);
+  ok("view: a matrix that was not built says so rather than linking nowhere",
+     noMatrix.includes("not built for this site") && !noMatrix.includes("V:matrix"));
+
+  const refs = "Prose [ext-aaaaaaaaaaaa].\n\n- A paper · `src-111111111111` · [ext-aaaaaaaaaaaa]\n- Another · `src-222222222222` · [ext-cccccccccccc]\n";
+  ok("refs: fold away under a count when asked",
+     /<details class="refs-fold"><summary>2 papers this draws on<\/summary><ul class="refs">/.test(r(refs, { foldRefs: true })));
+  ok("refs: stay an open list otherwise", !r(refs).includes("<details") && r(refs).includes('<ul class="refs">'));
 }
 
 // --- corpus.json is an index, not the register of what exists ---
@@ -1683,6 +1800,7 @@ ok("filename rejects reserved", !checkFilename("sources/con/x.md").ok);
     const codeHtml = read(`codes/${cbk.slug}/mlp.html`);
     ok("site: a code page mounts the browser rather than dumping every passage",
        /data-browse/.test(codeHtml));
+    ok("site: a code page says how many papers its passages come from", /\d+ passages? from \d+ papers?/.test(codeHtml));
     ok("site: a code page leaves out the scheme it is already filtered by",
        /data-omit="theory"/.test(codeHtml) && /data-only="theory:mlp"/.test(codeHtml));
     ok("site: a code page still renders its passages for a reader without scripts",

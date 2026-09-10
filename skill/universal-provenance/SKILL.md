@@ -179,7 +179,12 @@ or set `UPC_SCHEMA_DIR` / `UPC_VOCAB_DIR`.
    generations/syntheses.
 5. **Generated prose cites and verifies.** A `synthesis.md` cites every
    evidence/source id its claims depend on, marks each quotation with `"…"
-   [ext-id]`, and passes `upc verify-quotes`.
+   [ext-id]`, and passes `upc verify-quotes`. Two site-only link markers may sit in
+   prose beside those: `[theme:<codebook>/<code>]` (a theme, linked to its current
+   overview with live counts) and `[view:<name>]`. They are navigation, never
+   evidence — the gate ignores them, and `add synthesis` refuses a theme that
+   names no code. A synthesis with `ext["upc-site"].placement` = `"home"` is shown
+   on the site's home page instead of among the overviews.
 6. **Never mutate a source.** Re-capture is a new representation; a moved URL is a
    new source related by `supersedes`. Correct a derived object via the modify
    workflow (edit → `upc validate` → `upc regen`), never by hand-editing a

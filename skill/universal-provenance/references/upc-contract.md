@@ -82,6 +82,9 @@ Writers emit the per-source layout; readers honor whatever `sections` declares
 No normalization at verification time. Hop A: representation bytes hash to
 `sha256`. Hop B: `codepoints(utf8_decode(bytes))[start:end] === direct_quote`.
 Hop C: every `"…" [ext-id]` in output equals that extraction's `direct_quote`.
+Site-only link markers — `[theme:<codebook>/<code>]`, `[view:<name>]` — are
+navigation, not citations: never checked, never counted, and never placed
+directly after a quotation (that would stop it being one).
 Copy quotes with `upc quote`; check output with `upc verify-quotes`. To quote
 less, `upc quote <id> --narrow <a> <b>` (mints a sub-quote). A coarse locator
 (page/section) can never carry a gated quote — put such context in

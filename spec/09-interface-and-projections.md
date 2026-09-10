@@ -248,7 +248,11 @@ Normative requirements, in addition to everything the browser must already do:
 2. Every quotation and its context MUST be read from the representation bytes at
    the locator **at build time** and re-gated there. A quotation whose gate now
    fails MUST be rendered as failing, never omitted: a library that quietly drops
-   what it can no longer prove is worse than one that says so.
+   what it can no longer prove is worse than one that says so. The same holds for
+   a quotation inside overview or summary prose: the quoted words MUST be compared
+   with the passage they cite each time the page is built, and a mismatch MUST
+   render as a failure — a check mark there asserts both that the passage matches
+   its source and that the prose quotes the passage.
 3. A reading copy too large to embed MUST be omitted whole with a statement to
    that effect. It MUST NOT be truncated — half a document presented as a whole
    one is exactly the failure this projection exists to prevent.
@@ -279,6 +283,17 @@ Normative requirements, in addition to everything the browser must already do:
    first sixty" is the same failure as a count that does not state its unit, and
    a spreadsheet that quietly stops where the reader stopped scrolling is worse:
    it looks complete.
+8. A synthesis whose `ext["upc-site"].placement` is `"home"` MAY be shown on the
+   site's home page. If one is, it MUST NOT be listed or counted among the
+   overviews; it MUST say visibly who or what wrote it, and that its own sentences
+   — unlike its quotations — were not checked; its quotations are re-checked at
+   build time like any other (requirement 2); and if several are placed, the
+   newest is shown and the export reports how many there were. Links in prose
+   that name a theme (`[theme:<codebook>/<code>]`) or a view (`[view:<name>]`) are
+   navigation, not evidence: they are never checked as quotations and never count
+   as citations, and a theme resolves at build time to *its current* overview.
+   Overview ids are content hashes (spec/06), so a link by id would break the next
+   time the overview was written; a link by theme cannot.
 
 ### The Obsidian vault export
 

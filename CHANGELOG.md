@@ -3,6 +3,46 @@
 All notable changes to the Universal Provenance Corpus (UPC) standard.
 Versioning is semantic (§00 Versioning policy).
 
+## 1.12.0 — 2026-09-10
+
+**Backward-compatible (additive) minor release: a summary on the home page.** No
+schema, vocabulary, id recipe or gate changed; schema `$id`s stay at `1.8.0`. A
+1.11 site export would list a placed summary among the overviews.
+
+### Added — a placed summary, and links that survive a rebuild
+
+- A synthesis whose `ext["upc-site"].placement` is `"home"` is shown at the top of
+  the site's home page, in both shapes, under a line that says who wrote it and
+  when, from how many passages and papers, and that its own sentences — unlike
+  its quotations — were not checked. It is never listed or counted among the
+  overviews, its reference list folds away, and exports report which summary they
+  showed and how many were placed (spec/09 requirement 8).
+- `[theme:<codebook>/<code>]` in overview or summary prose names a theme, links it
+  to that theme's *current* overview and states live counts ("528 passages from
+  120 papers"). Overview ids are content hashes, so a link by id would break the
+  next time an overview was written; a link by theme cannot, and no count is ever
+  typed into prose to go stale. `[view:<name>]` links one of the site's views.
+  `upc add synthesis` refuses a theme link to a code that does not exist.
+- `upc add synthesis` merges a caller's `derived_from` with the one it derives,
+  where the caller's used to *replace* it — so a summary can record the overviews
+  it drew on without losing its passages and papers. A named synthesis that does
+  not exist is refused.
+
+### Fixed — quotations and counts in prose
+
+- A quotation containing an apostrophe or an ampersand was never recognised in
+  overview prose: escaping turned those characters into entities and the pattern
+  stopped at the first `&`, so the quotation showed as plain text, unlinked,
+  without its check mark. It now runs to the closing quote, with the gate's own
+  spacing rule.
+- A check mark on a quotation in prose now means what it says: the quoted words
+  are compared with the passage they cite each time the page is built, and a
+  mismatch shows ⚠ "Doesn't match the passage it cites". Before, ✓ said only that
+  the passage matched its paper.
+- Counts beside a code say what they count — "528 passages from 120 papers, plus 3
+  papers coded as a whole" — where code pages printed one number that mixed papers
+  with coded passages and papers coded as a whole (spec/09).
+
 ## 1.11.0 — 2026-09-10
 
 **Backward-compatible (additive) minor release: overviews readable, codes
