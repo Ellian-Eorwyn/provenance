@@ -1,5 +1,5 @@
 {
-  "upc_spec_version": "1.13.0",
+  "upc_spec_version": "1.13.1",
   "corpus_id": "cor-bd9a8eb07fb8",
   "title": "Migration downtime research",
   "readme": "Universal Provenance Corpus. Work only from ids resolved through the manifests; sources are immutable; derived objects link back via provenance.derived_from. Quotations are verified byte-for-byte (spec/03).",

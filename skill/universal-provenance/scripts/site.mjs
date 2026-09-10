@@ -954,7 +954,18 @@ function passageHtml(p, model, base, { showSource = true, context = true, compac
   const chips = p.codings.map((c) => chipHtml(c, base, bad, compact)).join(" ");
   const dis = p.disagreements.length
     ? `<div class="disagree">Coders disagree here — both judgements are kept and shown.</div>` : "";
-  const where = [p.line_range ? `line ${p.line_range.start}` : "", p.page ? `page ${p.page}` : ""].filter(Boolean).join(" · ");
+  // "line N" opens the passage in the reading copy; "page N ↗" opens the
+  // original PDF at that page when the PDFs travel with the site — the same pair
+  // the passages page shows. Source pages used to render "page N" into the
+  // reading-copy link, so it never reached the PDF.
+  const where = p.line_range ? `line ${p.line_range.start}` : "";
+  const src = model.sourceById.get(p.source_id);
+  const pdfName = src && src.pdfRep ? path.basename(src.pdfRep.path) : "";
+  const pdfLink = !p.page ? ""
+    : model.filesDir && pdfName
+      ? ` <a class="muted" href="${base}${model.filesDir}/${encodeURIComponent(pdfName)}#page=${encodeURIComponent(p.page)}"` +
+        ` target="_blank" rel="noopener" title="Open the original PDF at this page">page ${esc(p.page)} ↗</a>`
+      : ` <span class="muted">page ${esc(p.page)}</span>`;
   const csv = compact ? "" : j({
     quote: p.quote || p.note, source: `${p.cite} — ${p.source_title}`, year: p.year,
     doi: (model.sourceById.get(p.source_id) || {}).doi || "",
@@ -982,7 +993,7 @@ function passageHtml(p, model, base, { showSource = true, context = true, compac
     ${chips}
     <span class="spacer"></span>
     ${showSource ? `<a class="muted" href="${srcHref}">${esc(p.cite)}${where ? ` · ${esc(where)}` : ""} →</a>`
-                 : `<a class="muted" href="${srcHref}">${esc(where || "in context")} →</a>`}
+                 : `<a class="muted" href="${srcHref}">${esc(where || "in context")} →</a>`}${pdfLink}
   </div>
 </article>`;
 }
@@ -1114,7 +1125,8 @@ function sourcePage(model, s, textInfo) {
   const b = s.bibliographic || {};
   const bits = [s.authors, s.year ? String(s.year) : "", s.container, b.volume ? `vol. ${b.volume}` : "",
     b.page ? `pp. ${b.page}` : ""].filter(Boolean).join(" · ");
-  const pdfHref = s.pdfRep ? `${base}files/${encodeURIComponent(path.basename(s.pdfRep.path))}` : null;
+  const pdfHref = model.filesDir && s.pdfRep
+    ? `${base}${model.filesDir}/${encodeURIComponent(path.basename(s.pdfRep.path))}` : null;
   const marks = s.passages.filter((p) => p.quote && p.line_range).sort((a, b2) => (a.line_range.start - b2.line_range.start));
   return page({
     title: `${s.cite} — ${s.title}`, rel: `sources/${s.slug}.html`, model, active: "sources",
@@ -1488,6 +1500,8 @@ function overviewPage(model, syn, root) {
 export function writeSite(root, opts = {}) {
   const loaded = U.loadCorpus(root);
   const model = buildSiteModel(loaded, opts);
+  // Where the original PDFs travel with the site, if they do (--bundle).
+  model.filesDir = opts.bundle ? "files" : null;
   const outDir = path.resolve(opts.out || path.join(root, "site"));
   const written = [];
   const w = (rel, text) => {

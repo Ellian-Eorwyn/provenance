@@ -1835,6 +1835,47 @@ ok("filename rejects reserved", !checkFilename("sources/con/x.md").ok);
     fs.rmSync(out, { recursive: true, force: true });
   }
 
+  // On a source page, "page N" opens the original PDF at that page when the PDFs
+  // travel with the site — as it does on the passages page. It used to link only
+  // to the passage in the reading copy.
+  {
+    const sjPath = path.join(dir, "sources", slug, "source.json");
+    const exPath = path.join(dir, "sources", slug, "extractions.jsonl");
+    const sjBefore = fs.readFileSync(sjPath, "utf8"), exBefore = fs.readFileSync(exPath, "utf8");
+    const pdfBuf = Buffer.from("%PDF-1.4\n% selftest\n", "utf8");
+    const pdfAbs = path.join(dir, "sources", slug, "representations", "paper.pdf");
+    fs.writeFileSync(pdfAbs, pdfBuf);
+    const sj = JSON.parse(sjBefore);
+    sj.representations.push({ representation_id: mintRepId(pdfBuf), role: "document_pdf", media_type: "application/pdf",
+      path: `sources/${slug}/representations/paper.pdf`, sha256: sha256Hex(pdfBuf), produced_by: "import", provenance: stamp });
+    fs.writeFileSync(sjPath, JSON.stringify(sj, null, 2));
+    fs.writeFileSync(exPath, exBefore.trim().split("\n").map((l) => {
+      const o = JSON.parse(l);
+      if (o.direct_quote) o.secondary_locators = [{ type: "page", representation_ref: rep, value: 3, unit: "page" }];
+      return JSON.stringify(o);
+    }).join("\n") + "\n");
+    clearRepCache();
+    const outB = fs.mkdtempSync(path.join(os.tmpdir(), "upc-pdf-"));
+    writeSite(dir, { out: outB, bundle: true });
+    const srcB = fs.readFileSync(path.join(outB, "sources", slug + ".html"), "utf8");
+    ok("source page: page N opens the original PDF at that page",
+       srcB.includes('href="../files/paper.pdf#page=3" target="_blank" rel="noopener" title="Open the original PDF at this page">page 3 ↗</a>'));
+    ok("source page: line N still opens the passage in the reading copy", /#ex=ext-[0-9a-f]{12}">line \d+ →<\/a>/.test(srcB));
+    ok("source page: and the PDF it opens travels with the site", fs.existsSync(path.join(outB, "files", "paper.pdf")));
+    clearRepCache();
+    const outU = fs.mkdtempSync(path.join(os.tmpdir(), "upc-nopdf-"));
+    writeSite(dir, { out: outU });
+    const srcU = fs.readFileSync(path.join(outU, "sources", slug + ".html"), "utf8");
+    ok("source page: without the PDFs, the page number is plain text and nothing links a missing file",
+       srcU.includes('<span class="muted">page 3</span>') && !srcU.includes("files/paper.pdf"));
+    fs.rmSync(outB, { recursive: true, force: true });
+    fs.rmSync(outU, { recursive: true, force: true });
+    fs.writeFileSync(sjPath, sjBefore);
+    fs.writeFileSync(exPath, exBefore);
+    fs.rmSync(pdfAbs);
+    clearRepCache();
+  }
+
   // A drifted locator must surface as a failure, and its code must inherit it.
   {
     const f = path.join(dir, "sources", slug, "extractions.jsonl");

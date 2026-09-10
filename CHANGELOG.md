@@ -3,6 +3,24 @@
 All notable changes to the Universal Provenance Corpus (UPC) standard.
 Versioning is semantic (§00 Versioning policy).
 
+## 1.13.1 — 2026-09-10
+
+**Patch release: a fix to the reader's site.** No schema, vocabulary, id recipe,
+gate or spec requirement changed.
+
+### Fixed
+
+- On the folder site's source pages, a passage's "page N" never opened the
+  original PDF: it was folded into the link to the passage in the reading copy,
+  while the same passage on the passages page opened the PDF at that page. Source
+  pages are rendered by a separate server-side template that never learned the
+  PDF link. Now "line N →" opens the passage in the reading copy and "page N ↗"
+  opens the PDF at that page whenever the PDFs travel with the site (`--bundle`);
+  without them the page number is plain text.
+- A source page's "open the PDF" link was printed even when the PDFs were not
+  bundled, pointing at a folder that did not exist. It now appears only when there
+  is a PDF to open.
+
 ## 1.13.0 — 2026-09-10
 
 **Backward-compatible minor release: the home summary comes first.** No schema,
