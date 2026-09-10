@@ -1498,10 +1498,12 @@ ok("filename rejects reserved", !checkFilename("sources/con/x.md").ok);
     const res = writeSite(dir, { out });
     const idx = fs.readFileSync(path.join(out, "index.html"), "utf8");
     ok("home summary: the home page carries it, headed", idx.includes('<section class="card homesum"><h2>What the literature says</h2>'));
-    ok("home summary: it says who wrote it, and that its own sentences were not checked",
-       /Written by a language model \(test-model\)/.test(idx) && /the model's reading and were not\./.test(idx));
+    ok("home summary: the page leads with the summary, not a paragraph about it", !/Written by/.test(idx));
+    ok("home summary: who wrote it stays in its record", hj.provenance.produced_by.model === "test-model");
     ok("home summary: its quotation is linked and checked", /“The regime resists change\.”<\/a> <span class="small">✓/.test(idx));
-    ok("home summary: its papers fold away", idx.includes('<details class="refs-fold"><summary>1 paper this draws on</summary>'));
+    ok("home summary: its papers fold away", idx.includes('<details class="refs-fold"><summary>1 paper this draws on</summary><ul class="refs">'));
+    ok("home summary: nothing stands between its heading and its first point",
+       /<section class="card homesum"><h2>What the literature says<\/h2><p>As one paper/.test(idx));
     ok("home summary: with it above, the overviews are where to go deeper", idx.includes("<strong>Go deeper:</strong>"));
     const ovIdx = fs.readFileSync(path.join(out, "overviews", "index.html"), "utf8");
     ok("home summary: never listed among the overviews", ovIdx.includes(okSyn.synthesis_id) && !ovIdx.includes(placed.synthesis_id));
@@ -1510,8 +1512,8 @@ ok("filename rejects reserved", !checkFilename("sources/con/x.md").ok);
     const file = path.join(out, "one.html");
     writeSingleFile(dir, { out: file });
     const payload = JSON.parse(fs.readFileSync(file, "utf8").match(/<script type="application\/json" id="upc-data">([\s\S]*?)<\/script>/)[1]);
-    ok("one file: carries the summary, rendered, with its authorship", payload.home && payload.home.t === "What the literature says" &&
-       /✓/.test(payload.home.h) && /Written by a language model/.test(payload.home.note));
+    ok("one file: carries the summary, rendered, and nothing about it", payload.home && payload.home.t === "What the literature says" &&
+       /✓/.test(payload.home.h) && !/Written by/.test(payload.home.h));
     ok("one file: and keeps it out of the overviews", !payload.overviews.some((o) => o.id === placed.synthesis_id));
     fs.rmSync(out, { recursive: true, force: true });
     // Leave the fixture as the tests below expect it: they count its syntheses.
@@ -1793,9 +1795,11 @@ ok("filename rejects reserved", !checkFilename("sources/con/x.md").ok);
   // click, has a library they will not use.
   {
     const out = fs.mkdtempSync(path.join(os.tmpdir(), "upc-sitew-"));
-    const res = writeSite(dir, { out });
+    const res = writeSite(dir, { out, matrix: ["theory", "theory"] });
     const read = (rel) => fs.readFileSync(path.join(out, rel), "utf8");
     ok("site: the folder builds", res.status === "ok" && res.pages > 0);
+    ok("site: Home is reachable from every page, the top-level matrix included",
+       /href="index\.html">Home</.test(read("matrix.html")) && /href="\.\.\/index\.html">Home</.test(read("passages/index.html")));
 
     const codeHtml = read(`codes/${cbk.slug}/mlp.html`);
     ok("site: a code page mounts the browser rather than dumping every passage",

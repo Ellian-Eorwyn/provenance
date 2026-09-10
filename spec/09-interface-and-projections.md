@@ -285,8 +285,9 @@ Normative requirements, in addition to everything the browser must already do:
    it looks complete.
 8. A synthesis whose `ext["upc-site"].placement` is `"home"` MAY be shown on the
    site's home page. If one is, it MUST NOT be listed or counted among the
-   overviews; it MUST say visibly who or what wrote it, and that its own sentences
-   — unlike its quotations — were not checked; its quotations are re-checked at
+   overviews; who or what wrote it, and what it rests on, stay in its provenance
+   (`produced_by`, `derived_from`), which the verification browser shows, and the
+   site MAY also state them on the page; its quotations are re-checked at
    build time like any other (requirement 2); and if several are placed, the
    newest is shown and the export reports how many there were. Links in prose
    that name a theme (`[theme:<codebook>/<code>]`) or a view (`[view:<name>]`) are

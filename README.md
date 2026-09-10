@@ -1,7 +1,7 @@
 # Universal Provenance Corpus (UPC)
 
 **A tool-independent standard for storing research materials with explicit,
-portable provenance and byte-exact quotation gates.** Version **1.12.0**.
+portable provenance and byte-exact quotation gates.** Version **1.13.0**.
 
 A UPC corpus is a folder in which both humans and software can always answer:
 *What is this object? Where did it come from? What transformations produced it?

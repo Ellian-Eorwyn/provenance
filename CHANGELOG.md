@@ -3,6 +3,30 @@
 All notable changes to the Universal Provenance Corpus (UPC) standard.
 Versioning is semantic (§00 Versioning policy).
 
+## 1.13.0 — 2026-09-10
+
+**Backward-compatible minor release: the home summary comes first.** No schema,
+vocabulary, id recipe or gate changed; schema `$id`s stay at `1.8.0`. One
+projection rule is relaxed (a minor change under §00).
+
+### Changed — the home summary no longer opens with a paragraph about itself (spec/09)
+
+- The card led with a note: who wrote the summary and when, from what, and that
+  its sentences — unlike its quotations — were not checked. At the publisher's
+  request it is gone, so the summary is what a reader meets first. Who wrote it
+  and what it rests on stay in its record (`produced_by`, `derived_from`), which
+  the verification browser shows; spec/09 requirement 8 makes stating them on the
+  page a MAY. A summary edited after its quotations were checked still says so on
+  the card.
+- The summary card takes the page's full width, like the other cards on Home.
+
+### Fixed
+
+- On the folder site, Home could not be reached from the matrix page. Pages at
+  the top level linked Home as an empty address, which a browser reads as "this
+  page"; pages one folder down got `../` and worked, which is why only the matrix
+  misbehaved. Home now links to `index.html` from every page.
+
 ## 1.12.0 — 2026-09-10
 
 **Backward-compatible (additive) minor release: a summary on the home page.** No

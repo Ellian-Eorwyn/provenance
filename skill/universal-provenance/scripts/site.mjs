@@ -432,7 +432,7 @@ a.pn{display:inline-block;min-width:1.5em;text-align:center;font:600 .72rem/1.5 
 a.pn:hover{background:var(--accent-soft);text-decoration:none}
 .card code{font-size:.85em;background:var(--chip);border-radius:4px;padding:0 .25em}
 /* the home page's summary of what the literature says */
-.homesum{margin:1.1rem 0 1.5rem;max-width:80ch;border-left:3px solid var(--accent)}
+.homesum{margin:1.1rem 0 1.5rem;border-left:3px solid var(--accent)}
 .homesum h2{margin:.1rem 0 .35rem}
 .homesum h3{font-size:1rem;margin:1.05rem 0 .3rem}
 .homesum ul{padding-left:1.15rem;margin:.3rem 0}
@@ -861,7 +861,8 @@ function page({ title, rel, body, model, active, extraHead = "", data = false })
   const up = rel.split("/").length - 1;
   const base = up ? "../".repeat(up) : "";
   const nav = [
-    ["", "Home", "home"],
+    // Not "": on a top-level page (the matrix) an empty link is *this* page.
+    ["index.html", "Home", "home"],
     ["codes/", "Codes", "codes"],
     ["sources/", "Sources", "sources"],
     ["passages/", "Passages", "passages"],
@@ -1004,7 +1005,7 @@ function homePage(model) {
     body: `<h1>${esc(model.title)}</h1>
 <p class="lede">A searchable library of what this literature actually says. Every quotation was compared with the
 source text character by character when this page was built${verified === nPass && nPass ? " — all of them matched" : ""}.</p>
-${hc ? `<section class="card homesum"><h2>${esc(hc.t)}</h2><p class="small muted">${hc.note}</p>${hc.h}</section>` : ""}
+${hc ? `<section class="card homesum"><h2>${esc(hc.t)}</h2>${hc.h}</section>` : ""}
 ${model.syntheses.length ? `<p class="lede">${hc ? "<strong>Go deeper:</strong> read the" : "<strong>New here?</strong> Start with the"}
 <a href="overviews/">${plural(model.syntheses.length, "overview", "overviews")}</a> — a short review per theme,
 written from the coded passages, with every quotation linked back to the paper it came from. Then browse by
@@ -1401,13 +1402,6 @@ export function renderOverviewMarkdown(md, model, links, opts = {}) {
   return html.join("\n");
 }
 
-const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August",
-                "September", "October", "November", "December"];
-const longDate = (iso) => {
-  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso || ""));
-  return m ? `${+m[3]} ${MONTHS[+m[2] - 1]} ${m[1]}` : String(iso || "");
-};
-
 /** Where every kind of link points, for a folder page `base` levels deep. */
 function folderLinks(base) {
   const e = encodeURIComponent;
@@ -1421,30 +1415,17 @@ function folderLinks(base) {
   };
 }
 
-/** The placed home summary, rendered for either shape: {t, note, h}, or null. */
+/** The placed home summary, rendered for either shape: {t, h}, or null. */
 function homeCard(model, links) {
   const h = model.homeSummary;
   if (!h) return null;
-  const prov = h.provenance || {};
-  const by = prov.produced_by || {};
-  const author = by.method === "model" ? `a language model${by.model ? ` (${by.model})` : ""}` : (by.tool || "its author");
-  const df = prov.derived_from || {};
-  const nPass = (df.extraction_ids || []).length, nPap = (df.source_ids || []).length;
-  const who = codedBy(model);
-  // The site's own rule (spec/09): a model's judgement must never pass for a
-  // fact. So the card says who wrote it, when and from what, which parts were
-  // checked and which were not, and what its counts can and cannot mean — all
-  // read from the record, none of it typed.
-  const note = `Written by ${esc(author)}${prov.created_at ? ` on ${esc(longDate(prov.created_at))}` : ""}, from the ` +
-    `${plural(model.syntheses.length, "overview", "overviews")}` +
-    (nPass ? ` and ${plural(nPass, "passage", "passages")} from ${plural(nPap, "paper", "papers")}` : "") + ". " +
-    "Any quotation in it was checked against its paper character by character when this page was built; " +
-    "the sentences around them are the model's reading and were not." +
-    (who ? ` Theme counts are passages coded by ${esc(who)}: they show where the literature talks about a theme, ` +
-           "not how strong the evidence is." : "");
+  // The card leads with the summary itself. Who wrote it and what it rests on
+  // stay in its record (provenance.produced_by, derived_from), which the
+  // verification browser shows (spec/09 requirement 8). A text edited after its
+  // quotations were checked is the one thing the card still says about itself.
   const changed = h._changed
     ? '<p class="small" style="color:var(--warn)">⚠ This text was changed after its quotations were checked.</p>' : "";
-  return { t: h.title || "What the literature says", note,
+  return { t: h.title || "What the literature says",
            h: changed + renderOverviewMarkdown(h.md, model, links, { foldRefs: true }) };
 }
 
@@ -1677,7 +1658,7 @@ const CLIENT_ONE = String.raw`
     return "<h1>"+E(D.title)+"</h1>"+
       '<p class="lede">A searchable library of what this literature actually says. Every quotation was compared '+
       "with the source text character by character when this file was built"+(D.failures?"":" — all of them matched")+".</p>"+
-      (D.home?'<section class="card homesum"><h2>'+E(D.home.t)+'</h2><p class="small muted">'+D.home.note+"</p>"+D.home.h+"</section>":"")+
+      (D.home?'<section class="card homesum"><h2>'+E(D.home.t)+"</h2>"+D.home.h+"</section>":"")+
       (D.overviews.length?'<p class="lede">'+(D.home?"<strong>Go deeper:</strong> read the":"<strong>New here?</strong> Start with the")+' <a href="#/overviews">'+
         PL(D.overviews.length,"overview","overviews")+"</a> — a short review per theme, written from the coded "+
         'passages, with every quotation linked back to the paper it came from. Then browse by <a href="#/codes">theme</a>, '+
