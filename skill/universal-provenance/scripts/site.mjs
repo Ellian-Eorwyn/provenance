@@ -998,3 +998,475 @@ export function writeSite(root, opts = {}) {
     },
   };
 }
+
+
+// The single-file client. Plain DOM, no framework, no fetch: everything it needs
+// is in the data island above it, and every view is rendered from memory.
+const CLIENT_ONE = String.raw`
+(function(){
+  var K="upc-site-theme";
+  try{var t=localStorage.getItem(K); if(t)document.documentElement.setAttribute("data-theme",t);}catch(e){}
+  window.__toggleTheme=function(){
+    var cur=document.documentElement.getAttribute("data-theme");
+    var next=cur==="dark"?"light":cur==="light"?"dark":
+      (window.matchMedia&&window.matchMedia("(prefers-color-scheme:dark)").matches?"light":"dark");
+    document.documentElement.setAttribute("data-theme",next);
+    try{localStorage.setItem(K,next);}catch(e){}
+  };
+
+  var D=JSON.parse(document.getElementById("upc-data").textContent);
+  var app=document.getElementById("app");
+  var E=function(s){return String(s==null?"":s).replace(/&/g,"&amp;").replace(/</g,"&lt;")
+      .replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#39;");};
+  var PL=function(n,a,b){return n+" "+(n===1?a:b);};
+
+  // indexes
+  var bySlug={}, codeDef={};
+  D.codebooks.forEach(function(cb){ bySlug[cb.slug]=cb;
+    cb.codes.forEach(function(c){ codeDef[cb.slug+":"+c.code]={cb:cb,c:c}; }); });
+  var byId={}; D.passages.forEach(function(p){ byId[p.id]=p; });
+  var codeIndex={};
+  function touch(k){ if(!codeIndex[k]) codeIndex[k]={p:[],s:{}}; return codeIndex[k]; }
+  D.passages.forEach(function(p){ p.g.forEach(function(g){
+    var r=touch(g[0]+":"+g[1]); r.p.push(p.id); if(p.s>=0) r.s[p.s]=1; }); });
+  D.sources.forEach(function(s){ s.g.forEach(function(g){ touch(g[0]+":"+g[1]).s[s.i]=1; }); });
+  var passagesOf={}; D.passages.forEach(function(p){ (passagesOf[p.s]=passagesOf[p.s]||[]).push(p); });
+
+  function badge(b,terse){
+    var t=D.badges[b]||D.badges.unverifiable;
+    var cls=b==="failed"?"badge bad":(b==="paraphrase"||b==="unverifiable")?"badge plain":"badge";
+    return '<span class="'+cls+'"'+(terse?"":' title="'+E(t[2])+'"')+'>'+t[0]+" "+E(t[1])+"</span>";
+  }
+  function chip(g,terse){
+    var d=codeDef[g[0]+":"+g[1]], lbl=d?d.c.label:g[1];
+    var tip=d&&d.c.def?d.c.label+": "+d.c.def:lbl;
+    if(g[4]) tip+="\nWhy: "+g[4];
+    if(g[3]) tip+="\nConfidence: "+g[3];
+    return '<span class="chip"'+(terse?"":' title="'+E(tip)+'"')+'>'+
+      '<a href="#/code/'+encodeURIComponent(g[0])+"/"+encodeURIComponent(g[1])+'">'+
+      E(lbl)+' <span class="who">'+E(g[2])+"</span></a></span>";
+  }
+  function passageCard(p,opts){
+    opts=opts||{};
+    var s=D.sources[p.s]||{}, bad=p.b==="failed";
+    var body;
+    if(p.q){
+      var q="<mark>"+E(p.q)+"</mark>";
+      body=(opts.context!==false&&(p.x||p.y))
+        ? '<blockquote class="ctx">…'+E((p.x||"").slice(-220))+q+E((p.y||"").slice(0,220))+"…</blockquote>"
+        : "<blockquote>"+q+"</blockquote>";
+      if(bad&&p.act) body+='<p class="small" style="color:var(--warn)">The source now reads: “'+E(p.act.slice(0,240))+'”</p>';
+    } else { body='<p class="note">'+E(p.n)+"</p>"; }
+    var where=[p.l?"line "+p.l:""].filter(Boolean).join(" · ");
+    return '<article class="passage'+(bad?" bad":"")+'" id="'+E(p.id)+'" data-row'+
+      ' data-code="'+E(p.g.map(function(g){return g[0]+":"+g[1];}).join("|"))+'"'+
+      ' data-coder="'+E(p.g.map(function(g){return g[2];}).join("|"))+'"'+
+      ' data-year="'+E(s.y||"")+'"'+
+      ' data-search="'+E([s.t,s.k].concat(p.g.map(function(g){var d=codeDef[g[0]+":"+g[1]];return (d?d.c.label:g[1])+" "+g[2];})).join(" "))+'">'+
+      body+
+      (p.dis?'<div class="disagree">Coders disagree here — both judgements are kept and shown.</div>':"")+
+      '<div class="meta">'+badge(p.b,!!opts.terse)+
+      (p.st?'<span class="badge plain">'+E(p.st)+"</span>":"")+
+      p.g.map(function(g){return chip(g,!!opts.terse);}).join(" ")+
+      '<span class="spacer"></span><a class="muted" href="#/source/'+p.s+"?ex="+encodeURIComponent(p.id)+'">'+
+      (opts.showSource===false?E(where||"in context"):E(s.k||"")+(where?" · "+E(where):""))+" →</a></div></article>";
+  }
+
+  // ---- views ----
+  var V={};
+  V.home=function(){
+    var nq=D.passages.filter(function(p){return p.q;}).length;
+    var tiles=[[D.sources.length,"sources","#/sources"],[nq,"passages (quoted)","#/passages"],
+               [D.codebooks.length,"codebooks","#/codes"],[D.overviews.length,"overviews","#/overviews"]];
+    return "<h1>"+E(D.title)+"</h1>"+
+      '<p class="lede">A searchable library of what this literature actually says. Every quotation was compared '+
+      "with the source text character by character when this file was built"+(D.failures?"":" — all of them matched")+".</p>"+
+      (D.overviews.length?'<p class="lede"><strong>New here?</strong> Start with the <a href="#/overviews">'+
+        PL(D.overviews.length,"overview","overviews")+"</a> — a short review per theme, written from the coded "+
+        'passages, with every quotation linked back to the paper it came from. Then browse by <a href="#/codes">theme</a>, '+
+        'by <a href="#/sources">paper</a>, or search <a href="#/passages">every passage</a>.</p>':"")+
+      '<div class="grid cards">'+tiles.filter(function(t){return t[0];}).map(function(t){
+        return '<a class="card tile" href="'+t[2]+'"><span class="n">'+t[0]+'</span><br><span class="u">'+E(t[1])+"</span></a>";
+      }).join("")+"</div>"+
+      "<h2>How to read this</h2><div class=\"card\"><p class=\"small\"><strong>A passage</strong> is a span of text from one "+
+      "paper, quoted exactly. <strong>A check mark</strong> means the quotation matched the paper's text when this file was "+
+      "built. <strong>A code</strong> is a judgement someone made about that passage. Codes always show who made them, and "+
+      "where two coders disagree both judgements are shown. Nothing is resolved for you.</p></div>";
+  };
+  V.codes=function(){
+    return "<h1>Codes</h1><p class=\"lede\">Each codebook asks one question of the literature. Counts state what they "+
+      "count: a <em>passage</em> is one quoted span; a <em>source</em> is one paper.</p>"+
+      D.codebooks.map(function(cb){
+        var rows=cb.codes.map(function(c){
+          var r=codeIndex[cb.slug+":"+c.code]||{p:[],s:{}};
+          return {c:c,nP:r.p.length,nS:Object.keys(r.s).length};
+        }).sort(function(a,b){return (b.nP-a.nP)||(b.nS-a.nS);});
+        var any=rows.some(function(r){return r.nP||r.nS;});
+        return "<h2>"+E(cb.title)+"</h2>"+(cb.question?'<p class="small muted">'+E(cb.question)+"</p>":"")+
+          '<div class="wrap"><table><thead><tr><th>Code</th><th>What it means</th>'+
+          '<th class="num">Passages</th><th class="num">Sources</th></tr></thead><tbody>'+
+          rows.map(function(r){
+            return "<tr><td>"+((r.nP||r.nS)?'<a href="#/code/'+encodeURIComponent(cb.slug)+"/"+encodeURIComponent(r.c.code)+'">'+E(r.c.label)+"</a>":'<span class="muted">'+E(r.c.label)+"</span>")+
+              '</td><td class="muted">'+E(r.c.def)+'</td><td class="num">'+(r.nP||"")+'</td><td class="num">'+(r.nS||"")+"</td></tr>";
+          }).join("")+
+          (any?"":'<tr><td colspan="4" class="muted">Nothing has been coded against this scheme yet.</td></tr>')+
+          "</tbody></table></div>";
+      }).join("");
+  };
+  V.code=function(a){
+    var cb=bySlug[a[0]]; if(!cb) return "<h1>Unknown scheme</h1>";
+    var c=null; cb.codes.forEach(function(x){ if(x.code===a[1]) c=x; });
+    if(!c) return "<h1>Unknown code</h1>";
+    var r=codeIndex[cb.slug+":"+c.code]||{p:[],s:{}};
+    var list=r.p.map(function(id){return byId[id];}).filter(Boolean);
+    var others=D.codebooks.filter(function(x){return x.slug!==cb.slug;});
+    var years={}; list.forEach(function(p){var y=(D.sources[p.s]||{}).y; if(y)years[y]=1;});
+    var coders={}; list.forEach(function(p){p.g.forEach(function(g){coders[g[2]]=1;});});
+    return '<p class="small muted" id="crumb"><a href="#/codes">Codes</a> › '+E(cb.title)+"</p><h1>"+E(c.label)+"</h1>"+
+      (c.def?'<div class="defbox">'+E(c.def)+"</div>":"")+
+      '<p class="lede">'+PL(list.length,"passage","passages")+" in "+PL(Object.keys(r.s).length,"source","sources")+".</p>"+
+      '<div class="filters sans small"><input type="search" data-q placeholder="Search these passages…" style="min-width:16rem">'+
+      others.map(function(b){
+        var opts=b.codes.filter(function(x){return codeIndex[b.slug+":"+x.code];});
+        return opts.length?'<select data-filter="code"><option value="">Any '+E(b.title.toLowerCase())+"</option>"+
+          opts.map(function(x){return '<option value="'+E(b.slug+":"+x.code)+'">'+E(x.label)+"</option>";}).join("")+"</select>":"";
+      }).join("")+
+      (Object.keys(coders).length>1?'<select data-filter="coder"><option value="">Any coder</option>'+
+        Object.keys(coders).sort().map(function(x){return "<option>"+E(x)+"</option>";}).join("")+"</select>":"")+
+      '<span class="muted" data-count data-one="passage shown" data-many="passages shown"></span>'+
+      '<button class="btn" data-export>Download CSV</button></div>'+
+      (list.length?list.map(function(p){return passageCard(p,{});}).join(""):'<p class="muted">No passages carry this code yet.</p>');
+  };
+  V.sources=function(){
+    var rows=D.sources.slice().sort(function(a,b){return String(a.k).localeCompare(String(b.k));});
+    return "<h1>Sources</h1><p class=\"lede\">"+PL(D.sources.length,"paper","papers")+" in this corpus.</p>"+
+      '<div class="filters sans small"><input type="search" data-q placeholder="Search titles, authors, journals…" style="min-width:20rem">'+
+      '<span class="muted" data-count data-one="source shown" data-many="sources shown"></span></div>'+
+      '<div class="wrap"><table><thead><tr><th>Author, year</th><th>Title</th><th>Published in</th>'+
+      '<th class="num">Passages</th></tr></thead><tbody>'+
+      rows.map(function(s){
+        return '<tr data-row data-search="'+E([s.t,s.a,s.c,s.y,s.d].join(" "))+'"><td>'+E(s.k)+
+          '</td><td><a href="#/source/'+s.i+'">'+E(s.t)+"</a></td>"+
+          '<td class="muted">'+E(s.c||"")+'</td><td class="num">'+((passagesOf[s.i]||[]).length||"")+"</td></tr>";
+      }).join("")+"</tbody></table></div>";
+  };
+  V.source=function(a,q){
+    var s=D.sources[+a[0]]; if(!s) return "<h1>Unknown source</h1>";
+    var mine=passagesOf[s.i]||[];
+    var bits=[s.a,s.y?String(s.y):"",s.c].filter(Boolean).join(" · ");
+    var reading="";
+    if(D.withText&&D.texts[s.i]){
+      var text=D.texts[s.i], marks=[];
+      mine.forEach(function(p){ if(!p.q)return; var i=text.indexOf(p.q);
+        if(i>=0) marks.push({a:i,b:i+p.q.length,id:p.id,bad:p.b==="failed"}); });
+      marks.sort(function(x,y){return x.a-y.a;});
+      var out="",cur=0;
+      marks.forEach(function(m){ if(m.a<cur)return;
+        out+=E(text.slice(cur,m.a))+'<mark id="t-'+E(m.id)+'"'+(m.bad?' style="background:var(--warn-soft)"':"")+">"+
+             E(text.slice(m.a,m.b))+"</mark>"; cur=m.b; });
+      out+=E(text.slice(cur));
+      reading='<div class="reading" id="reading">'+out.split(/\n{2,}/).map(function(x){return "<p>"+x+"</p>";}).join("")+"</div>";
+    }
+    return '<p class="small muted" id="crumb"><a href="#/sources">Sources</a></p><h1>'+E(s.t)+"</h1>"+
+      '<p class="lede">'+E(bits)+(s.d?' · <a href="https://doi.org/'+encodeURIComponent(s.d)+'">doi:'+E(s.d)+"</a>":"")+"</p>"+
+      (s.g.length?'<div class="card"><div class="small muted">Judgements about this paper as a whole</div>'+
+        '<div class="meta" style="margin-top:.4rem">'+s.g.map(function(g){return chip(g);}).join(" ")+"</div></div>":"")+
+      "<h2>Passages ("+mine.length+")</h2>"+
+      (mine.length?mine.map(function(p){return passageCard(p,{showSource:false,context:false});}).join(""):'<p class="muted">No passages from this paper yet.</p>')+
+      (reading?'<h2>The text this was checked against</h2><p class="small muted">Extracted from the PDF. Highlighted spans are the passages above.</p>'+reading:"");
+  };
+  V.passages=function(){
+    return "<h1>Passages</h1><p class=\"lede\">Every coded passage in the corpus. Search the words, or narrow by code.</p>"+
+      '<div class="filters sans small"><input type="search" data-q placeholder="Search every passage…" style="min-width:22rem">'+
+      D.codebooks.map(function(b){
+        var opts=b.codes.filter(function(x){return codeIndex[b.slug+":"+x.code];});
+        return opts.length?'<select data-filter="code"><option value="">Any '+E(b.title.toLowerCase())+"</option>"+
+          opts.map(function(x){return '<option value="'+E(b.slug+":"+x.code)+'">'+E(x.label)+"</option>";}).join("")+"</select>":"";
+      }).join("")+
+      '<span class="muted" data-count data-one="passage shown" data-many="passages shown"></span>'+
+      '<button class="btn" data-export>Download CSV</button></div>'+
+      D.passages.map(function(p){return passageCard(p,{context:false,terse:true});}).join("");
+  };
+  V.overviews=function(){
+    var groups={},order=[];
+    D.overviews.forEach(function(o){ var k=o.grp||"";
+      if(!groups[k]){groups[k]=[];order.push(k);} groups[k].push(o); });
+    order.sort(function(a,b){ return (a?0:1)-(b?0:1) || groups[b].length-groups[a].length; });
+    return "<h1>Overviews</h1><p class=\"lede\">"+PL(D.overviews.length,"short review","short reviews")+
+      " of what this literature says, one per theme, written from the coded passages. Every quotation links back to "+
+      "the passage it came from. <strong>Start here</strong> if you want the lay of the land.</p>"+
+      order.map(function(k){
+        var cb=bySlug[k];
+        return "<h2>"+E(cb?cb.title:"Other overviews")+"</h2>"+
+          (cb&&cb.question?'<p class="small muted">'+E(cb.question)+"</p>":"")+
+          '<ul class="plain">'+groups[k].map(function(o){
+            return '<li><a href="#/overview/'+encodeURIComponent(o.id)+'">'+E(o.t)+"</a>"+
+              '<span class="small muted"> — '+PL(o.cl.length,"claim","claims")+"</span></li>";
+          }).join("")+"</ul>";
+      }).join("");
+  };
+  V.overview=function(a){
+    var o=null; D.overviews.forEach(function(x){ if(x.id===a[0]) o=x; });
+    if(!o) return "<h1>Unknown overview</h1>";
+    var html=E(o.md)
+      .replace(/&quot;([^&]*?)&quot;\s*\[(ext-[0-9a-f]{12})\]/g,function(m,q,id){
+        var p=byId[id]; if(!p) return m;
+        var ok=p.b.indexOf("verified")===0;
+        return '<a href="#/source/'+p.s+"?ex="+encodeURIComponent(id)+'">“'+q+'”</a> <span class="small">'+
+          (ok?"✓":"⚠")+" "+E((D.sources[p.s]||{}).k||"")+"</span>";})
+      .replace(/\[(ext-[0-9a-f]{12})\]/g,function(m,id){
+        var p=byId[id]; if(!p) return m;
+        return '<a class="small" href="#/source/'+p.s+"?ex="+encodeURIComponent(id)+'">'+E((D.sources[p.s]||{}).k||"")+"</a>";})
+      .replace(/^#{1,6}\s*(.+)$/gm,function(m,t){return "<h2>"+t+"</h2>";})
+      .replace(/\n{2,}/g,"\n<p></p>\n");
+    return '<p class="small muted" id="crumb"><a href="#/overviews">Overviews</a></p><h1>'+E(o.t)+"</h1>"+
+      '<div class="card" style="max-width:74ch">'+html+"</div>"+
+      (o.cl.length?"<h2>What this says, and what backs it</h2><div class=\"wrap\"><table><thead><tr><th>Claim</th>"+
+        "<th>Passages</th></tr></thead><tbody>"+o.cl.map(function(c){
+          return "<tr><td>"+E(c[0])+"</td><td>"+c[1].map(function(id){ var p=byId[id];
+            return p?'<a href="#/source/'+p.s+"?ex="+encodeURIComponent(id)+'">'+E((D.sources[p.s]||{}).k||"")+"</a>":E(id);
+          }).join("; ")+"</td></tr>";}).join("")+"</tbody></table></div>":"");
+  };
+  V.matrix=function(){
+    if(!D.matrix) return "<h1>No matrix configured</h1>";
+    var A=bySlug[D.matrix[0]],B=bySlug[D.matrix[1]];
+    if(!A||!B) return "<h1>No matrix configured</h1>";
+    var ac=A.codes.filter(function(c){return codeIndex[A.slug+":"+c.code];});
+    var bc=B.codes.filter(function(c){return codeIndex[B.slug+":"+c.code];});
+    function cell(x,y){ var n=0;
+      D.passages.forEach(function(p){
+        var a=false,b=false;
+        p.g.forEach(function(g){ if(g[0]===A.slug&&g[1]===x.code)a=true; if(g[0]===B.slug&&g[1]===y.code)b=true; });
+        if(a&&b)n++; });
+      return n; }
+    return "<h1>"+E(A.title)+" × "+E(B.title)+"</h1><p class=\"lede\">How many passages carry both codes. Every number "+
+      "is a count of passages, not of papers. Click a heading to see its passages.</p>"+
+      '<div class="wrap"><table><thead><tr><th></th>'+bc.map(function(y){
+        return '<th class="num"><a href="#/code/'+encodeURIComponent(B.slug)+"/"+encodeURIComponent(y.code)+'">'+E(y.label)+"</a></th>";
+      }).join("")+"</tr></thead><tbody>"+
+      ac.map(function(x){
+        return '<tr><th><a href="#/code/'+encodeURIComponent(A.slug)+"/"+encodeURIComponent(x.code)+'">'+E(x.label)+"</a></th>"+
+          bc.map(function(y){var n=cell(x,y);return '<td class="num">'+(n||'<span class="muted">·</span>')+"</td>";}).join("")+"</tr>";
+      }).join("")+"</tbody></table></div>";
+  };
+
+  // ---- filters, export, routing ----
+  function wire(){
+    var sels=[].slice.call(document.querySelectorAll("[data-filter]"));
+    var q=document.querySelector("[data-q]");
+    function apply(){
+      var terms=((q&&q.value)||"").toLowerCase().trim().split(/\s+/).filter(Boolean);
+      var rows=[].slice.call(document.querySelectorAll("[data-row]")),shown=0;
+      rows.forEach(function(r){
+        var ok=true;
+        sels.forEach(function(s){ var v=s.value; if(!v)return;
+          if((r.getAttribute("data-"+s.getAttribute("data-filter"))||"").split("|").indexOf(v)<0) ok=false; });
+        if(ok&&terms.length){
+          var hay=((r.getAttribute("data-search")||"")+" "+r.textContent).toLowerCase();
+          ok=terms.every(function(t){return hay.indexOf(t)>=0;});
+        }
+        r.hidden=!ok; if(ok)shown++;
+      });
+      var c=document.querySelector("[data-count]");
+      if(c)c.textContent=shown+" "+(shown===1?c.getAttribute("data-one"):c.getAttribute("data-many"));
+    }
+    sels.forEach(function(s){s.addEventListener("change",apply);});
+    if(q)q.addEventListener("input",apply);
+    if(sels.length||q)apply();
+    var dl=document.querySelector("[data-export]");
+    if(dl)dl.addEventListener("click",function(){
+      var rows=[].slice.call(document.querySelectorAll("[data-row]")).filter(function(r){return !r.hidden;});
+      var head=["quote","source","year","doi","codes","coders","checked"],out=[head.join(",")];
+      rows.forEach(function(r){
+        var p=byId[r.id]; if(!p)return; var s=D.sources[p.s]||{};
+        var f=[p.q||p.n, s.k+" — "+s.t, s.y||"", s.d||"",
+               p.g.map(function(g){return g[0]+":"+g[1];}).join("; "),
+               p.g.map(function(g){return g[2];}).join("; "),
+               (D.badges[p.b]||[])[1]||""];
+        out.push(f.map(function(v){return '"'+String(v==null?"":v).replace(/"/g,'""')+'"';}).join(","));
+      });
+      var a=document.createElement("a");
+      a.href=URL.createObjectURL(new Blob([out.join("\n")],{type:"text/csv"}));
+      a.download="passages.csv"; document.body.appendChild(a); a.click();
+      document.body.removeChild(a); URL.revokeObjectURL(a.href);
+    });
+  }
+
+  var NAV=[["#/","Home","home"],["#/codes","Codes","codes"],["#/sources","Sources","sources"],
+           ["#/passages","Passages","passages"]];
+  if(D.overviews.length) NAV.push(["#/overviews","Overviews","overviews"]);
+  if(D.matrix) NAV.push(["#/matrix","Matrix","matrix"]);
+
+  function route(){
+    var h=(location.hash||"#/").replace(/^#/,"");
+    var qi=h.indexOf("?"), qs=""; if(qi>=0){qs=h.slice(qi+1); h=h.slice(0,qi);}
+    var parts=h.split("/").filter(Boolean).map(decodeURIComponent);
+    var view=parts.shift()||"home";
+    var fn=V[view]||V.home;
+    if(D.failures){
+      app.innerHTML='<div class="banner"><strong>'+PL(D.failures,"quotation does","quotations do")+
+        " not match the source.</strong> They are shown with a warning wherever they appear.</div>";
+    } else { app.innerHTML=""; }
+    app.innerHTML+=fn(parts,qs);
+    document.getElementById("nav").innerHTML=NAV.map(function(n){
+      return '<a class="'+(n[2]===view||(view==="home"&&n[2]==="home")?"on":"")+'" href="'+n[0]+'">'+n[1]+"</a>";
+    }).join("");
+    wire();
+    window.scrollTo(0,0);
+    var m=/(?:^|&)ex=([^&]+)/.exec(qs);
+    if(m){
+      var id=decodeURIComponent(m[1]);
+      var el=document.getElementById(id)||document.getElementById("t-"+id);
+      if(el){ el.scrollIntoView({block:"center"});
+        el.style.outline="2px solid var(--accent)";
+        setTimeout(function(){el.style.outline="";},2400); }
+    }
+  }
+  window.addEventListener("hashchange",route);
+  route();
+})();
+`;
+
+// --- one file -------------------------------------------------------------
+
+/**
+ * The same library as one self-contained HTML file.
+ *
+ * The multi-file site is the better artifact — real URLs, one page per source,
+ * a browser that can print a single theme — but it is a *folder*, and a folder
+ * is not what gets emailed, dropped in a shared drive, or opened by someone who
+ * was sent "the literature review". Detached from its siblings, its index page
+ * is a set of dead links.
+ *
+ * So this writes everything into one file: the stylesheet, the data, and a small
+ * router that renders the same views from memory. No fetch, no siblings, no
+ * server. Open it from a USB stick on a plane and it works.
+ *
+ * The one real cost is size. Reading copies dominate (17 MB of the 21 for a
+ * 178-paper corpus), so `--no-text` drops them and keeps the passages, their
+ * context and every overview — about a fifth of the size, and still the thing
+ * most readers came for.
+ */
+export function writeSingleFile(root, opts = {}) {
+  const loaded = U.loadCorpus(root);
+  const model = buildSiteModel(loaded, opts);
+  const withText = opts.withText !== false;
+
+  // Compact payload. Context is recomputed from the text at render time rather
+  // than stored twice, and keys are short because they repeat 3,000 times.
+  const srcIndex = new Map();
+  const sources = model.sources.map((s, i) => {
+    srcIndex.set(s.id, i);
+    return {
+      i, t: s.title, a: s.authors, y: s.year, d: s.doi, c: s.container, k: s.cite,
+      p: s.pdfRep ? path.basename(s.pdfRep.path) : "",
+      g: s.codings.map((c) => [c.codebook_slug, c.code != null ? c.code : c.value, c.coder, c.confidence, c.rationale || ""]),
+    };
+  });
+
+  const texts = [];
+  if (withText) {
+    for (const s of model.sources) {
+      let body = "";
+      if (s.textRep) {
+        const entry = (loaded.representations || []).find((r) => r.obj.representation_id === s.textRep.representation_id);
+        if (entry && entry.contained && fs.existsSync(entry.abs)) {
+          const rec = U.getRepFile(entry.abs);
+          if (rec.utf8ok) body = rec.text;
+        }
+      }
+      texts.push(body);
+    }
+  }
+
+  const passages = model.passages.map((p) => ({
+    id: p.id,
+    s: srcIndex.has(p.source_id) ? srcIndex.get(p.source_id) : -1,
+    q: p.quote,
+    n: p.note,
+    b: p.badge,
+    st: p.status === "active" ? "" : p.status,
+    l: p.line_range ? p.line_range.start : 0,
+    // Offsets let the reader show the passage in place without storing context twice.
+    o: (p.actual != null && p.quote) ? [p.beforeLen || 0, 0] : null,
+    x: p.before, y: p.after, act: p.badge === "failed" ? p.actual : null,
+    g: p.codings.map((c) => [c.codebook_slug, c.code != null ? c.code : c.value, c.coder, c.confidence, c.rationale || ""]),
+    dis: p.disagreements.length ? 1 : 0,
+  }));
+
+  const codebooks = model.codebooks.map((cb) => ({
+    slug: cb.slug, title: cb.title, question: cb.question || "",
+    unit: cb.unit || "passage",
+    codes: (cb.codes || []).map((c) => ({ code: c.code, label: c.label || c.code, def: c.definition || "" })),
+  }));
+
+  const overviews = model.syntheses.map((syn) => {
+    let body = "";
+    const outPath = syn.output && syn.output.path;
+    if (outPath) {
+      const { abs, contained } = U.resolveInside(loaded.root, outPath);
+      if (contained && fs.existsSync(abs)) body = fs.readFileSync(abs, "utf8");
+    }
+    return {
+      id: syn.synthesis_id,
+      t: syn.title || syn.synthesis_id,
+      grp: syn._group ? syn._group.slug : "",
+      md: body.replace(/^\s*#\s+.*\n+/, ""),
+      cl: (syn.claims || []).map((c) => [c.text, c.evidence_ids || []]),
+    };
+  });
+
+  const payload = {
+    title: model.title,
+    spec: model.specVersion || "",
+    matrix: model.matrix || null,
+    failures: model.failures,
+    withText,
+    badges: BADGE_TEXT,
+    sources, texts, passages, codebooks, overviews,
+  };
+
+  const html = `<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>${esc(model.title)}</title>
+<style>${CSS}
+.hidden{display:none}
+nav a{cursor:pointer}
+#crumb{margin:.2rem 0 .4rem}
+</style>
+</head><body>
+<header class="top"><div class="in">
+  <span class="brand">${esc(model.title)}</span>
+  <nav id="nav"></nav>
+  <span class="spacer"></span>
+  <button class="theme" onclick="__toggleTheme()">Light / dark</button>
+</div></header>
+<main id="app">Loading…</main>
+<footer>
+  Built from a Universal Provenance Corpus (spec ${esc(model.specVersion || "")}). Every quotation here was
+  compared with the source text character by character when this file was built. A <em>code</em> is somebody's
+  judgement about a passage — always shown with who made it — and is never a check mark.
+</footer>
+<script type="application/json" id="upc-data">${
+    JSON.stringify(payload).replace(/</g, "\\u003c")
+  }</script>
+<script>${CLIENT_ONE}</script>
+</body></html>
+`;
+
+  const out = path.resolve(opts.out || path.join(root, "corpus.html"));
+  fs.mkdirSync(path.dirname(out), { recursive: true });
+  U.atomicWriteFile(out, html);
+  return {
+    status: "ok", out, bytes: Buffer.byteLength(html, "utf8"),
+    counts: {
+      sources: sources.length,
+      passages: passages.filter((p) => p.q).length,
+      codebooks: codebooks.length,
+      overviews: overviews.length,
+      reading_copies: withText ? texts.filter(Boolean).length : 0,
+      failing_quotations: model.failures,
+    },
+  };
+}

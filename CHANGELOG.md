@@ -3,6 +3,39 @@
 All notable changes to the Universal Provenance Corpus (UPC) standard.
 Versioning is semantic (§00 Versioning policy).
 
+## 1.9.0 — 2026-09-09
+
+**Backward-compatible (additive) minor release: the library as one file.** No
+schema, vocabulary, id recipe or gate changed; schema `$id`s stay at `1.8.0`.
+
+### Added — `upc export --format site-one`
+
+- The same library as **one self-contained HTML file**: stylesheet, data, every
+  passage with its context, every overview, and (by default) the full reading copy
+  of every source, with a small router rendering the views from memory.
+- The multi-file site remains the better artifact — real URLs, one page per
+  source, a printable theme — but it is a *folder*, and a folder is not what gets
+  emailed, dropped in a shared drive, or opened by someone who was sent "the
+  literature review". Detached from its siblings, its index page is a set of dead
+  links. This opens from a USB stick with nothing beside it.
+- `--no-text` drops the embedded reading copies, which dominate the size: measured
+  on a 178-paper corpus, 21 MB becomes 4.7 MB and every passage, code, overview
+  and matrix cell survives.
+- Same §09 rules as the multi-file site, enforced by the same renderer: a code
+  chip is not a badge, no code without its coder, disagreement displayed rather
+  than resolved, counts that state their unit.
+
+### Fixed
+
+- The codes index linked every code to a page, including codes nothing had been
+  coded against — whose pages are deliberately not generated. Nine dead links on a
+  real corpus. An unapplied code now reads as plain text, and a scheme with
+  nothing coded against it says so.
+- Overviews were listed flat. They are now grouped by the scheme they were written
+  for, with that scheme's question as context, and the home page points at them as
+  the place to start — a short review per theme is what "the lay of the land"
+  actually means.
+
 ## 1.8.1 — 2026-09-09
 
 **Patch release: three bugs that only a real corpus could surface.** No schema,

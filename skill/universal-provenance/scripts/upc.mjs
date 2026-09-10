@@ -31,7 +31,7 @@ import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
 import * as U from "./upc_common.mjs";
 import { isTextualMedia as U_TEXTUAL } from "./upc_common.mjs";
-import { writeSite } from "./site.mjs";
+import { writeSite, writeSingleFile } from "./site.mjs";
 import { writeRoCrate, buildAnnotationTargets } from "./ro-crate.mjs";
 import { buildProvGraph } from "./prov.mjs";
 import { writeVault } from "./obsidian.mjs";
@@ -2050,7 +2050,14 @@ async function main() {
         const dir = rest.find((a, i) => !a.startsWith("-") && !(i > 0 && VALUE_FLAGS.has(rest[i - 1])));
         const format = arg(rest, "--format");
         const out = arg(rest, "-o");
-        if (!dir || !format) { process.stderr.write("usage: upc export <dir> --format bibtex|ris|csl-json|jsonl|markdown|ro-crate|prov|obsidian|site [-o <dir>] [--copy] [--bundle] [--matrix <a>:<b>]\n"); process.exit(2); }
+        if (!dir || !format) { process.stderr.write("usage: upc export <dir> --format bibtex|ris|csl-json|jsonl|markdown|ro-crate|prov|obsidian|site|site-one [-o <dir|file>] [--copy] [--bundle] [--single-file] [--no-text] [--matrix <a>:<b>]\n"); process.exit(2); }
+        if (format === "site-one" || (format === "site" && rest.includes("--single-file"))) {
+          const mx = arg(rest, "--matrix");
+          print(writeSingleFile(dir, {
+            out, matrix: mx ? mx.split(":") : null, withText: !rest.includes("--no-text"),
+          }));
+          break;
+        }
         if (format === "site") {
           const mx = arg(rest, "--matrix");
           print(writeSite(dir, {

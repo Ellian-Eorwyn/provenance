@@ -1,7 +1,7 @@
 # Universal Provenance Corpus (UPC)
 
 **A tool-independent standard for storing research materials with explicit,
-portable provenance and byte-exact quotation gates.** Version **1.8.1**.
+portable provenance and byte-exact quotation gates.** Version **1.9.0**.
 
 A UPC corpus is a folder in which both humans and software can always answer:
 *What is this object? Where did it come from? What transformations produced it?
@@ -220,6 +220,18 @@ node skill/universal-provenance/scripts/upc.mjs export <corpus> --format site -o
 It is a pile of files, not an app: no fetch, no router, no CDN, so it works from
 `file://`. `index.html` (above) stays what it always was — the surface for
 checking whether a corpus holds up; this one is for handing to a colleague.
+
+A folder is not what gets emailed, though, and detached from its siblings that
+site's index page is a set of dead links. So the same library also builds as **one
+self-contained file** — stylesheet, data, reading copies and all — which opens
+from a USB stick with nothing else beside it:
+
+```bash
+node skill/universal-provenance/scripts/upc.mjs export <corpus> --format site-one -o library.html
+```
+
+`--no-text` drops the embedded reading copies, which are most of the weight: for a
+178-paper corpus, 21 MB becomes 4.7 MB and every passage, code and overview stays.
 
 Rebuild the examples and run the tests:
 

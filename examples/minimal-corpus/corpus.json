@@ -1,5 +1,5 @@
 {
-  "upc_spec_version": "1.8.1",
+  "upc_spec_version": "1.9.0",
   "corpus_id": "cor-bb1e337e082b",
   "title": "Minimal UPC corpus",
   "readme": "Universal Provenance Corpus. Work only from ids resolved through the manifests. Quotations are verified byte-for-byte (spec/03).",
