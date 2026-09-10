@@ -1120,20 +1120,31 @@ export function loadCorpus(root) {
     }
   }
 
-  // --- Syntheses: index, else sections.syntheses scan ---
+  // --- Syntheses: the index AND the declared directory, unioned ---
+  //
+  // The index is an ordering hint that `regen` maintains, not the authority on
+  // what exists: corpus.json is machine-owned and regenerable (spec/01), and the
+  // objects on disk are the truth. Reading the index *instead of* scanning made
+  // it self-perpetuating — once it held anything, a synthesis written by any
+  // other tool could never be discovered, and `regen` rebuilt the index from the
+  // same short list it had just failed to extend.
   const syntheses = [];
   const synIndex = Array.isArray(corpus.syntheses) ? corpus.syntheses : [];
+  const seenSyn = new Set();
   const pushSyn = (dirRel) => {
-    const sjson = path.join(absRoot, dirRel, "synthesis.json");
+    const rel = String(dirRel || "").replace(/\/+$/, "");
+    if (!rel || seenSyn.has(rel)) return;
+    const sjson = path.join(absRoot, rel, "synthesis.json");
     if (fs.existsSync(sjson)) {
-      try { syntheses.push({ obj: readJSON(sjson), dirRel }); }
-      catch (e) { diagnostics.push({ code: "schema_invalid", object: dirRel, detail: "synthesis parse: " + e.message }); }
+      seenSyn.add(rel);
+      try { syntheses.push({ obj: readJSON(sjson), dirRel: rel }); }
+      catch (e) { diagnostics.push({ code: "schema_invalid", object: rel, detail: "synthesis parse: " + e.message }); }
     }
   };
-  if (synIndex.length) for (const entry of synIndex) pushSyn(entry.path);
-  else if (sections.syntheses) {
+  for (const entry of synIndex) pushSyn(entry.path);
+  if (sections.syntheses) {
     const base = path.join(absRoot, sections.syntheses);
-    if (fs.existsSync(base)) for (const name of fs.readdirSync(base)) pushSyn(path.join(sections.syntheses, name).replace(/\\/g, "/"));
+    if (fs.existsSync(base)) for (const name of fs.readdirSync(base).sort()) pushSyn(path.join(sections.syntheses, name).replace(/\\/g, "/"));
   }
 
   // --- Codebooks (1.6.0, spec/12): flat directory of cbk-*.json ---

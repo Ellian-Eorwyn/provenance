@@ -1441,10 +1441,47 @@ ok("filename rejects reserved", !checkFilename("sources/con/x.md").ok);
      addSynthesisCmd(dir, { type: "thematic", title: "U", claims }, { output: uncited, tool: "selftest" }).status,
      "refused");
 
+  // ... and so is prose whose CLAIM rests on a passage the prose never marks.
+  // Checking only the sources let a synthesis through that then failed validation.
+  {
+    const other = anchorCmd(dir, textRep, [{ quote: "A second paragraph." }], { tool: "selftest" });
+    const otherId = other.results[0].extraction_id;
+    const silent = path.join(stage, "silent.md");
+    fs.writeFileSync(silent, `# Overview\n\nAs it says, "The regime resists change." [${eid}].\n\n## Sources\n\n- ${sid}\n`);
+    clearRepCache();
+    const r = addSynthesisCmd(dir, { type: "thematic", title: "S",
+      claims: [{ claim_id: "cl-0001", text: "Rests on an unmarked passage.", evidence_ids: [otherId] }] },
+      { output: silent, tool: "selftest" });
+    eq("add synthesis: a claim citing an unmarked passage is refused", r.status, "refused");
+    ok("add synthesis: the refusal names the passage", (r.failures || []).some((f) => f.marker === otherId));
+  }
+
   clearRepCache();
   const rep2 = validateCorpus(dir);
   eq("validate: the corpus with a synthesis is valid", rep2.status, "passed");
   eq("validate: it reaches L2", rep2.level, "L2");
+
+  // A second synthesis must be discoverable even though corpus.json now carries
+  // an index naming only the first. Reading the index INSTEAD of scanning made it
+  // self-perpetuating: anything a later run wrote could never be found, and regen
+  // rebuilt the index from the same short list it had just failed to extend.
+  {
+    const good2 = path.join(stage, "good2.md");
+    fs.writeFileSync(good2, `# Second\n\nAgain, "The regime resists change." [${eid}].\n\n## Sources\n\n- ${sid}\n`);
+    clearRepCache();
+    const two = addSynthesisCmd(dir, { type: "memo", title: "Second", claims }, { output: good2, tool: "selftest" });
+    eq("add synthesis: a second one is written", two.status, "ok");
+    // Simulate the state regen leaves: an index naming only what existed then.
+    const cjPath = path.join(dir, "corpus.json");
+    const cj = JSON.parse(fs.readFileSync(cjPath, "utf8"));
+    cj.syntheses = [{ synthesis_id: okSyn.synthesis_id, path: `syntheses/${okSyn.synthesis_id}/`, title: "Good" }];
+    fs.writeFileSync(cjPath, JSON.stringify(cj, null, 2));
+    clearRepCache();
+    eq("loadCorpus: a synthesis missing from the index is still found",
+       loadCorpus(dir).syntheses.length, 2);
+    clearRepCache();
+    eq("validate: the corpus is still valid with both", validateCorpus(dir).status, "passed");
+  }
 
   fs.rmSync(dir, { recursive: true, force: true });
   fs.rmSync(stage, { recursive: true, force: true });

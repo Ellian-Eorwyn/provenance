@@ -1574,10 +1574,11 @@ function addSynthesisCmd(root, obj, opts = {}) {
   const repRefs = [...new Set(evidenceIds
     .map((id) => (model.extById.get(id) || {}).representation_ref).filter(Boolean))];
 
-  // Rule 2.4: the rendered output must cite every id its claims depend on. Catch
-  // that here rather than writing a synthesis that makes the corpus fail — the
-  // fix is a reference list in the prose, which the writer has to author anyway.
-  const uncited = sourceIds.filter((id) => !text.includes(id));
+  // Rule 2.4: the rendered output must cite every id its claims depend on — the
+  // passages as well as their sources. Catch that here rather than writing a
+  // synthesis that makes the corpus fail; the fix is a reference list in the
+  // prose, which the writer has to author anyway.
+  const uncited = [...evidenceIds, ...sourceIds].filter((id) => !text.includes(id));
   if (uncited.length && !opts.allowUnverified) {
     return { status: "refused", wrote: 0,
              failures: uncited.map((id) => ({ marker: id, reason: "the output never cites this source" })),
@@ -1979,7 +1980,8 @@ async function main() {
         if (!dir) { process.stderr.write("usage: upc validate <dir> [--strict]\n"); process.exit(2); }
         const rep = validateCorpus(dir, { strict });
         print(rep);
-        process.exit(rep.status === "failed" ? 1 : 0);
+        process.exitCode = rep.status === "failed" ? 1 : 0;
+        break;
         break;
       }
       case "verify-quotes": {
@@ -1988,7 +1990,8 @@ async function main() {
         if (!file || !corpus) { process.stderr.write("usage: upc verify-quotes <file> --corpus <dir> [--strict]\n"); process.exit(2); }
         const rep = verifyQuotesFile(file, corpus, { strict });
         print(rep);
-        process.exit(rep.status === "failed" ? 1 : 0);
+        process.exitCode = rep.status === "failed" ? 1 : 0;
+        break;
         break;
       }
       case "verify": {
@@ -1997,7 +2000,8 @@ async function main() {
         if (!id || !corpus) { process.stderr.write("usage: upc verify <ext-id> --corpus <dir>\n"); process.exit(2); }
         const rep = verifyExtractionCmd(id, corpus);
         print(rep);
-        process.exit(rep.verified === false || rep.status === "failed" ? 1 : 0);
+        process.exitCode = rep.verified === false || rep.status === "failed" ? 1 : 0;
+        break;
         break;
       }
 
@@ -2012,7 +2016,8 @@ async function main() {
         if (ctxRaw !== undefined && !(Number.isInteger(ctx) && ctx >= 0)) { process.stderr.write("--context must be a non-negative integer\n"); process.exit(2); }
         const out = locateCmd(id, corpus, { format: fmt, context: ctx });
         print(out);
-        process.exit(out && out.status === "failed" ? 1 : 0);
+        process.exitCode = out && out.status === "failed" ? 1 : 0;
+        break;
       }
       case "quote": {
         const id = rest.find((a) => a.startsWith("ext-"));
@@ -2112,14 +2117,16 @@ async function main() {
             allowUnverified: rest.includes("--allow-unverified"), dryRun: rest.includes("--dry-run"),
           });
           print(out);
-          process.exit(out.status === "refused" ? 1 : 0);
+          process.exitCode = out.status === "refused" ? 1 : 0;
+          break;
         }
         const recs = rest.includes("--batch") ? readJsonlText(stdin) : [JSON.parse(stdin)];
         const out = addSourceCmd(corpus, recs, {
           tool: arg(rest, "--tool"), hardlink: rest.includes("--hardlink"), dryRun: rest.includes("--dry-run"),
         });
         print(out);
-        process.exit(out.tally.error ? 1 : 0);
+        process.exitCode = out.tally.error ? 1 : 0;
+        break;
       }
       case "event": {
         // Append one activity to the journal. A tool that derives something from
@@ -2161,7 +2168,8 @@ async function main() {
           dryRun: rest.includes("--dry-run"),
         });
         print(out);
-        process.exit(Object.keys(out.tally).some((k) => k === "error" || k === "invalid") ? 1 : 0);
+        process.exitCode = Object.keys(out.tally).some((k) => k === "error" || k === "invalid") ? 1 : 0;
+        break;
       }
       case "codebook": {
         const corpus = arg(rest, "--corpus") || rest.find((a) => !a.startsWith("--") && !a.startsWith("cbk-"));
