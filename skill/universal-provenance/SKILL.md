@@ -69,6 +69,8 @@ node scripts/upc.mjs build-index <corpus-dir>
 node scripts/upc.mjs export <corpus-dir> --format site -o <dir> [--matrix a:b] [--bundle]
 node scripts/upc.mjs mint <src|rep|ext|gen|syn|cod|cbk> [--batch] < object.json
 node scripts/upc.mjs add source --corpus <corpus-dir> [--batch] [--hardlink] < source.json
+node scripts/upc.mjs add generation --corpus <corpus-dir> [--output <file>] [--replace] < generation.json
+node scripts/upc.mjs add synthesis --corpus <corpus-dir> --output <file.md> < synthesis.json
 node scripts/upc.mjs anchor --corpus <corpus-dir> --rep <rep-id> [--normalize] [--set <id>] < candidates.jsonl
 node scripts/upc.mjs code --corpus <corpus-dir> --set <cds-id> [--coder-kind model|human] < codings.jsonl
 node scripts/upc.mjs codebook <corpus-dir> [<cbk-id>]
@@ -127,6 +129,15 @@ node scripts/upc.mjs check-compat --requires "^1.8"
   documents *into* a corpus without reimplementing the layout rules. UPC still
   reads no PDFs and fetches nothing — what a document is made of is the tool's
   business; identity and layout are not.
+  `add generation` writes one source's derived material (a summary, note,
+  rating, catalog entry) the same way: `{type, source_id, title?, ext?}` on
+  stdin plus `--output <file>` (or an inline `output.value`). It runs hop C
+  over the output, refuses any quotation or extraction from another source
+  (that would be a synthesis), records the representation it read and pins
+  `input_digest` to that representation's hash, mints the `gen-` id, writes
+  `<source>/generated/<gen-id>.json` beside the output, and journals a
+  `generate` event. The same inputs with different output need `--replace`.
+  `add synthesis` does the same for multi-source prose with a claim register.
 - **anchor** — the re-extraction protocol (`references/re-extraction.md`): a model
   proposes candidate quotations as JSONL, and this decides whether each is real.
   Exactly one byte-exact occurrence mints an `active` `char_range` extraction that

@@ -3,6 +3,24 @@
 All notable changes to the Universal Provenance Corpus (UPC) standard.
 Versioning is semantic (§00 Versioning policy).
 
+## 1.14.0 — 2026-09-29
+
+**Minor release: `upc add generation`.** Producers can now write single-source
+derived material through the CLI, as they already could syntheses. No schema,
+vocabulary, id recipe or gate changed.
+
+### Added
+
+- `upc add generation --corpus <dir> [--output <file>] [--replace] < generation.json`
+  (spec/04): one source's summary, note, rating or catalog entry. Runs hop C
+  over the output; refuses any quotation or extraction from another source
+  (that is a synthesis); records the representation read and sets
+  `input_digest` to its hash, so the validator's staleness check applies;
+  mints the `gen-` id; writes `<source>/generated/<gen-id>.json` beside the
+  output; journals a `generate` event. The same inputs with a different output
+  are refused unless `--replace`. Inline `output.value` needs no file.
+  First user: Hermes's digest cards (one summary and pull quote per article).
+
 ## 1.13.1 — 2026-09-10
 
 **Patch release: a fix to the reader's site.** No schema, vocabulary, id recipe,

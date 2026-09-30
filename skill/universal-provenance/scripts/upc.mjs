@@ -62,7 +62,7 @@ function findSpecDirs() {
 
 // The VERSION file at the spec root is the single source of truth for the spec
 // version; the fallback exists only so a detached scripts/ copy still reports.
-const FALLBACK_SPEC_VERSION = "1.13.1";
+const FALLBACK_SPEC_VERSION = "1.14.0";
 function specVersion() {
   try {
     const { specRoot } = findSpecDirs();
@@ -1527,6 +1527,151 @@ function addSourceCmd(root, records, opts = {}) {
 }
 
 /**
+ * upc add generation — one source's derived material (a summary, note, rating,
+ * catalog entry…), written only if it holds (spec/04 "Generation").
+ *
+ * The same gates as add synthesis, plus the single-source rule: every passage
+ * the output quotes, and every extraction it lists, must come from the one
+ * source it names. Quoting a second source makes it a synthesis, so that is
+ * refused rather than recorded under the wrong kind. What the model read is
+ * recorded as `derived_from.representation_refs` and pinned by `input_digest`
+ * (that representation's hash), so the validator's staleness check sees when
+ * the text it was written from changes.
+ *
+ * The output is a file (--output, hashed into output.sha256) or a small inline
+ * value (obj.output.value, e.g. a rating). A generation's id is keyed on its
+ * type and inputs (spec/06), so a second generation of the same type from the
+ * same inputs is the same object: identical bytes are "exists"; different
+ * bytes are refused unless opts.replace.
+ */
+const READING_ROLES = ["clean_markdown", "markdown", "text", "transcript", "ocr", "rendered_html", "raw_html", "original"];
+
+function addGenerationCmd(root, obj, opts = {}) {
+  const loaded = U.loadCorpus(root);
+  const model = buildModel(loaded);
+  const refuse = (detail, failures = []) => ({ status: "refused", wrote: 0, failures, detail });
+  if (!obj || !obj.type) throw new Error("add generation: type is required (summary, rating, note, catalog, … or x-…)");
+
+  const given = (obj.provenance && obj.provenance.derived_from) || {};
+  const sid = obj.source_id || (given.source_ids && given.source_ids.length === 1 ? given.source_ids[0] : null);
+  if (!sid) return refuse("a generation derives from exactly one source: give source_id");
+  if ((given.source_ids || []).some((x) => x !== sid)) return refuse("derived_from names more than one source; that is a synthesis");
+  const src = model.sourceById.get(sid);
+  if (!src) return refuse(`no such source: ${sid}`);
+
+  // What was read: the caller's representation, else the source's reading copy.
+  const reps = loaded.representations.filter((r) => r.sourceId === sid);
+  let repId = obj.representation_ref || (given.representation_refs || [])[0] || null;
+  if (!repId) {
+    for (const role of READING_ROLES) {
+      const r = reps.find((x) => x.obj.role === role);
+      if (r) { repId = r.obj.representation_id; break; }
+    }
+  }
+  const rep = repId ? model.repById.get(repId) : null;
+  if (!rep) return refuse(repId ? `no such representation: ${repId}` : `source ${sid} has no representation to read`);
+  if (!reps.some((r) => r.obj.representation_id === repId)) return refuse(`${repId} is not a representation of ${sid}`);
+
+  // The output, and hop C over it.
+  let text = null, outFile = null;
+  const inline = obj.output && Object.prototype.hasOwnProperty.call(obj.output, "value");
+  if (opts.output) {
+    outFile = path.resolve(opts.output);
+    if (!fs.existsSync(outFile)) throw new Error(`add generation: ${opts.output} does not exist`);
+    text = fs.readFileSync(outFile, "utf8");
+  } else if (!inline) {
+    throw new Error("add generation: give --output <file> or an inline output.value");
+  }
+  const failures = [];
+  const cited = [];
+  if (text != null) {
+    for (const mk of U.parseQuoteMarkers(text)) {
+      const ext = model.extById.get(mk.extId);
+      if (!ext) { failures.push({ marker: mk.extId, reason: "no such passage" }); continue; }
+      if (ext.source_id !== sid) { failures.push({ marker: mk.extId, reason: `quotes another source (${ext.source_id}); a generation has one source, use a synthesis` }); continue; }
+      if (ext.direct_quote == null) { failures.push({ marker: mk.extId, reason: "that passage is a note, not a quotation" }); continue; }
+      if (ext.direct_quote !== mk.quote) {
+        failures.push({ marker: mk.extId, reason: "quoted text differs from the passage",
+                        expected: ext.direct_quote.slice(0, 90), got: mk.quote.slice(0, 90) });
+        continue;
+      }
+      cited.push(mk.extId);
+    }
+  }
+  for (const xid of [...(obj.extraction_ids || []), ...(given.extraction_ids || [])]) {
+    const ext = model.extById.get(xid);
+    if (!ext) failures.push({ marker: xid, reason: "no such passage" });
+    else if (ext.source_id !== sid) failures.push({ marker: xid, reason: `belongs to another source (${ext.source_id}); a generation has one source` });
+  }
+  if (failures.length && !opts.allowUnverified) {
+    return refuse("the generation misquotes its source or reaches beyond it; nothing was written", failures);
+  }
+
+  const extIds = [...new Set([...(given.extraction_ids || []), ...(obj.extraction_ids || []), ...cited])];
+  const stamp = obj.provenance ? { ...obj.provenance } : { produced_by: { tool: opts.tool || "upc", method: "model" } };
+  stamp.created_at = stamp.created_at || nowStamp();
+  stamp.derived_from = {
+    ...given,
+    source_ids: [sid],
+    representation_refs: [...new Set([...(given.representation_refs || []), repId])],
+    ...(extIds.length ? { extraction_ids: extIds } : {}),
+  };
+  stamp.input_digest = stamp.input_digest || U.computeInputDigest([{ id: repId, sha256: rep.obj.sha256 }]);
+
+  const mediaType = obj.media_type || (text != null ? (/\.json$/i.test(outFile) ? "application/json" : /\.txt$/i.test(outFile) ? "text/plain" : "text/markdown") : "application/json");
+  const gen = {
+    type: obj.type,
+    ...(obj.title ? { title: obj.title } : {}),
+    output: text != null
+      ? { path: "", media_type: mediaType, sha256: "sha256:" + U.sha256Hex(Buffer.from(text, "utf8")) }
+      : { value: obj.output.value },
+    stale: false,
+    provenance: stamp,
+    ...(obj.aliases ? { aliases: obj.aliases } : {}),
+    ...(obj.ext ? { ext: obj.ext } : {}),
+  };
+  gen.generation_id = U.mintGenId(gen);
+
+  const base = loaded.sections && loaded.sections.generations
+    ? loaded.sections.generations.replace(/\/$/, "")
+    : path.posix.join(src.dirRel, "generated");
+  // A JSON output must not end in plain ".json": the loader reads every *.json
+  // in generated/ as a generation record.
+  const ext = mediaType === "application/json" ? ".output.json" : mediaType === "text/plain" ? ".txt" : ".md";
+  if (text != null) gen.output.path = path.posix.join(base, gen.generation_id + ext);
+  const jsonRel = path.posix.join(base, gen.generation_id + ".json");
+
+  const prior = model.genById.get(gen.generation_id);
+  if (prior) {
+    const same = text != null ? (prior.output && prior.output.sha256) === gen.output.sha256
+      : JSON.stringify(prior.output && prior.output.value) === JSON.stringify(gen.output.value);
+    if (same) return { status: "exists", wrote: 0, generation_id: gen.generation_id, failures };
+    if (!opts.replace) {
+      return refuse(`${gen.generation_id} already exists from these inputs with a different output; pass --replace to overwrite it`);
+    }
+  }
+  if (opts.dryRun) return { status: "ok", wrote: 0, generation_id: gen.generation_id, failures };
+
+  if (text != null) {
+    const { abs: outAbs, contained } = U.resolveInside(loaded.root, gen.output.path);
+    if (!contained) throw new Error(`refusing to write outside the corpus: ${gen.output.path}`);
+    fs.mkdirSync(path.dirname(outAbs), { recursive: true });
+    U.atomicWriteFile(outAbs, text);
+  }
+  const { abs: jAbs, contained: jOk } = U.resolveInside(loaded.root, jsonRel);
+  if (!jOk) throw new Error(`refusing to write outside the corpus: ${jsonRel}`);
+  fs.mkdirSync(path.dirname(jAbs), { recursive: true });
+  U.atomicWriteFile(jAbs, JSON.stringify(gen, null, 2) + "\n");
+  appendEvent(loaded, {
+    activity_type: "generate", tool: opts.tool || "upc", started_at: nowStamp(), status: "success",
+    inputs: { source_ids: [sid], extraction_ids: extIds }, outputs: { generation_ids: [gen.generation_id] },
+    notes: `${gen.type}: ${gen.title || gen.generation_id}${prior ? " (replaced)" : ""}`,
+  });
+  return { status: prior ? "replaced" : "ok", wrote: 1, generation_id: gen.generation_id, path: jsonRel,
+           cited_passages: extIds.length, failures };
+}
+
+/**
  * upc add synthesis — write generated prose, but only if its quotations hold.
  *
  * The gate runs BEFORE anything is written. A synthesis whose quotations do not
@@ -2135,12 +2280,22 @@ async function main() {
         const ADD_VALUE_FLAGS = new Set(["--corpus", "--output", "--tool"]);
         const kind = rest.filter((a, i) => !a.startsWith("--") && !(i > 0 && ADD_VALUE_FLAGS.has(rest[i - 1])))[0];
         const corpus = arg(rest, "--corpus");
-        if (!corpus || (kind !== "source" && kind !== "synthesis")) {
+        if (!corpus || !["source", "synthesis", "generation"].includes(kind)) {
           process.stderr.write("usage: upc add source --corpus <dir> [--batch] [--hardlink] [--tool <t>] [--dry-run] < source.json\n"
-            + "       upc add synthesis --corpus <dir> --output <file.md> [--tool <t>] [--allow-unverified] [--dry-run] < synthesis.json\n");
+            + "       upc add synthesis --corpus <dir> --output <file.md> [--tool <t>] [--allow-unverified] [--dry-run] < synthesis.json\n"
+            + "       upc add generation --corpus <dir> [--output <file>] [--replace] [--tool <t>] [--allow-unverified] [--dry-run] < generation.json\n");
           process.exit(2);
         }
         const stdin = fs.readFileSync(0, "utf8");
+        if (kind === "generation") {
+          const out = addGenerationCmd(corpus, JSON.parse(stdin), {
+            output: arg(rest, "--output"), tool: arg(rest, "--tool"), replace: rest.includes("--replace"),
+            allowUnverified: rest.includes("--allow-unverified"), dryRun: rest.includes("--dry-run"),
+          });
+          print(out);
+          process.exitCode = out.status === "refused" ? 1 : 0;
+          break;
+        }
         if (kind === "synthesis") {
           const out = addSynthesisCmd(corpus, JSON.parse(stdin), {
             output: arg(rest, "--output"), tool: arg(rest, "--tool"),
@@ -2253,7 +2408,7 @@ async function main() {
 
 // Exports for thin wrappers / tests; only run the CLI when invoked directly.
 // (validateCorpus is already exported at its declaration.)
-export { verifyQuotesFile, verifyExtractionCmd, quoteCmd, locateCmd, regenCmd, exportCmd, mintCmd, mintBatchCmd, anchorCmd, codeCmd, codebookCmd, batchCmd, addSourceCmd, addSynthesisCmd, appendEvent, ensureSection, reanchorCmd, buildModel, sourcesCsv, extractionsCsv, computeSchemaHash, specVersion, satisfiesRequirement, COMMANDS };
+export { verifyQuotesFile, verifyExtractionCmd, quoteCmd, locateCmd, regenCmd, exportCmd, mintCmd, mintBatchCmd, anchorCmd, codeCmd, codebookCmd, batchCmd, addSourceCmd, addSynthesisCmd, addGenerationCmd, appendEvent, ensureSection, reanchorCmd, buildModel, sourcesCsv, extractionsCsv, computeSchemaHash, specVersion, satisfiesRequirement, COMMANDS };
 
 const _isDirect = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
 if (_isDirect) main();

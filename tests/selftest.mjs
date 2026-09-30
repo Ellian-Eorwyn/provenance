@@ -22,7 +22,7 @@ import { buildModel as buildBrowserModel } from "../skill/universal-provenance/s
 import { buildProvGraph } from "../skill/universal-provenance/scripts/prov.mjs";
 import { buildVaultPlan, writeVault, loadProfile, renderCallout, serializeFrontmatter,
   stripBoilerplate, yamlScalar } from "../skill/universal-provenance/scripts/obsidian.mjs";
-import { validateCorpus, anchorCmd, codeCmd, codebookCmd, batchCmd, mintBatchCmd, locateCmd, satisfiesRequirement, specVersion, addSourceCmd, addSynthesisCmd } from "../skill/universal-provenance/scripts/upc.mjs";
+import { validateCorpus, anchorCmd, codeCmd, codebookCmd, batchCmd, mintBatchCmd, locateCmd, satisfiesRequirement, specVersion, addSourceCmd, addSynthesisCmd, addGenerationCmd } from "../skill/universal-provenance/scripts/upc.mjs";
 import { buildSiteModel, writeSite, writeSingleFile, renderOverviewMarkdown } from "../skill/universal-provenance/scripts/site.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -1432,6 +1432,63 @@ ok("filename rejects reserved", !checkFilename("sources/con/x.md").ok);
   eq("add synthesis: a correct quotation is written", okSyn.status, "ok");
   ok("add synthesis: it lands where loadCorpus looks",
      fs.existsSync(path.join(dir, "syntheses", okSyn.synthesis_id, "synthesis.json")));
+
+  // add generation (1.14.0): one source's summary, gated like a synthesis, and
+  // held to its one source.
+  {
+    clearRepCache();
+    const card = path.join(stage, "card.md");
+    fs.writeFileSync(card, `A short paper on why regimes hold.\n\n> "The regime resists change." [${eid}]\n`);
+    const g1 = addGenerationCmd(dir, { type: "summary", title: "Card", source_id: sid }, { output: card, tool: "selftest" });
+    eq("add generation: written", g1.status, "ok");
+    const gdir = path.join(dir, "sources", "a-paper", "generated");
+    ok("add generation: lands in the source's generated/ folder", fs.existsSync(path.join(gdir, g1.generation_id + ".json")));
+    const gobj = JSON.parse(fs.readFileSync(path.join(gdir, g1.generation_id + ".json"), "utf8"));
+    eq("add generation: the quoted passage is an input", gobj.provenance.derived_from.extraction_ids, [eid]);
+    eq("add generation: it records the text it read", gobj.provenance.derived_from.representation_refs, [textRep]);
+    eq("add generation: input_digest is that text's hash", gobj.provenance.input_digest,
+       loadCorpus(dir).representations.find((r) => r.obj.representation_id === textRep).obj.sha256.replace(/^(sha256:)?/, "sha256:"));
+    clearRepCache();
+    eq("add generation: the same output again is the same object", addGenerationCmd(dir, { type: "summary", source_id: sid }, { output: card, tool: "selftest" }).status, "exists");
+    const card2 = path.join(stage, "card2.md");
+    fs.writeFileSync(card2, `Regimes hold.\n\n> "The regime resists change." [${eid}]\n`);
+    clearRepCache();
+    eq("add generation: different output from the same inputs needs --replace",
+       addGenerationCmd(dir, { type: "summary", source_id: sid }, { output: card2, tool: "selftest" }).status, "refused");
+    clearRepCache();
+    eq("add generation: --replace overwrites it",
+       addGenerationCmd(dir, { type: "summary", source_id: sid }, { output: card2, tool: "selftest", replace: true }).status, "replaced");
+    const bad = path.join(stage, "card-bad.md");
+    fs.writeFileSync(bad, `> "The regime welcomes change." [${eid}]\n`);
+    clearRepCache();
+    eq("add generation: a misquotation is refused", addGenerationCmd(dir, { type: "note", source_id: sid }, { output: bad, tool: "selftest" }).status, "refused");
+    clearRepCache();
+    eq("add generation: no source is refused", addGenerationCmd(dir, { type: "note" }, { output: card, tool: "selftest" }).status, "refused");
+    clearRepCache();
+    eq("add generation: two sources is a synthesis, refused",
+       addGenerationCmd(dir, { type: "note", provenance: { produced_by: { tool: "t", method: "model" }, derived_from: { source_ids: [sid, "src-000000000000"] } } }, { output: card, tool: "selftest" }).status, "refused");
+    // A second source's passage cannot be quoted by the first source's generation.
+    const other = path.join(stage, "other.txt");
+    fs.writeFileSync(other, "Another text entirely, about harbours.\n");
+    clearRepCache();
+    const o = addSourceCmd(dir, [{ slug: "b-other", title: "Other", source_kind: "document",
+      files: [{ path: other, role: "text", media_type: "text/plain", produced_by: "import" }] }], { tool: "selftest" });
+    clearRepCache();
+    const otherExt = anchorCmd(dir, o.results[0].representation_ids[0], [{ quote: "about harbours" }], { tool: "selftest" }).results[0].extraction_id;
+    const cross = path.join(stage, "cross.md");
+    fs.writeFileSync(cross, `> "about harbours" [${otherExt}]\n`);
+    clearRepCache();
+    const x = addGenerationCmd(dir, { type: "note", source_id: sid }, { output: cross, tool: "selftest" });
+    eq("add generation: quoting another source is refused", x.status, "refused");
+    ok("add generation: the refusal says to use a synthesis", /synthesis/.test(x.failures[0].reason));
+    clearRepCache();
+    const r = addGenerationCmd(dir, { type: "rating", source_id: sid, output: { value: { relevance: 3 } } }, { tool: "selftest" });
+    eq("add generation: an inline value needs no file", r.status, "ok");
+    clearRepCache();
+    const v = validateCorpus(dir);
+    eq("add generation: the corpus still validates", v.status, "passed");
+    eq("add generation: with no stale or id warnings", (v.warnings || []).filter((w) => /stale_input|id_mismatch/.test(w.code || "")).length, 0);
+  }
 
   // The overviews list is the navigation, so it is on the page beside whatever
   // is being read — not replaced by it. Both shapes have to do this.

@@ -45,6 +45,17 @@ classification, translation, description, or note.
   matches, the generation is **stale** (§07). Staleness is informational, not an
   error.
 
+A producer writes a generation with `upc add generation` *(1.14.0)*: it names
+the one source, the tool records what was read (`derived_from.representation_refs`,
+defaulting to the source's reading copy) and pins `input_digest` to that
+representation's hash, runs hop C over the output, and refuses a quotation or
+extraction from any other source: material drawn from two sources is a
+synthesis. The files land in the source's `generated/` directory (or
+`sections.generations` when declared) as `<gen-id>.json` beside the output.
+Because the id is keyed on type and inputs (§06), regenerating from the same
+inputs yields the same id; a tool replaces the earlier output explicitly
+(`--replace`) and the journal records it.
+
 A rating generation stores its rubric result inline and has no prose to gate:
 
 ```json
