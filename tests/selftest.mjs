@@ -1872,6 +1872,13 @@ ok("filename rejects reserved", !checkFilename("sources/con/x.md").ok);
     const browse = read("data/browse.js");
     ok("site: the data island is a plain script, never a fetch", /^window\.__UPCB_DATA=/.test(browse));
     ok("site: the island carries each source's page name so links resolve", /"sl":/.test(browse));
+    const island = JSON.parse(browse.replace(/^window\.__UPCB_DATA=/, "").replace(/;\s*$/, ""));
+    ok("site: the island no longer carries context no view showed",
+       island.passages.length > 0 && island.passages.every((x) => !("x" in x) && !("y" in x)));
+    ok("site: a code page's sentence ends once", /within this code\.<\/p>/.test(codeHtml) && !/\.\.<\/p>/.test(codeHtml));
+    const mx = read("matrix.html");
+    ok("site: a matrix number opens the row's code with the column's code ticked",
+       /href="codes\/theory\/mlp\.html#with=theory%3Aspt" title="Passages coded both Multi-level perspective and Social practice theory">1<\/a>/.test(mx));
 
     const passHtml = read("passages/index.html");
     ok("site: the passages page ships a mount point, not three thousand articles",
@@ -1915,21 +1922,130 @@ ok("filename rejects reserved", !checkFilename("sources/con/x.md").ok);
     const outB = fs.mkdtempSync(path.join(os.tmpdir(), "upc-pdf-"));
     writeSite(dir, { out: outB, bundle: true });
     const srcB = fs.readFileSync(path.join(outB, "sources", slug + ".html"), "utf8");
-    ok("source page: page N opens the original PDF at that page",
-       srcB.includes('href="../files/paper.pdf#page=3" target="_blank" rel="noopener" title="Open the original PDF at this page">page 3 ↗</a>'));
-    ok("source page: line N still opens the passage in the reading copy", /#ex=ext-[0-9a-f]{12}">line \d+ →<\/a>/.test(srcB));
+    ok("source page: 'See in original, p. N' opens the original PDF at that page, and says the printed page may differ",
+       srcB.includes('href="../files/paper.pdf#page=3" target="_blank" rel="noopener" title="Opens the original PDF at its 3rd page. ' +
+                     'The page number printed on the paper may differ.">See in original, p. 3 ↗</a>'));
+    ok("source page: line N opens the passage where it sits in the paper's text, not its own card",
+       /#text=ext-[0-9a-f]{12}">line \d+ →<\/a>/.test(srcB) && /<mark id="t-ext-[0-9a-f]{12}"/.test(srcB));
     ok("source page: and the PDF it opens travels with the site", fs.existsSync(path.join(outB, "files", "paper.pdf")));
     clearRepCache();
     const outU = fs.mkdtempSync(path.join(os.tmpdir(), "upc-nopdf-"));
     writeSite(dir, { out: outU });
     const srcU = fs.readFileSync(path.join(outU, "sources", slug + ".html"), "utf8");
-    ok("source page: without the PDFs, the page number is plain text and nothing links a missing file",
-       srcU.includes('<span class="muted">page 3</span>') && !srcU.includes("files/paper.pdf"));
+    ok("source page: without the PDFs or a DOI, the page number is plain text and nothing links a missing file",
+       srcU.includes('<span class="muted" title="In the PDF, this passage is on the 3rd page. The page number printed on ' +
+                     'the paper may differ.">p. 3</span>') && !srcU.includes("files/paper.pdf"));
+    // Without the PDFs but with a DOI, the original is the publisher's page.
+    const sjDoi = JSON.parse(fs.readFileSync(sjPath, "utf8"));
+    sjDoi.bibliographic.doi = "10.1/x";
+    fs.writeFileSync(sjPath, JSON.stringify(sjDoi, null, 2));
+    clearRepCache();
+    const outD = fs.mkdtempSync(path.join(os.tmpdir(), "upc-doi-"));
+    writeSite(dir, { out: outD });
+    const srcD = fs.readFileSync(path.join(outD, "sources", slug + ".html"), "utf8");
+    ok("source page: without the PDFs, 'See in original (publisher)' opens the DOI and names the PDF page on hover",
+       srcD.includes('href="https://doi.org/10.1%2Fx" target="_blank" rel="noopener" title="Opens the publisher&#39;s page ' +
+                     'for this paper. In the PDF, this passage is on the 3rd page.') &&
+       srcD.includes(">See in original (publisher) ↗</a>"));
     fs.rmSync(outB, { recursive: true, force: true });
     fs.rmSync(outU, { recursive: true, force: true });
+    fs.rmSync(outD, { recursive: true, force: true });
     fs.writeFileSync(sjPath, sjBefore);
     fs.writeFileSync(exPath, exBefore);
     fs.rmSync(pdfAbs);
+    clearRepCache();
+  }
+
+  // Highlights follow the record. A sentence a paper repeats is highlighted
+  // where the passage is, not where its words first occur; a quotation that runs
+  // over a paragraph break is highlighted in each paragraph; and the single file
+  // carries the same position in the units a browser indexes (UTF-16).
+  {
+    const hd = fs.mkdtempSync(path.join(os.tmpdir(), "upc-hl-"));
+    const hs = "s1";
+    fs.mkdirSync(path.join(hd, "sources", hs, "representations"), { recursive: true });
+    fs.mkdirSync(path.join(hd, "provenance"), { recursive: true });
+    const htext = "Intro 𝔘 words.\n\nThe same sentence twice.\n\nMiddle words.\n\nThe same sentence twice.\n\n" +
+                  "A quotation that runs\n\nover a paragraph break.\n";
+    const hbuf = Buffer.from(htext, "utf8");
+    fs.writeFileSync(path.join(hd, "sources", hs, "representations", "clean.md"), hbuf);
+    const hrep = mintRepId(hbuf);
+    const hsrc = mintSrcId({ canonicalUrl: "https://example.org/hl" });
+    fs.writeFileSync(path.join(hd, "sources", hs, "source.json"), JSON.stringify({
+      source_id: hsrc, source_kind: "url", title: "Highlights",
+      bibliographic: { item_type: "article-journal", title: "Highlights", authors: [{ family: "Doe" }], issued: { date_parts: [[2020]] } },
+      retrieval: { original_url: "https://example.org/hl", fetch_status: "success" },
+      extractions_path: `sources/${hs}/extractions.jsonl`,
+      representations: [{ representation_id: hrep, role: "clean_markdown", media_type: "text/markdown",
+        path: `sources/${hs}/representations/clean.md`, sha256: sha256Hex(hbuf), produced_by: "conversion", provenance: stamp }],
+      provenance: stamp,
+    }, null, 2));
+    fs.writeFileSync(path.join(hd, "provenance", "events.jsonl"), "");
+    fs.writeFileSync(path.join(hd, "corpus.json"), JSON.stringify({
+      upc_spec_version: specVersion(), corpus_id: "cor-000000000005", title: "Highlight fixture",
+      sections: { sources: "sources/", provenance: "provenance/events.jsonl" } }, null, 2));
+    const cpOf = (needle, from = 0) => codepointLength(htext.slice(0, htext.indexOf(needle, from)));
+    const second = htext.indexOf("The same sentence twice.", htext.indexOf("The same sentence twice.") + 1);
+    const ext = (quote, start) => {
+      const o = { source_id: hsrc, representation_ref: hrep, type: "passage", status: "active", direct_quote: quote,
+        locator: { type: "char_range", representation_ref: hrep, value: { start, end: start + codepointLength(quote) } },
+        provenance: stamp };
+      o.extraction_id = mintExtId(o);
+      return o;
+    };
+    const twice = ext("The same sentence twice.", codepointLength(htext.slice(0, second)));
+    const split = ext("A quotation that runs\n\nover a paragraph break.", cpOf("A quotation"));
+    fs.writeFileSync(path.join(hd, "sources", hs, "extractions.jsonl"), [twice, split].map((o) => JSON.stringify(o)).join("\n") + "\n");
+    clearRepCache();
+    const hout = fs.mkdtempSync(path.join(os.tmpdir(), "upc-hl-site-"));
+    writeSite(hd, { out: hout });
+    const hpage = fs.readFileSync(path.join(hout, "sources", hs + ".html"), "utf8");
+    ok("highlight: a repeated sentence is marked where the passage is, not at its first occurrence",
+       hpage.includes("<p>The same sentence twice.</p>") &&
+       hpage.indexOf("<p>The same sentence twice.</p>") < hpage.indexOf(`<mark id="t-${twice.extraction_id}">The same sentence twice.</mark>`));
+    ok("highlight: a quotation over a paragraph break is marked in both paragraphs, the first piece the link target",
+       hpage.includes(`<mark id="t-${split.extraction_id}">A quotation that runs</mark>`) &&
+       hpage.includes(`<mark data-for="t-${split.extraction_id}">over a paragraph break.</mark>`));
+    const hfile = path.join(hout, "one.html");
+    writeSingleFile(hd, { out: hfile });
+    const one = fs.readFileSync(hfile, "utf8");
+    const data = JSON.parse(/<script type="application\/json" id="upc-data">([\s\S]*?)<\/script>/.exec(one)[1]);
+    const t0 = JSON.parse(/<script type="application\/json" id="upc-t0">([\s\S]*?)<\/script>/.exec(one)[1]);
+    const pTwice = data.passages.find((x) => x.id === twice.extraction_id);
+    const pSplit = data.passages.find((x) => x.id === split.extraction_id);
+    ok("single file: each verified passage carries its position in UTF-16 units, past a character outside the BMP",
+       t0.slice(pTwice.o[0], pTwice.o[1]) === twice.direct_quote && pTwice.o[0] === second &&
+       t0.slice(pSplit.o[0], pSplit.o[1]) === split.direct_quote);
+
+    // The browse engine's card, run as a browser would run it.
+    const siteJs = fs.readFileSync(path.join(hout, "assets", "site.js"), "utf8");
+    const win = { addEventListener() {} };
+    new Function("window", "document", "localStorage", "location", siteJs)(
+      win, { documentElement: { setAttribute() {} }, addEventListener() {} },
+      { getItem() { return null; }, setItem() {} }, { hash: "" });
+    const B = win.UPCB;
+    const ctx = (files, src) => ({ sources: [src], files, coderKind: { m: "model" },
+      codebooks: [{ slug: "theory", title: "Theory", codes: [{ code: "mlp", label: "MLP", def: "" }] }],
+      badges: { verified: ["✓", "Checked", ""], failed: ["⚠", "Doesn't match", ""], unverifiable: ["?", "Not checkable", ""] },
+      hrefSource: () => "#card", hrefText: () => "#text", hrefCode: () => "#code" });
+    const card = { id: "ext-000000000001", s: 0, q: "Q", n: "", b: "failed", st: "", l: 3, pg: 14, act: null,
+                   g: [["theory", "mlp", "m", "high", ""]], dis: 0 };
+    B.init(ctx("files", { p: "a b#1.pdf", d: "10.1/x", k: "Doe 2020" }));
+    const c1 = B.card(card);
+    ok("browse card: 'See in original, p. 14' opens the PDF at that page, its name encoded whole",
+       c1.includes('href="files/a%20b%231.pdf#page=14"') && c1.includes(">See in original, p. 14 ↗</a>") &&
+       c1.includes("Opens the original PDF at its 14th page. The page number printed on the paper may differ."));
+    ok("browse card: line N opens the paper's text", c1.includes('href="#text">Doe 2020 · line 3 →</a>'));
+    ok("browse card: a code on a failed quotation is struck through, as on the server's pages", c1.includes('class="chip detached"'));
+    B.init(ctx(null, { p: "a.pdf", d: "10.1/x", k: "Doe 2020" }));
+    const c2 = B.card(card);
+    ok("browse card: without the PDFs, the publisher's page by DOI, the PDF page on hover",
+       c2.includes('href="https://doi.org/10.1%2Fx"') && c2.includes(">See in original (publisher) ↗</a>") &&
+       c2.includes("In the PDF, this passage is on the 14th page."));
+    B.init(ctx(null, { p: "", d: "", k: "Doe 2020" }));
+    ok("browse card: with neither, the bare page", B.card(card).includes(">p. 14</span>"));
+    fs.rmSync(hd, { recursive: true, force: true });
+    fs.rmSync(hout, { recursive: true, force: true });
     clearRepCache();
   }
 

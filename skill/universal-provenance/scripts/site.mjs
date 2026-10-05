@@ -47,6 +47,35 @@ const STATUS_TEXT = {
   active: "", needs_review: "Needs a look", superseded: "Replaced", retracted: "Withdrawn",
 };
 
+// "p. 14" is the PDF's 14th page, which is not always the number printed on it
+// (a journal's page 412, a preprint's cover sheet), so the link says so on hover.
+// The browse engine carries the same words (ORIGINAL in BROWSE_JS).
+const ordinal = (n) => {
+  const v = Number(n), t = v % 100;
+  return `${v}${t >= 11 && t <= 13 ? "th" : ({ 1: "st", 2: "nd", 3: "rd" })[v % 10] || "th"}`;
+};
+const PAGE_NOTE = "The page number printed on the paper may differ.";
+const ORIGINAL_TIP = {
+  pdf: (pg) => pg ? `Opens the original PDF at its ${ordinal(pg)} page. ${PAGE_NOTE}` : "Opens the original PDF.",
+  doi: (pg) => "Opens the publisher's page for this paper." +
+    (pg ? ` In the PDF, this passage is on the ${ordinal(pg)} page. ${PAGE_NOTE}` : ""),
+  page: (pg) => `In the PDF, this passage is on the ${ordinal(pg)} page. ${PAGE_NOTE}`,
+};
+
+/** "See in original, p. 14 ↗": the PDF at that page when the PDFs travel with
+ *  the site; otherwise the publisher's page by DOI; otherwise the bare page. */
+function originalLinkHtml(page, pdfHref, doi) {
+  if (pdfHref) {
+    return ` <a class="muted" href="${pdfHref}${page ? `#page=${encodeURIComponent(page)}` : ""}" target="_blank" rel="noopener"` +
+      ` title="${attr(ORIGINAL_TIP.pdf(page))}">See in original${page ? `, p. ${esc(page)}` : ""} ↗</a>`;
+  }
+  if (doi) {
+    return ` <a class="muted" href="https://doi.org/${encodeURIComponent(doi)}" target="_blank" rel="noopener"` +
+      ` title="${attr(ORIGINAL_TIP.doi(page))}">See in original (publisher) ↗</a>`;
+  }
+  return page ? ` <span class="muted" title="${attr(ORIGINAL_TIP.page(page))}">p. ${esc(page)}</span>` : "";
+}
+
 // --- small helpers --------------------------------------------------------
 
 const esc = (s) => String(s == null ? "" : s)
@@ -139,7 +168,7 @@ export function buildSiteModel(loaded, opts = {}) {
     const { badge } = U.badgeForExtraction(o, repObj, repRec, lookupRep);
     if (badge === "failed") failures++;
 
-    let before = "", after = "", lineRange = null, actual = null;
+    let before = "", after = "", lineRange = null, actual = null, span = null;
     if (repRec && o.locator && o.locator.type === "char_range") {
       const v = o.locator.value || {};
       const cps = repRec.cps;
@@ -148,6 +177,7 @@ export function buildSiteModel(loaded, opts = {}) {
         after = cps.slice(v.end, Math.min(cps.length, v.end + CTX)).join("");
         actual = cps.slice(v.start, v.end).join("");
         lineRange = U.lineRangeForCharRange(repRec.text, v.start, v.end);
+        span = [v.start, v.end];   // codepoints; trusted for a highlight only once the badge says it verified
       }
     }
     const secondaryPage = (o.secondary_locators || []).find((s) => s.type === "page");
@@ -163,7 +193,7 @@ export function buildSiteModel(loaded, opts = {}) {
       query: o.query || "",
       confidence: o.confidence || "",
       anchoring: o.anchoring || null,
-      before, after, actual,
+      before, after, actual, span,
       line_range: lineRange,
       page: secondaryPage ? secondaryPage.value : null,
       codings: codingsByTarget.get(`extraction:${o.extraction_id}`) || [],
@@ -362,6 +392,9 @@ p.lede{color:var(--muted);margin:.2rem 0 1.2rem;max-width:62ch}
   border-radius:8px;padding:.5rem .7rem}
 .passage .meta{margin-top:.55rem;display:flex;gap:.5rem;flex-wrap:wrap;align-items:center;
   font-family:ui-sans-serif,system-ui,sans-serif;font-size:.8rem}
+.passage .meta .spacer{flex:1}
+/* the way out of a card — its place in the text, the original — wraps as one, kept right */
+.passage .meta .go{display:inline-flex;flex-wrap:wrap;gap:.25rem .7rem;align-items:baseline;margin-left:auto}
 mark{background:var(--mark);color:inherit;padding:.05em 0;border-radius:2px}
 /* a verification badge — NEVER shares styling with a code chip (spec/09) */
 .badge{display:inline-flex;gap:.3rem;align-items:center;border-radius:6px;padding:.1rem .45rem;
@@ -469,12 +502,15 @@ const JS = `
     document.documentElement.setAttribute("data-theme",next);
     try{localStorage.setItem(K,next);}catch(e){}
   };
-  // Deep links: #ex=<id> / #coding=<id> scroll to and flash the thing named.
+  // Deep links: #ex=<id> / #coding=<id> scroll to and flash the thing named;
+  // #text=<id> to the passage highlighted in the paper's text ("line N →").
   function jump(){
     var h=location.hash||"";
-    var m=/^#(?:ex|coding|code)=(.+)$/.exec(h);
+    var m=/^#(ex|coding|code|text)=([^&]+)/.exec(h);
     if(!m)return;
-    var el=document.getElementById(m[1])||document.querySelector('[data-id="'+CSS.escape(m[1])+'"]');
+    var id=decodeURIComponent(m[2]);
+    var el=m[1]==="text"?document.getElementById("t-"+id)
+      :document.getElementById(id)||document.querySelector('[data-id="'+CSS.escape(id)+'"]');
     if(el){el.scrollIntoView({block:"center"});el.style.outline="2px solid var(--accent)";
       setTimeout(function(){el.style.outline="";},2400);}
   }
@@ -520,6 +556,10 @@ const JS = `
           var src=B.sources[p.s]||{};
           return base+"sources/"+encodeURIComponent(src.sl||"")+".html#ex="+encodeURIComponent(p.id);
         },
+        hrefText:function(p){
+          var src=B.sources[p.s]||{};
+          return base+"sources/"+encodeURIComponent(src.sl||"")+".html#text="+encodeURIComponent(p.id);
+        },
         hrefCode:function(slug,code){
           return base+"codes/"+encodeURIComponent(slug)+"/"+encodeURIComponent(code)+".html";
         }
@@ -530,8 +570,10 @@ const JS = `
         for(var i=0;i<p.g.length;i++) if(p.g[i][0]+":"+p.g[i][1]===only) return true;
         return false;
       });
+      // #with=<scheme>:<code> — a matrix cell: this code's passages that also carry that one.
+      var mw=/[#&]with=([^&]+)/.exec(location.hash||"");
       host.innerHTML="";
-      UPCB.browse(host,items,{omit:omit?[omit]:[]});
+      UPCB.browse(host,items,{omit:omit?[omit]:[],with:mw?decodeURIComponent(mw[1]).split(","):[]});
     }
 
     // The overviews list: filtered in place, never replaced.
@@ -605,13 +647,34 @@ const BROWSE_JS = String.raw`
   // Who made a judgement lives in the chip's tooltip, with its confidence and
   // reason. Each view also says once, visibly, what kind of coder made its codes
   // (codeNote) — so a model's judgement never passes for a fact (spec/09).
-  function chip(g){
+  // A code on a quotation that no longer matches its paper is shown struck
+  // through (detached), as the pages built on the server show it.
+  function chip(g,detached){
     var d=codeDef[g[0]+":"+g[1]], lbl=d?d.c.label:g[1];
     var kind=(X.coderKind||{})[g[2]];
     var tip=(d&&d.c.def?d.c.label+": "+d.c.def+"\n":"")+"Coded by "+g[2]+(kind?" ("+kind+")":"")+
       (g[3]?" · confidence "+g[3]:"")+(g[4]?"\nWhy: "+g[4]:"");
-    return '<span class="chip" title="'+E(tip)+'">'+
+    return '<span class="chip'+(detached?" detached":"")+'" title="'+E(tip)+'">'+
       '<a href="'+E(X.hrefCode(g[0],g[1]))+'">'+E(lbl)+"</a></span>";
+  }
+  // "See in original, p. 14 ↗": the PDF at that page when the PDFs travel with
+  // the library, else the publisher's page by DOI, else the bare page number.
+  // Same words as the server-side pages (ORIGINAL_TIP in site.mjs).
+  var NOTE=" The page number printed on the paper may differ.";
+  function nth(n){ var t=n%100; return n+(t>=11&&t<=13?"th":({1:"st",2:"nd",3:"rd"})[n%10]||"th"); }
+  function original(p,s){
+    if(X.files&&s.p){
+      return ' <a class="muted" href="'+E(X.files+"/"+encodeURIComponent(s.p)+(p.pg?"#page="+p.pg:""))+
+        '" target="_blank" rel="noopener" title="'+
+        E(p.pg?"Opens the original PDF at its "+nth(p.pg)+" page."+NOTE:"Opens the original PDF.")+'">See in original'+
+        (p.pg?", p. "+p.pg:"")+" ↗</a>";
+    }
+    if(s.d){
+      return ' <a class="muted" href="https://doi.org/'+encodeURIComponent(s.d)+'" target="_blank" rel="noopener" title="'+
+        E("Opens the publisher's page for this paper."+(p.pg?" In the PDF, this passage is on the "+nth(p.pg)+" page."+NOTE:""))+
+        '">See in original (publisher) ↗</a>';
+    }
+    return p.pg?' <span class="muted" title="'+E("In the PDF, this passage is on the "+nth(p.pg)+" page."+NOTE)+'">p. '+p.pg+"</span>":"";
   }
   function codeNote(){
     var k={}, ck=X.coderKind||{};
@@ -625,17 +688,12 @@ const BROWSE_JS = String.raw`
     var s=X.sources[p.s]||{}, bad=p.b==="failed";
     var body;
     if(p.q){
-      var q="<mark>"+E(p.q)+"</mark>";
-      body=(opts.context!==false&&(p.x||p.y))
-        ? '<blockquote class="ctx">…'+E((p.x||"").slice(-220))+q+E((p.y||"").slice(0,220))+"…</blockquote>"
-        : "<blockquote>"+q+"</blockquote>";
+      body="<blockquote><mark>"+E(p.q)+"</mark></blockquote>";
       if(bad&&p.act) body+='<p class="small" style="color:var(--warn)">The source now reads: “'+E(p.act.slice(0,240))+'”</p>';
     } else { body='<p class="note">'+E(p.n)+"</p>"; }
-    var where=[p.l?"line "+p.l:"",""].filter(Boolean).join(" · ");
-    var pdfLink=(X.files&&s.p&&p.pg)
-      ? ' <a class="muted" href="'+X.files+"/"+encodeURI(s.p)+"#page="+p.pg+'" target="_blank" rel="noopener"'+
-        ' title="Open the original PDF at this page">page '+p.pg+" ↗</a>"
-      : (p.pg?' <span class="muted">page '+p.pg+"</span>":"");
+    var where=p.l?"line "+p.l:"";
+    // "line N →" opens the passage where it sits in the paper's text.
+    var href=where&&X.hrefText?X.hrefText(p):X.hrefSource(p);
     return '<article class="passage'+(bad?" bad":"")+'" id="'+E(p.id)+'" data-row'+
       ' data-code="'+E(p.g.map(function(g){return g[0]+":"+g[1];}).join("|"))+'"'+
       ' data-coder="'+E(p.g.map(function(g){return g[2];}).join("|"))+'"'+
@@ -645,10 +703,10 @@ const BROWSE_JS = String.raw`
       (p.dis?'<div class="disagree">Coders disagree here — both judgements are kept and shown.</div>':"")+
       '<div class="meta">'+badge(p.b,!!opts.terse)+
       (p.st?'<span class="badge plain">'+E(p.st)+"</span>":"")+
-      p.g.map(function(g){return chip(g,!!opts.terse);}).join(" ")+
-      '<span class="spacer"></span><a class="muted" href="'+E(X.hrefSource(p))+'">'+
-      (opts.showSource===false?E(where||"in context"):E(s.k||"")+(where?" · "+E(where):""))+" →</a>"+pdfLink+
-      "</div></article>";
+      p.g.map(function(g){return chip(g,bad);}).join(" ")+
+      '<span class="spacer"></span><span class="go"><a class="muted" href="'+E(href)+'">'+
+      (opts.showSource===false?E(where||"in context"):E(s.k||"")+(where?" · "+E(where):""))+" →</a>"+original(p,s)+
+      "</span></div></article>";
   }
 
   // ---- the two-pane browser ----
@@ -671,8 +729,20 @@ const BROWSE_JS = String.raw`
     opts=opts||{};
     prep(items);
 
+    // A matrix cell opens a code's list with another code ticked (opts.with).
+    // A scheme the page leaves out has no box to tick, so for that one the list
+    // itself is narrowed, and the sidebar says so.
+    var omit=opts.omit||[], tick=[], also=[];
+    (opts.with||[]).forEach(function(k){
+      if(!codeDef[k]) return;
+      if(omit.indexOf(k.split(":")[0])>=0){
+        items=items.filter(function(p){return p._c.indexOf(k)>=0;});
+        also.push(codeDef[k].c.label);
+      } else tick.push(k);
+    });
+
     // groups: one per codebook that anything is coded against, plus the coders
-    var omit=opts.omit||[], groups=[];
+    var groups=[];
     X.codebooks.forEach(function(cb){
       if(omit.indexOf(cb.slug)>=0) return;
       var codes=[];
@@ -710,6 +780,7 @@ const BROWSE_JS = String.raw`
       '<aside class="side" id="pfacets">'+
         '<input type="search" class="sidesearch" id="pq" placeholder="Search every passage…">'+
         '<p class="small muted" id="pcount" style="margin:.5rem 0 .3rem"></p>'+
+        (also.length?'<p class="small" style="margin:0 0 .5rem">Only passages also coded '+E(also.join(", "))+".</p>":"")+
         '<p class="small muted" style="margin:0 0 .5rem">'+E(codeNote())+"</p>"+
         '<p class="small" style="margin:0 0 .5rem"><button class="btn" id="pclear">Clear all</button> '+
         '<button class="btn" id="pcsv">Download CSV</button></p>'+
@@ -728,6 +799,12 @@ const BROWSE_JS = String.raw`
 
     var list=host.querySelector("#plist"), more=host.querySelector("#pmore");
     var countEl=host.querySelector("#pcount"), q=host.querySelector("#pq");
+    [].slice.call(host.querySelectorAll("input[data-f]")).forEach(function(c){
+      if(tick.indexOf(c.value)<0) return;
+      c.checked=true; sel[c.getAttribute("data-f")].push(c.value);
+      var d=c.parentNode; while(d&&d.tagName!=="DETAILS") d=d.parentNode;
+      if(d) d.open=true;
+    });
 
     function keep(p,skip){
       for(var i=0;i<groups.length;i++){
@@ -954,18 +1031,17 @@ function passageHtml(p, model, base, { showSource = true, context = true, compac
   const chips = p.codings.map((c) => chipHtml(c, base, bad, compact)).join(" ");
   const dis = p.disagreements.length
     ? `<div class="disagree">Coders disagree here — both judgements are kept and shown.</div>` : "";
-  // "line N" opens the passage in the reading copy; "page N ↗" opens the
-  // original PDF at that page when the PDFs travel with the site — the same pair
-  // the passages page shows. Source pages used to render "page N" into the
-  // reading-copy link, so it never reached the PDF.
+  // "line N →" opens the passage where it sits in the paper's text (#text=, the
+  // highlight), not the card it is written on; "See in original, p. N ↗" opens
+  // the original — the same pair the passages page shows.
   const where = p.line_range ? `line ${p.line_range.start}` : "";
+  const textHref = where
+    ? `${base}sources/${encodeURIComponent(p.source_slug)}.html#text=${encodeURIComponent(p.id)}` : srcHref;
   const src = model.sourceById.get(p.source_id);
   const pdfName = src && src.pdfRep ? path.basename(src.pdfRep.path) : "";
-  const pdfLink = !p.page ? ""
-    : model.filesDir && pdfName
-      ? ` <a class="muted" href="${base}${model.filesDir}/${encodeURIComponent(pdfName)}#page=${encodeURIComponent(p.page)}"` +
-        ` target="_blank" rel="noopener" title="Open the original PDF at this page">page ${esc(p.page)} ↗</a>`
-      : ` <span class="muted">page ${esc(p.page)}</span>`;
+  const pdfLink = originalLinkHtml(p.page,
+    model.filesDir && pdfName ? `${base}${model.filesDir}/${encodeURIComponent(pdfName)}` : null,
+    src && src.doi);
   const csv = compact ? "" : j({
     quote: p.quote || p.note, source: `${p.cite} — ${p.source_title}`, year: p.year,
     doi: (model.sourceById.get(p.source_id) || {}).doi || "",
@@ -992,8 +1068,8 @@ function passageHtml(p, model, base, { showSource = true, context = true, compac
     ${status ? `<span class="badge plain">${esc(status)}</span>` : ""}
     ${chips}
     <span class="spacer"></span>
-    ${showSource ? `<a class="muted" href="${srcHref}">${esc(p.cite)}${where ? ` · ${esc(where)}` : ""} →</a>`
-                 : `<a class="muted" href="${srcHref}">${esc(where || "in context")} →</a>`}${pdfLink}
+    <span class="go">${showSource ? `<a class="muted" href="${textHref}">${esc(p.cite)}${where ? ` · ${esc(where)}` : ""} →</a>`
+                 : `<a class="muted" href="${textHref}">${esc(where || "in context")} →</a>`}${pdfLink}</span>
   </div>
 </article>`;
 }
@@ -1088,8 +1164,8 @@ function codePage(model, cb, code) {
 <h1>${esc(code.label || code.code)}</h1>
 ${code.definition ? `<div class="defbox">${esc(code.definition)}${
   (code.examples || []).length ? `<div class="small muted" style="margin-top:.4rem">For example: “${esc(code.examples[0])}”</div>` : ""}</div>` : ""}
-<p class="lede">${countsLede(passages, sourcesCoded)}${
-  passages.length ? ". Narrow them on the left — those counts are within this code." : ""}.</p>
+<p class="lede">${countsLede(passages, sourcesCoded)}.${
+  passages.length ? " Narrow them on the left — those counts are within this code." : ""}</p>
 ${passages.length
   ? `<div data-browse data-base="${base}" data-only="${attr(cb.slug + ":" + code.code)}" data-omit="${attr(cb.slug)}"></div>
 <noscript>${passages.map((p) => passageHtml(p, model, base)).join("\n")}</noscript>`
@@ -1172,6 +1248,15 @@ function renderReading(text, passages) {
   const marks = [];
   for (const p of passages) {
     if (!p.quote) continue;
+    // Where the record puts it, once this build has checked that the text there
+    // is the quotation: a sentence a paper repeats is highlighted where the
+    // passage actually is, not at its first occurrence. A quotation that did not
+    // verify is looked for by its words instead, so a drifted locator cannot
+    // smear a highlight across the wrong text.
+    if (p.span && U.VERIFIED_BADGES.has(p.badge)) {
+      marks.push({ start: p.span[0], end: p.span[1], id: p.id, bad: false });
+      continue;
+    }
     const idx = text.indexOf(p.quote);
     if (idx < 0) continue;
     const start = U.codepointLength(text.slice(0, idx));
@@ -1200,10 +1285,14 @@ function renderReading(text, passages) {
     let at = ps, html = "";
     for (let k = mi; k < marks.length && marks[k].start < pe; k++) {
       const m = marks[k];
-      if (m.start < at) continue;               // overlapping passages: keep the first
+      if (m.end <= ps) continue;                // ended in an earlier paragraph
       const a = Math.max(m.start, ps), b = Math.min(m.end, pe);
+      if (a < at) continue;                     // overlapping passages: keep the first
+      // A quotation running over a paragraph break is highlighted in each
+      // paragraph it covers; only the first piece carries the id a link jumps to.
+      const name = a === m.start ? `id="t-${attr(m.id)}"` : `data-for="t-${attr(m.id)}"`;
       html += esc(cps.slice(at, a).join(""));
-      html += `<mark id="t-${attr(m.id)}"${m.bad ? ' style="background:var(--warn-soft)"' : ""}>` +
+      html += `<mark ${name}${m.bad ? ' style="background:var(--warn-soft)"' : ""}>` +
               esc(cps.slice(a, b).join("")) + `</mark>`;
       at = b;
     }
@@ -1242,14 +1331,18 @@ function matrixPage(model) {
     title: `${A.title} × ${B.title}`, rel: "matrix.html", model, active: "matrix",
     body: `<h1>${esc(A.title)} × ${esc(B.title)}</h1>
 <p class="lede">How many passages carry both codes. Every number is a count of passages, not of papers.
-Click a row or column heading to see its passages.</p>
+Click a number to see those passages, or a heading to see all of a code's.</p>
 <div class="wrap"><table>
 <thead><tr><th></th>${bCodes.map((bc) =>
   `<th class="num"><a href="codes/${encodeURIComponent(B.slug)}/${encodeURIComponent(bc.code)}.html">${esc(bc.label || bc.code)}</a></th>`).join("")}</tr></thead>
 <tbody>
 ${aCodes.map((ac) => `<tr>
   <th><a href="codes/${encodeURIComponent(A.slug)}/${encodeURIComponent(ac.code)}.html">${esc(ac.label || ac.code)}</a></th>
-  ${bCodes.map((bc) => { const n = cell(ac, bc); return `<td class="num">${n || `<span class="muted">·</span>`}</td>`; }).join("")}
+  ${bCodes.map((bc) => { const n = cell(ac, bc); return `<td class="num">${n
+    // A number opens the row's code with the column's code already ticked.
+    ? `<a href="codes/${encodeURIComponent(A.slug)}/${encodeURIComponent(ac.code)}.html#with=${encodeURIComponent(`${B.slug}:${bc.code}`)}"` +
+      ` title="${attr(`Passages coded both ${ac.label || ac.code} and ${bc.label || bc.code}`)}">${n}</a>`
+    : `<span class="muted">·</span>`}</td>`; }).join("")}
 </tr>`).join("\n")}
 </tbody></table></div>`,
   });
@@ -1647,6 +1740,7 @@ const CLIENT_ONE = String.raw`
   UPCB.init({
     sources:D.sources, codebooks:D.codebooks, badges:D.badges, files:D.files, coderKind:D.ck,
     hrefSource:function(p){ return "#/source/"+p.s+"?ex="+encodeURIComponent(p.id); },
+    hrefText:function(p){ return "#/source/"+p.s+"?text="+encodeURIComponent(p.id); },
     hrefCode:function(slug,code){ return "#/code/"+encodeURIComponent(slug)+"/"+encodeURIComponent(code); }
   });
   var badge=UPCB.badge, chip=UPCB.chip, passageCard=UPCB.card;
@@ -1721,14 +1815,17 @@ const CLIENT_ONE = String.raw`
         var pp=Object.keys(ps).length, whole=Math.max(0,Object.keys(x.r.s).length-pp);
         return PL(x.list.length,"passage","passages")+" from "+PL(pp,"paper","papers")+
           (whole?", plus "+PL(whole,"paper","papers")+" coded as a whole":""); })()+
-        (x.list.length?". Narrow them on the left — those counts are within this code.":"")+"</p>"+
+        "."+(x.list.length?" Narrow them on the left — those counts are within this code.":"")+"</p>"+
       (x.list.length?'<div id="browse"></div>':'<p class="muted">No passages carry this code yet.</p>');
   };
-  V.code.mount=function(a){
+  V.code.mount=function(a,qs){
     var x=codeList(a); if(!x||!x.list.length) return;
     // This code's own scheme is left out: every passage here carries it, so the
     // section would hold one row reading what the heading already says.
-    UPCB.browse(document.getElementById("browse"),x.list,{omit:[x.cb.slug]});
+    // ?with=<scheme>:<code> is a matrix cell: that code arrives ticked.
+    var mw=/(?:^|&)with=([^&]+)/.exec(qs||"");
+    UPCB.browse(document.getElementById("browse"),x.list,
+      {omit:[x.cb.slug],with:mw?decodeURIComponent(mw[1]).split(","):[]});
   };
   V.sources=function(){
     var rows=D.sources.slice().sort(function(a,b){return String(a.k).localeCompare(String(b.k));});
@@ -1750,19 +1847,38 @@ const CLIENT_ONE = String.raw`
     var reading="";
     if(D.withText&&textOf(s.i)){
       var text=textOf(s.i), marks=[];
-      mine.forEach(function(p){ if(!p.q)return; var i=text.indexOf(p.q);
+      // Where the record puts it (p.o: UTF-16 offsets this build checked hold
+      // the quotation), else wherever its words first occur.
+      mine.forEach(function(p){ if(!p.q)return;
+        if(p.o){ marks.push({a:p.o[0],b:p.o[1],id:p.id,bad:false}); return; }
+        var i=text.indexOf(p.q);
         if(i>=0) marks.push({a:i,b:i+p.q.length,id:p.id,bad:p.b==="failed"}); });
-      marks.sort(function(x,y){return x.a-y.a;});
-      var out="",cur=0;
-      marks.forEach(function(m){ if(m.a<cur)return;
-        out+=E(text.slice(cur,m.a))+'<mark id="t-'+E(m.id)+'"'+(m.bad?' style="background:var(--warn-soft)"':"")+">"+
-             E(text.slice(m.a,m.b))+"</mark>"; cur=m.b; });
-      out+=E(text.slice(cur));
-      reading='<div class="reading" id="reading">'+out.split(/\n{2,}/).map(function(x){return "<p>"+x+"</p>";}).join("")+"</div>";
+      marks.sort(function(x,y){return x.a-y.a||y.b-x.b;});
+      // Paragraph by paragraph, so a quotation running over a break is
+      // highlighted in each paragraph it covers (only the first piece is the
+      // target a link jumps to).
+      var paras=[], re=/\n{2,}/g, mm, from=0;
+      while((mm=re.exec(text))){ paras.push([from,mm.index]); from=mm.index+mm[0].length; }
+      paras.push([from,text.length]);
+      var html=[];
+      paras.forEach(function(pr){
+        var ps=pr[0], pe=pr[1], at=ps, h="";
+        if(pe<=ps) return;
+        marks.forEach(function(k){
+          if(k.b<=ps||k.a>=pe) return;
+          var a=Math.max(k.a,ps), b=Math.min(k.b,pe);
+          if(a<at) return;
+          h+=E(text.slice(at,a))+"<mark "+(a===k.a?'id="t-'+E(k.id)+'"':'data-for="t-'+E(k.id)+'"')+
+             (k.bad?' style="background:var(--warn-soft)"':"")+">"+E(text.slice(a,b))+"</mark>";
+          at=b;
+        });
+        html.push("<p>"+h+E(text.slice(at,pe))+"</p>");
+      });
+      reading='<div class="reading" id="reading">'+html.join("")+"</div>";
     }
     return '<p class="small muted" id="crumb"><a href="#/sources">Sources</a></p><h1>'+E(s.t)+"</h1>"+
       '<p class="lede">'+E(bits)+(s.d?' · <a href="https://doi.org/'+encodeURIComponent(s.d)+'">doi:'+E(s.d)+"</a>":"")+
-        ((D.files&&s.p)?' · <a href="'+D.files+"/"+encodeURI(s.p)+'" target="_blank" rel="noopener">open the PDF ↗</a>':"")+"</p>"+
+        ((D.files&&s.p)?' · <a href="'+E(D.files+"/"+encodeURIComponent(s.p))+'" target="_blank" rel="noopener">open the PDF ↗</a>':"")+"</p>"+
       ((s.g.length||mine.some(function(p){return p.g.length;}))?'<p class="small muted">'+E(UPCB.codeNote())+"</p>":"")+
       (s.g.length?'<div class="card"><div class="small muted">Judgements about this paper as a whole</div>'+
         '<div class="meta" style="margin-top:.4rem">'+s.g.map(function(g){return chip(g);}).join(" ")+"</div></div>":"")+
@@ -1866,13 +1982,17 @@ const CLIENT_ONE = String.raw`
         if(a&&b)n++; });
       return n; }
     return "<h1>"+E(A.title)+" × "+E(B.title)+"</h1><p class=\"lede\">How many passages carry both codes. Every number "+
-      "is a count of passages, not of papers. Click a heading to see its passages.</p>"+
+      "is a count of passages, not of papers. Click a number to see those passages, or a heading to see all of a code's.</p>"+
       '<div class="wrap"><table><thead><tr><th></th>'+bc.map(function(y){
         return '<th class="num"><a href="#/code/'+encodeURIComponent(B.slug)+"/"+encodeURIComponent(y.code)+'">'+E(y.label)+"</a></th>";
       }).join("")+"</tr></thead><tbody>"+
       ac.map(function(x){
         return '<tr><th><a href="#/code/'+encodeURIComponent(A.slug)+"/"+encodeURIComponent(x.code)+'">'+E(x.label)+"</a></th>"+
-          bc.map(function(y){var n=cell(x,y);return '<td class="num">'+(n||'<span class="muted">·</span>')+"</td>";}).join("")+"</tr>";
+          bc.map(function(y){var n=cell(x,y);
+            // A number opens the row's code with the column's code already ticked.
+            return '<td class="num">'+(n?'<a href="#/code/'+encodeURIComponent(A.slug)+"/"+encodeURIComponent(x.code)+
+              "?with="+encodeURIComponent(B.slug+":"+y.code)+'" title="'+E("Passages coded both "+x.label+" and "+y.label)+'">'+n+"</a>"
+              :'<span class="muted">·</span>')+"</td>";}).join("")+"</tr>";
       }).join("")+"</tbody></table></div>";
   };
 
@@ -1956,10 +2076,12 @@ const CLIENT_ONE = String.raw`
     if(fn.mount) fn.mount(parts,qs);
     lastView=view;
     window.scrollTo(0,0);
-    var m=/(?:^|&)ex=([^&]+)/.exec(qs);
+    // ?ex=<id> the passage's card; ?text=<id> its highlight in the paper's text.
+    var m=/(?:^|&)(ex|text)=([^&]+)/.exec(qs);
     if(m){
-      var id=decodeURIComponent(m[1]);
-      var el=document.getElementById(id)||document.getElementById("t-"+id);
+      var id=decodeURIComponent(m[2]);
+      var el=m[1]==="text"?document.getElementById("t-"+id)||document.getElementById(id)
+                          :document.getElementById(id)||document.getElementById("t-"+id);
       if(el){ el.scrollIntoView({block:"center"});
         el.style.outline="2px solid var(--accent)";
         setTimeout(function(){el.style.outline="";},2400); }
@@ -1986,17 +2108,29 @@ const CLIENT_ONE = String.raw`
  * server. Open it from a USB stick on a plane and it works.
  *
  * The one real cost is size. Reading copies dominate (17 MB of the 21 for a
- * 178-paper corpus), so `--no-text` drops them and keeps the passages, their
- * context and every overview — about a fifth of the size, and still the thing
- * most readers came for.
+ * 178-paper corpus), so `--no-text` drops them and keeps the passages and every
+ * overview — about a seventh of the size, and still the thing most readers came
+ * for.
  */
 /**
  * The compact record the browse engine reads, built once and used by both
  * shapes of the site so a passage cannot look like one thing in the file and
- * another in the folder. Context is recomputed from the text at render time
- * rather than stored twice, and the keys are one letter because they repeat
- * once per passage — three thousand times in a real corpus.
+ * another in the folder. The keys are one letter because they repeat once per
+ * passage — three thousand times in a real corpus. It used to carry 320
+ * characters of context each side of every passage (half the folder's
+ * data/browse.js), which no view ever showed; that is gone.
  */
+/** Codepoint offsets → UTF-16 offsets into the same string, which is how a
+ *  browser indexes it. The identity unless the text holds characters outside
+ *  the Basic Multilingual Plane, each of which is two UTF-16 units. */
+function utf16Offsets(text) {
+  if (!/[\uD800-\uDFFF]/.test(text)) return (i) => i;
+  const map = [0];
+  let u = 0;
+  for (const ch of text) { u += ch.length; map.push(u); }
+  return (i) => map[i];
+}
+
 function browsePayload(model) {
   const srcIndex = new Map();
   const sources = model.sources.map((s, i) => {
@@ -2016,7 +2150,7 @@ function browsePayload(model) {
     st: p.status === "active" ? "" : p.status,
     l: p.line_range ? p.line_range.start : 0,
     pg: p.page || 0,
-    x: p.before, y: p.after, act: p.badge === "failed" ? p.actual : null,
+    act: p.badge === "failed" ? p.actual : null,
     g: p.codings.map((c) => [c.codebook_slug, c.code != null ? c.code : c.value, c.coder, c.confidence, c.rationale || ""]),
     dis: p.disagreements.length ? 1 : 0,
   }));
@@ -2057,6 +2191,22 @@ export function writeSingleFile(root, opts = {}) {
       }
       texts.push(body);
     }
+  }
+
+  // Where each verified quotation sits in the text the file carries, so the
+  // reader's highlight lands on the passage itself rather than on the first
+  // place its words occur. A browser indexes strings in UTF-16 units.
+  if (withText) {
+    const conv = new Map();
+    model.passages.forEach((p, k) => {
+      if (!p.span || !U.VERIFIED_BADGES.has(p.badge)) return;
+      const si = srcIndex.get(p.source_id);
+      const src = model.sources[si];
+      if (!src || !src.textRep || src.textRep.representation_id !== p.rep || !texts[si]) return;
+      if (!conv.has(si)) conv.set(si, utf16Offsets(texts[si]));
+      const f = conv.get(si);
+      passages[k].o = [f(p.span[0]), f(p.span[1])];
+    });
   }
 
   const overviews = model.syntheses.map((syn) => {

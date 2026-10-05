@@ -3,6 +3,46 @@
 All notable changes to the Universal Provenance Corpus (UPC) standard.
 Versioning is semantic (§00 Versioning policy).
 
+## 1.14.1 — 2026-10-05
+
+**Patch release: the reader's site.** No schema, vocabulary, id recipe, gate or
+spec requirement changed.
+
+### Changed
+
+- A passage's link to its original reads **"See in original, p. 14 ↗"**, and on
+  hover says it opens the PDF at its 14th page and that the page number printed
+  on the paper may differ. Without the PDFs it opens the publisher's page by DOI
+  ("See in original (publisher) ↗", the PDF page on hover); with neither, the
+  bare "p. 14".
+- **"line N →" opens the passage where it sits in the paper's text**
+  (`#text=<id>`; `?text=<id>` in the single file), not its own card.
+- **Highlights in a paper's text follow the record.** Once this build has
+  verified a passage, its stored position is highlighted, so a sentence a paper
+  repeats is marked where the passage is rather than at its first occurrence. A
+  quotation that runs over a paragraph break is highlighted in each paragraph
+  (only the first piece is the link target). The single file carries each
+  verified passage's position in UTF-16 units (`o`), which is how a browser
+  indexes the text.
+- **Matrix numbers are links:** the row's code, with the column's code already
+  ticked (`codes/<scheme>/<code>.html#with=<scheme>:<code>`). A scheme the page
+  leaves out narrows the list instead, and the sidebar says so.
+- **The browse data no longer carries 320 characters of context each side of
+  every passage,** which no view showed. On a 179-paper library the folder's
+  `data/browse.js` goes from 4.1 to 2.0 MB, the single file from 21.8 to 19.8 MB
+  and the light file from 5.0 to 2.8 MB. The no-JavaScript fallback on code pages
+  still shows context, from the corpus itself.
+
+### Fixed
+
+- Codes drawn by the browse engine on a quotation that failed its check were
+  not struck through, as the server-built pages strike them.
+- The links at the end of a passage card now sit right and wrap together
+  (`.spacer` had no style outside the page header).
+- A code page's lede ended in two periods.
+- PDF names in the browse engine's links are encoded whole
+  (`encodeURIComponent`), so a `#` or `?` in a file name no longer breaks them.
+
 ## 1.14.0 — 2026-09-29
 
 **Minor release: `upc add generation`.** Producers can now write single-source
