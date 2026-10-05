@@ -24,6 +24,7 @@ import { buildVaultPlan, writeVault, loadProfile, renderCallout, serializeFrontm
   stripBoilerplate, yamlScalar } from "../skill/universal-provenance/scripts/obsidian.mjs";
 import { validateCorpus, anchorCmd, codeCmd, codebookCmd, batchCmd, mintBatchCmd, locateCmd, satisfiesRequirement, specVersion, addSourceCmd, addSynthesisCmd, addGenerationCmd } from "../skill/universal-provenance/scripts/upc.mjs";
 import { buildSiteModel, writeSite, writeSingleFile, renderOverviewMarkdown } from "../skill/universal-provenance/scripts/site.mjs";
+import { textBlocks, contextWindow, windowText, utf16Offsets, CONTEXT_CAP } from "../skill/universal-provenance/scripts/context.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
@@ -1776,7 +1777,7 @@ ok("filename rejects reserved", !checkFilename("sources/con/x.md").ok);
   fs.mkdirSync(path.join(dir, "provenance"), { recursive: true });
   fs.mkdirSync(path.join(dir, "codebooks"), { recursive: true });
 
-  const text = "Alpha line.\n\nThe regime resists change for structural reasons.\n\nOmega line.\n";
+  const text = "Alpha line.\n\nThe regime resists change for structural reasons.\n\nOmega line closes the paper with one more sentence.\n";
   const buf = Buffer.from(text, "utf8");
   fs.writeFileSync(path.join(dir, "sources", slug, "representations", "clean.md"), buf);
   const rep = mintRepId(buf);
@@ -1835,7 +1836,8 @@ ok("filename rejects reserved", !checkFilename("sources/con/x.md").ok);
   const p = model.passageById.get(extId);
 
   eq("site: a quotation is checked against the bytes", p.badge, "verified");
-  eq("site: context is read from the file, not stored", p.before, "Alpha line.\n\n");
+  eq("site: the sentences around a quotation are read from the file, not stored", p.cx,
+     ["Alpha line. The regime resists change for structural reasons. Omega line closes the paper with one more sentence.", 12, 61]);
   ok("site: a count states its unit", model.passages.length === 2 && model.sources.length === 1);
   eq("site: a code carries its coder", p.codings.map((c) => c.coder).sort().join(","), "ellie,model-a");
   ok("site: a code carries its definition", p.codings.every((c) => c.definition.length > 0));
@@ -1875,6 +1877,17 @@ ok("filename rejects reserved", !checkFilename("sources/con/x.md").ok);
     const island = JSON.parse(browse.replace(/^window\.__UPCB_DATA=/, "").replace(/;\s*$/, ""));
     ok("site: the island no longer carries context no view showed",
        island.passages.length > 0 && island.passages.every((x) => !("x" in x) && !("y" in x)));
+    const pv = island.passages.find((x) => x.id === extId);
+    ok("site: the island only flags a passage that has sentences around it",
+       pv.w === 1 && !("cx" in pv) && !("cw" in pv) && island.passages.filter((x) => x.w).length === 1);
+    const ctxJs = read(`data/ctx/${slug}.js`);
+    ok("site: each paper's sentences travel in a script of their own, loaded on the first click (it works from disk)",
+       /^Object\.assign\(window\.__UPC_CTX=window\.__UPC_CTX\|\|\{\},/.test(ctxJs));
+    eq("site: and hold exactly the window the model computed",
+       JSON.parse(ctxJs.replace(/^Object\.assign\(window\.__UPC_CTX=window\.__UPC_CTX\|\|\{\},/, "").replace(/\);\s*$/, ""))[extId], p.cx);
+    ok("site: a page without scripts shows the sentences around a passage, the passage marked",
+       codeHtml.includes('<blockquote class="ctx">Alpha line. <mark>The regime resists change for structural reasons.</mark> ' +
+                         'Omega line closes the paper with one more sentence.</blockquote>'));
     ok("site: a code page's sentence ends once", /within this code\.<\/p>/.test(codeHtml) && !/\.\.<\/p>/.test(codeHtml));
     const mx = read("matrix.html");
     ok("site: a matrix number opens the row's code with the column's code ticked",
@@ -1889,6 +1902,11 @@ ok("filename rejects reserved", !checkFilename("sources/con/x.md").ok);
     ok("site: a chip no longer prints its coder's name", !/class="who"/.test(srcHtml));
     ok("site: the coder, confidence and reason ride in the chip's tooltip", /title="[^"]*Coded by (ellie|model-a)/.test(srcHtml));
     ok("site: the source page says visibly that codes are judgements, and by whom", /Codes were assigned by /.test(srcHtml));
+    ok("site: a quotation is a button that opens the sentences around it, from its paper's script",
+       srcHtml.includes('<blockquote data-q="text" tabindex="0" role="button" aria-expanded="false" title="Show the sentences ' +
+                        'around it"><mark>The regime resists change for structural reasons.</mark></blockquote>') &&
+       srcHtml.includes(`data-cx="../data/ctx/${slug}.js"`));
+    ok("site: a summary is not a button", (srcHtml.match(/data-q=/g) || []).length === 1);
 
     const js = read("assets/site.js");
     ok("site: the browse sidebar carries the same sentence", /Hover a code to see who assigned it/.test(js));
@@ -1933,7 +1951,7 @@ ok("filename rejects reserved", !checkFilename("sources/con/x.md").ok);
     writeSite(dir, { out: outU });
     const srcU = fs.readFileSync(path.join(outU, "sources", slug + ".html"), "utf8");
     ok("source page: without the PDFs or a DOI, the page number is plain text and nothing links a missing file",
-       srcU.includes('<span class="muted" title="In the PDF, this passage is on the 3rd page. The page number printed on ' +
+       srcU.includes('<span class="muted orig" title="In the PDF, this passage is on the 3rd page. The page number printed on ' +
                      'the paper may differ.">p. 3</span>') && !srcU.includes("files/paper.pdf"));
     // Without the PDFs but with a DOI, the original is the publisher's page.
     const sjDoi = JSON.parse(fs.readFileSync(sjPath, "utf8"));
@@ -2024,6 +2042,22 @@ ok("filename rejects reserved", !checkFilename("sources/con/x.md").ok);
       win, { documentElement: { setAttribute() {} }, addEventListener() {} },
       { getItem() { return null; }, setItem() {} }, { hash: "" });
     const B = win.UPCB;
+    {
+      const hm = buildSiteModel(loadCorpus(hd), { matrix: null });
+      const want = [twice, split].map((x) => JSON.stringify(hm.passageById.get(x.extraction_id).cx));
+      ok("single file: a passage's sentences are ranges of the text it carries, joined in the browser as at build time",
+         want.every((w) => w !== undefined && w !== "null") &&
+         [pTwice, pSplit].every((x, i) => Array.isArray(x.cw) && !("cx" in x) &&
+                                          JSON.stringify(B.windowText(t0, x.cw, x.o[0], x.o[1])) === want[i]));
+      const lfile = path.join(hout, "light.html");
+      writeSingleFile(hd, { out: lfile, withText: false });
+      const ldata = JSON.parse(/<script type="application\/json" id="upc-data">([\s\S]*?)<\/script>/.exec(fs.readFileSync(lfile, "utf8"))[1]);
+      ok("light file: without the texts, a passage carries its sentences themselves",
+         [twice, split].every((x, i) => {
+           const lp = ldata.passages.find((y) => y.id === x.extraction_id);
+           return JSON.stringify(lp.cx) === want[i] && !("cw" in lp);
+         }));
+    }
     const ctx = (files, src) => ({ sources: [src], files, coderKind: { m: "model" },
       codebooks: [{ slug: "theory", title: "Theory", codes: [{ code: "mlp", label: "MLP", def: "" }] }],
       badges: { verified: ["✓", "Checked", ""], failed: ["⚠", "Doesn't match", ""], unverifiable: ["?", "Not checkable", ""] },
@@ -2064,6 +2098,175 @@ ok("filename rejects reserved", !checkFilename("sources/con/x.md").ok);
   }
 
   fs.rmSync(dir, { recursive: true, force: true });
+}
+
+// --- "In context": the sentences around a passage (context.mjs) ---
+// Each text below is invented, in the shape of a reading copy that broke a real
+// window: bullets, a heading glued to a sentence, a footnote dropped into the
+// middle of one, a text with every printed line its own block and a figure in
+// it, a character outside the Basic Multilingual Plane, front and end matter.
+{
+  const win = (text, quote, opts) => {
+    const qa = text.indexOf(quote);
+    if (qa < 0) throw new Error("fixture quote not found: " + quote);
+    const w = contextWindow(text, qa, qa + quote.length, opts);
+    const t = w && windowText(text, w, qa, qa + quote.length);
+    return { w, t, show: t ? t[0].slice(0, t[1]) + "[" + t[0].slice(t[1], t[2]) + "]" + t[0].slice(t[2]) : null };
+  };
+
+  {
+    const text = "Lock-in has three sources.\n\n• Technical: sunk investments in plants and grids.\n" +
+      "• Social: routines and habits of users.\n• Political: incumbents shape the rules [43].\n\n" +
+      "Radical innovations emerge in niches [45].\n";
+    eq("in context: bullets are sentences, and the list is read in order", win(text, "Social: routines and habits of users.").show,
+       "Lock-in has three sources. • Technical: sunk investments in plants and grids. • [Social: routines and habits of " +
+       "users.] • Political: incumbents shape the rules [43]. Radical innovations emerge in niches [45].");
+  }
+  {
+    const text = "These strands are discussed below. 4.1. Politics and power To elaborate the political dimension, " +
+      "scholars drew on political science. Incumbents resist through instrumental and discursive power [65]. " +
+      "Advocacy coalitions compete over policy frames [66].\n";
+    eq("in context: a numbered heading glued to a sentence starts the section; its words and the section before are left out",
+       win(text, "Incumbents resist through instrumental and discursive power [65].").show,
+       "To elaborate the political dimension, scholars drew on political science. [Incumbents resist through " +
+       "instrumental and discursive power [65].] Advocacy coalitions compete over policy frames [66].");
+    const t2 = "Earlier work focused on niches. 3. Results Low-carbon technology adoption In our sample, most owners " +
+      "had a heat pump. Few had a battery.\n";
+    eq("in context: a section word, then a sub-heading, both glued", win(t2, "Few had a battery.").show,
+       "In our sample, most owners had a heat pump. [Few had a battery.]");
+    const t3 = "The landscape is slow to change. Regimes are stable. Studies by Geels and others show this. " +
+      "Niches are protected spaces.\n";
+    eq("in context: a name inside a sentence is not taken for the start of one", win(t3, "Niches are protected spaces.").show,
+       "The landscape is slow to change. Regimes are stable. Studies by Geels and others show this. [Niches are protected spaces.]");
+  }
+  {
+    // Sentences that start with a number: a list item is text, a footnote or a heading is not.
+    const t1 = "The MLP fell short in two ways. 1. In MLP, emphasis is placed on the technology itself. 2. The researchers " +
+      "found that niches were not in competition as the MLP expects. Rather, diverse niches coexisted.\n";
+    eq("in context: numbered list items are part of the text", win(t1, "Rather, diverse niches coexisted.").show,
+       "The MLP fell short in two ways. 1. In MLP, emphasis is placed on the technology itself. 2. The researchers found " +
+       "that niches were not in competition as the MLP expects. [Rather, diverse niches coexisted.]");
+    const t2 = "Sales grew quickly after 2012. Electric vehicles passed 1% of sales in five countries. 34 In 2017 Volvo " +
+      "announced that it will cease production of conventional cars. Battery costs fell by 80% in a decade.\n";
+    eq("in context: a footnote set inline ends the window", win(t2, "Electric vehicles passed 1% of sales in five countries.").show,
+       "Sales grew quickly after 2012. [Electric vehicles passed 1% of sales in five countries.]");
+    const t3 = "We return to this in Section 3.2 below. 2.5. Tensions between Depth and Speed of Transitions. Transitions " +
+      "that are both fast and deep are needed. Many current transitions are fast but shallow.\n";
+    eq("in context: a numbered heading with lower-case words in it is a heading, not a sentence",
+       win(t3, "Many current transitions are fast but shallow.").show,
+       "Transitions that are both fast and deep are needed. [Many current transitions are fast but shallow.]");
+    const t4 = "Heat pumps became part of the renewable energy landscape. 4.5 Norwegian Electric Vehicle Association (NEVA) " +
+      "(1995 to present) The Norwegian Electric Vehicle Association was created in 1995. It changed its name in 2011.\n";
+    eq("in context: the words of a heading glued to the passage, and the section before it, are left out",
+       win(t4, "The Norwegian Electric Vehicle Association was created in 1995.").show,
+       "[The Norwegian Electric Vehicle Association was created in 1995.] It changed its name in 2011.");
+    const t5 = "Competition between technologies is modelled in low carbon vehicles. 3.42 The MATISSE model of " +
+      "transitions uses agents. Agents learn from each other.\n";
+    eq("in context: a numbered paragraph (JASSS) is not a new section",
+       win(t5, "The MATISSE model of transitions uses agents.").show,
+       "Competition between technologies is modelled in low carbon vehicles. 3.42 [The MATISSE model of transitions " +
+       "uses agents.] Agents learn from each other.");
+    const t6 = "Rail engineering firms merged in the 1990s. Engineering groups later extended their tram work beyond the " +
+      "country, to projects in several other cities. 4.2.3\n\nLocal project implementation\n\nThe first modern tram " +
+      "scheme was delivered in Nantes in 1985. It was a landmark for the industry.\n";
+    eq("in context: a section number that ends a block, its title the next block, is a heading (after it)",
+       win(t6, "The first modern tram scheme was delivered in Nantes in 1985.").show,
+       "[The first modern tram scheme was delivered in Nantes in 1985.] It was a landmark for the industry.");
+    eq("in context: a section number that ends a block, its title the next block, is a heading (before it)",
+       win(t6, "Engineering groups later extended their tram work beyond the country, to projects in several other cities.").show,
+       "Rail engineering firms merged in the 1990s. [Engineering groups later extended their tram work beyond the " +
+       "country, to projects in several other cities.]");
+  }
+  {
+    const text = "Policy support grew after 2009 because offshore wind was seen as\n\n" +
+      "3 See the Renewables Obligation review (2009) for the figures.\n\n" +
+      "strategic for industry and jobs. Developers gained confidence in the market.\n";
+    eq("in context: a footnote dropped into a sentence is left out, and the sentence joined across it",
+       win(text, "Developers gained confidence in the market.").show,
+       "Policy support grew after 2009 because offshore wind was seen as strategic for industry and jobs. " +
+       "[Developers gained confidence in the market.]");
+  }
+  {
+    // every printed line its own block, a quotation over two of them, and a figure between paragraphs
+    const text = "The policy changed in 2009 and doubled the support for offshore\n\n" +
+      "wind by allocating two certificates per MWh. This generous support\n\n" +
+      "helped to create a market and boosted investor confidence.\n\n" +
+      "Figure 4: Newspaper articles on offshore wind, 2000-2020\n\nThe Times\n\nFinancial Times\n\n1.2 0.8 0.6 0.4\n\n" +
+      "Public attention increased in 2009 because debates legitimated the\n\n" +
+      "policy. Firms then committed to the technology.\n";
+    const r = win(text, "This generous support\n\nhelped to create a market and boosted investor confidence.");
+    eq("in context: a line-per-block text reads as sentences; a quotation over a line break, and the figure, caption and " +
+       "legend left out", r.show,
+       "The policy changed in 2009 and doubled the support for offshore wind by allocating two certificates per MWh. " +
+       "[This generous support helped to create a market and boosted investor confidence.] Public attention increased " +
+       "in 2009 because debates legitimated the policy. Firms then committed to the technology.");
+    ok("in context: a window is ranges of the stored text, never rewritten words",
+       r.w.segs.every(([a, b]) => b > a && text.slice(a, b).trim() === text.slice(a, b)) && !r.w.lead && !r.w.tail);
+  }
+  {
+    const text = "Coercion and consent both sustain hegemony. Combinations of the two are used, but emphasis is " +
+      "placed on consent.\n\nthe economy rely on cheap energy for their operations.\n";
+    eq("in context: a full stop, then a block in lower case, is a jump in the text: the window stops there",
+       win(text, "Combinations of the two are used, but emphasis is placed on consent.").show,
+       "Coercion and consent both sustain hegemony. [Combinations of the two are used, but emphasis is placed on consent.]");
+    const t2 = "This program created protected niches. Although the goal was not met, the influence was large (with\n\n" +
+      "2.4.1. Causal agents The interpretive approach is agency-oriented.\n";
+    ok("in context: a window that closes mid-sentence says so",
+       win(t2, "This program created protected niches.").t[0].endsWith("large (with…"));
+  }
+  {
+    const text = "Sustainability transitions and strategic action fields Jane Doe a, John Roe b\n\n" +
+      "Department of Sociology, University of Somewhere, 12345 Country\n\nA B S T R A C T\n\n" +
+      "Keywords: Field theory Transitions\n\nThis review studies field theory. We find five clusters.\n";
+    eq("in context: nothing before the abstract — title, authors, affiliations", win(text, "We find five clusters.").show,
+       "This review studies field theory. [We find five clusters.]");
+    const t2 = "Heat pump schemes need cheap power. The study confirms the schemes are effective. CRediT authorship " +
+      "contribution statement Jane Doe: Writing – review & editing. Data availability Data will be made available.\n";
+    eq("in context: the end matter is not context", win(t2, "Heat pump schemes need cheap power.").show,
+       "[Heat pump schemes need cheap power.] The study confirms the schemes are effective.");
+  }
+  {
+    // a character outside the BMP before the passage: offsets in UTF-16 units, as a browser counts
+    const text = "We define 𝔘 as the set of users. Each user in 𝔘 adopts at most one heat pump. Adoption spreads.\n";
+    const quote = "Each user in 𝔘 adopts at most one heat pump.";
+    const cpStart = codepointLength(text.slice(0, text.indexOf(quote)));
+    const u16 = utf16Offsets(text);
+    eq("in context: codepoint offsets become UTF-16 offsets past an astral character",
+       [u16(cpStart), u16(cpStart + codepointLength(quote))], [text.indexOf(quote), text.indexOf(quote) + quote.length]);
+    const r = win(text, quote);
+    ok("in context: the passage is where the window says, past an astral character",
+       r.t[0].slice(r.t[1], r.t[2]) === quote && r.t[0] === text.trim());
+  }
+  {
+    // A long run of sentences: whole ones only, never past the cap, before and after in turn.
+    const sents = Array.from({ length: 40 }, (_, i) => `Sentence number ${i + 1} says something about heat pumps and installers.`);
+    const text = sents.join(" ") + "\n";
+    const r = win(text, sents[20]);
+    ok("in context: never past the cap, and whole sentences only", r.t[0].length <= CONTEXT_CAP &&
+       /^Sentence number \d+ /.test(r.t[0]) && r.t[0].endsWith("installers.") && !r.w.lead && !r.w.tail);
+    const before = r.t[0].slice(0, r.t[1]).split(". ").length - 1, after = r.t[0].slice(r.t[2]).split(". ").length - 1;
+    ok("in context: sentences are taken before and after in turn", Math.abs(before - after) <= 1);
+    eq("in context: textBlocks can be computed once and shared", win(text, sents[20], { blocks: textBlocks(text) }).show, r.show);
+  }
+  {
+    // The browse engine joins a window from its ranges exactly as context.mjs does.
+    const siteJs = fs.readFileSync(path.join(HERE, "..", "skill", "universal-provenance", "scripts", "site.mjs"), "utf8");
+    const browse = /const BROWSE_JS = String\.raw`([\s\S]*?)`;\n/.exec(siteJs)[1];
+    const w2 = { addEventListener() {} };
+    new Function("window", "document", browse)(w2, { addEventListener() {} });
+    const cases = [
+      ["The policy changed in 2009 and doubled the support for offshore\n\nwind by allocating two certificates. " +
+       "This generous support\n\nhelped to create a market.\n\nFigure 4: Articles\n\nThe Times\n\nPublic attention grew.\n",
+       "This generous support\n\nhelped to create a market."],
+      ["We define 𝔘 as the set of users. Each user in 𝔘 adopts one heat pump. Adoption spreads (with\n", "Each user in 𝔘 adopts one heat pump."],
+    ];
+    ok("in context: the browser's windowText (single file) builds the same string as context.mjs", cases.every(([text, quote]) => {
+      const qa = text.indexOf(quote), qb = qa + quote.length;
+      const w = contextWindow(text, qa, qb);
+      const cw = [(w.lead ? 1 : 0) | (w.tail ? 2 : 0), ...w.segs.flat()];
+      return JSON.stringify(w2.UPCB.windowText(text, cw, qa, qb)) === JSON.stringify(windowText(text, w, qa, qb));
+    }));
+  }
 }
 
 // --- the compatibility claim, stated as the code states it ---

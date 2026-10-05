@@ -28,10 +28,11 @@
 import fs from "node:fs";
 import path from "node:path";
 import * as U from "./upc_common.mjs";
+import { textBlocks, contextWindow, windowText, utf16Offsets } from "./context.mjs";
 
-const CTX = 320;                 // codepoints of context each side of a passage
 const INLINE_TEXT_MAX = 2_000_000;   // a reading copy embedded straight into its page
 const SIDECAR_TEXT_MAX = 8_000_000;  // ... or loaded from data/text/<rep>.js
+const CONTEXT_MIN_ADDED = 40;        // characters "In context" must add to the passage to be offered
 
 // --- plain English (docs/adoption-plan.md) --------------------------------
 
@@ -66,15 +67,21 @@ const ORIGINAL_TIP = {
  *  the site; otherwise the publisher's page by DOI; otherwise the bare page. */
 function originalLinkHtml(page, pdfHref, doi) {
   if (pdfHref) {
-    return ` <a class="muted" href="${pdfHref}${page ? `#page=${encodeURIComponent(page)}` : ""}" target="_blank" rel="noopener"` +
+    return ` <a class="muted orig" href="${pdfHref}${page ? `#page=${encodeURIComponent(page)}` : ""}" target="_blank" rel="noopener"` +
       ` title="${attr(ORIGINAL_TIP.pdf(page))}">See in original${page ? `, p. ${esc(page)}` : ""} ↗</a>`;
   }
   if (doi) {
-    return ` <a class="muted" href="https://doi.org/${encodeURIComponent(doi)}" target="_blank" rel="noopener"` +
+    return ` <a class="muted orig" href="https://doi.org/${encodeURIComponent(doi)}" target="_blank" rel="noopener"` +
       ` title="${attr(ORIGINAL_TIP.doi(page))}">See in original (publisher) ↗</a>`;
   }
-  return page ? ` <span class="muted" title="${attr(ORIGINAL_TIP.page(page))}">p. ${esc(page)}</span>` : "";
+  return page ? ` <span class="muted orig" title="${attr(ORIGINAL_TIP.page(page))}">p. ${esc(page)}</span>` : "";
 }
+
+// A quotation that opens to the sentences around it ("In context"): the same
+// attributes on the server's pages and in the browse engine (QUOTE_TOGGLE there).
+const CONTEXT_TIP = "Show the sentences around it";
+const quoteToggle = (fromPdf) =>
+  `data-q="${fromPdf ? "pdf" : "text"}" tabindex="0" role="button" aria-expanded="false" title="${CONTEXT_TIP}"`;
 
 // --- small helpers --------------------------------------------------------
 
@@ -156,6 +163,12 @@ export function buildSiteModel(loaded, opts = {}) {
   // passages
   const passages = [];
   let failures = 0;
+  // Per text, computed once: its blocks (context.mjs) and the codepoint → UTF-16 map.
+  const perText = new Map();
+  const textInfo = (rec) => {
+    if (!perText.has(rec)) perText.set(rec, { blocks: textBlocks(rec.text), u16: utf16Offsets(rec.text) });
+    return perText.get(rec);
+  };
   for (const e of loaded.extractions) {
     const o = e.obj;
     const repEntry = repById.get(o.representation_ref);
@@ -168,16 +181,28 @@ export function buildSiteModel(loaded, opts = {}) {
     const { badge } = U.badgeForExtraction(o, repObj, repRec, lookupRep);
     if (badge === "failed") failures++;
 
-    let before = "", after = "", lineRange = null, actual = null, span = null;
+    let lineRange = null, actual = null, span = null, context = null, cx = null;
     if (repRec && o.locator && o.locator.type === "char_range") {
       const v = o.locator.value || {};
       const cps = repRec.cps;
       if (Number.isInteger(v.start) && Number.isInteger(v.end) && v.start <= v.end && v.end <= cps.length) {
-        before = cps.slice(Math.max(0, v.start - CTX), v.start).join("");
-        after = cps.slice(v.end, Math.min(cps.length, v.end + CTX)).join("");
         actual = cps.slice(v.start, v.end).join("");
         lineRange = U.lineRangeForCharRange(repRec.text, v.start, v.end);
         span = [v.start, v.end];   // codepoints; trusted for a highlight only once the badge says it verified
+        // "In context": the whole sentences around it, sliced from the same bytes
+        // at build time — and only around a quotation this build has just checked.
+        if (U.VERIFIED_BADGES.has(badge) && v.start < v.end) {
+          const ti = textInfo(repRec);
+          const qa = ti.u16(v.start), qb = ti.u16(v.end);
+          const win = contextWindow(repRec.text, qa, qb, { blocks: ti.blocks });
+          const t = win && windowText(repRec.text, win, qa, qb);
+          // A passage that is already all of its paragraph ("4.3. Skills" + two
+          // sentences + "4.3.1. …") has nothing to expand to, and does not offer to.
+          if (t && t[0].length - (t[2] - t[1]) >= CONTEXT_MIN_ADDED) {
+            context = { segs: win.segs, lead: win.lead, tail: win.tail, at: [qa, qb] };   // UTF-16 units
+            cx = t;
+          }
+        }
       }
     }
     const secondaryPage = (o.secondary_locators || []).find((s) => s.type === "page");
@@ -193,7 +218,7 @@ export function buildSiteModel(loaded, opts = {}) {
       query: o.query || "",
       confidence: o.confidence || "",
       anchoring: o.anchoring || null,
-      before, after, actual, span,
+      actual, span, context, cx,
       line_range: lineRange,
       page: secondaryPage ? secondaryPage.value : null,
       codings: codingsByTarget.get(`extraction:${o.extraction_id}`) || [],
@@ -388,6 +413,16 @@ p.lede{color:var(--muted);margin:.2rem 0 1.2rem;max-width:62ch}
 .passage.bad{border-left-color:var(--warn)}
 .passage blockquote{margin:0;font-size:1.02rem}
 .passage .ctx{color:var(--muted);font-size:.92rem}
+/* "In context": a quotation opens to the sentences around it */
+.passage blockquote[data-q]{cursor:pointer;border-radius:6px;margin:0 -.35rem;padding:.1rem .35rem}
+.passage blockquote[data-q][aria-expanded="false"]:hover{background:var(--chip)}
+.passage blockquote[data-q]:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+.passage blockquote[data-q]::after{content:"▸ in context";margin-left:.5rem;white-space:nowrap;
+  font:600 .7rem/1 ui-sans-serif,system-ui,sans-serif;letter-spacing:.02em;color:var(--accent)}
+.passage blockquote[data-q][aria-expanded="true"]::after{content:"▴ less"}
+.passage blockquote[data-q] .cx{color:var(--muted)}
+.passage .cxnote{font:.74rem/1.45 ui-sans-serif,system-ui,sans-serif;color:var(--muted);margin:0 0 .3rem}
+.passage .cxnote b{font-size:.68rem;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--ink)}
 .passage .note{margin:0;font-style:italic;color:var(--ink);background:var(--chip);
   border-radius:8px;padding:.5rem .7rem}
 .passage .meta{margin-top:.55rem;display:flex;gap:.5rem;flex-wrap:wrap;align-items:center;
@@ -486,6 +521,8 @@ footer{max-width:var(--maxw);margin:0 auto;padding:1.5rem 1rem 3rem;color:var(--
   header.top,.filters,button,.btn,footer nav{display:none!important}
   body{background:#fff}
   .passage{break-inside:avoid;border:1px solid #ccc}
+  .passage .cx,.passage .cxnote{display:none!important}
+  .passage blockquote[data-q]::after,.passage blockquote[data-q][aria-expanded="true"]::after{content:none}
   .reading{max-height:none;overflow:visible}
   a{color:inherit;text-decoration:none}
 }
@@ -511,6 +548,8 @@ const JS = `
     var id=decodeURIComponent(m[2]);
     var el=m[1]==="text"?document.getElementById("t-"+id)
       :document.getElementById(id)||document.querySelector('[data-id="'+CSS.escape(id)+'"]');
+    // A paper whose text is too large to show here: the passage's card, opened in context.
+    if(!el&&m[1]==="text"&&(el=document.getElementById(id))&&window.UPCB) UPCB.open(el);
     if(el){el.scrollIntoView({block:"center"});el.style.outline="2px solid var(--accent)";
       setTimeout(function(){el.style.outline="";},2400);}
   }
@@ -562,6 +601,10 @@ const JS = `
         },
         hrefCode:function(slug,code){
           return base+"codes/"+encodeURIComponent(slug)+"/"+encodeURIComponent(code)+".html";
+        },
+        ctxSrc:function(p){
+          var src=B.sources[p.s]||{};
+          return base+"data/ctx/"+encodeURIComponent(src.sl||"")+".js";
         }
       });
       var only=host.getAttribute("data-only"), omit=host.getAttribute("data-omit");
@@ -664,17 +707,22 @@ const BROWSE_JS = String.raw`
   function nth(n){ var t=n%100; return n+(t>=11&&t<=13?"th":({1:"st",2:"nd",3:"rd"})[n%10]||"th"); }
   function original(p,s){
     if(X.files&&s.p){
-      return ' <a class="muted" href="'+E(X.files+"/"+encodeURIComponent(s.p)+(p.pg?"#page="+p.pg:""))+
+      return ' <a class="muted orig" href="'+E(X.files+"/"+encodeURIComponent(s.p)+(p.pg?"#page="+p.pg:""))+
         '" target="_blank" rel="noopener" title="'+
         E(p.pg?"Opens the original PDF at its "+nth(p.pg)+" page."+NOTE:"Opens the original PDF.")+'">See in original'+
         (p.pg?", p. "+p.pg:"")+" ↗</a>";
     }
     if(s.d){
-      return ' <a class="muted" href="https://doi.org/'+encodeURIComponent(s.d)+'" target="_blank" rel="noopener" title="'+
+      return ' <a class="muted orig" href="https://doi.org/'+encodeURIComponent(s.d)+'" target="_blank" rel="noopener" title="'+
         E("Opens the publisher's page for this paper."+(p.pg?" In the PDF, this passage is on the "+nth(p.pg)+" page."+NOTE:""))+
         '">See in original (publisher) ↗</a>';
     }
-    return p.pg?' <span class="muted" title="'+E("In the PDF, this passage is on the "+nth(p.pg)+" page."+NOTE)+'">p. '+p.pg+"</span>":"";
+    return p.pg?' <span class="muted orig" title="'+E("In the PDF, this passage is on the "+nth(p.pg)+" page."+NOTE)+'">p. '+p.pg+"</span>":"";
+  }
+  // A quotation that opens to the sentences around it: the attributes the
+  // server's pages give it too (quoteToggle in site.mjs).
+  function QT(pdf){
+    return 'data-q="'+(pdf?"pdf":"text")+'" tabindex="0" role="button" aria-expanded="false" title="Show the sentences around it"';
   }
   function codeNote(){
     var k={}, ck=X.coderKind||{};
@@ -686,15 +734,17 @@ const BROWSE_JS = String.raw`
   function card(p,opts){
     opts=opts||{};
     var s=X.sources[p.s]||{}, bad=p.b==="failed";
+    var cx=!!(p.q&&(p.w||p.cx||p.cw));      // its sentences can be shown ("In context")
     var body;
     if(p.q){
-      body="<blockquote><mark>"+E(p.q)+"</mark></blockquote>";
+      body="<blockquote"+(cx?" "+QT(s.p):"")+"><mark>"+E(p.q)+"</mark></blockquote>";
       if(bad&&p.act) body+='<p class="small" style="color:var(--warn)">The source now reads: “'+E(p.act.slice(0,240))+'”</p>';
     } else { body='<p class="note">'+E(p.n)+"</p>"; }
     var where=p.l?"line "+p.l:"";
     // "line N →" opens the passage where it sits in the paper's text.
     var href=where&&X.hrefText?X.hrefText(p):X.hrefSource(p);
-    return '<article class="passage'+(bad?" bad":"")+'" id="'+E(p.id)+'" data-row'+
+    return '<article class="passage'+(bad?" bad":"")+'" id="'+E(p.id)+'"'+
+      (cx&&X.ctxSrc?' data-cx="'+E(X.ctxSrc(p))+'"':"")+' data-row'+
       ' data-code="'+E(p.g.map(function(g){return g[0]+":"+g[1];}).join("|"))+'"'+
       ' data-coder="'+E(p.g.map(function(g){return g[2];}).join("|"))+'"'+
       ' data-year="'+E(s.y||"")+'"'+
@@ -707,6 +757,104 @@ const BROWSE_JS = String.raw`
       '<span class="spacer"></span><span class="go"><a class="muted" href="'+E(href)+'">'+
       (opts.showSource===false?E(where||"in context"):E(s.k||"")+(where?" · "+E(where):""))+" →</a>"+original(p,s)+
       "</span></div></article>";
+  }
+
+  // ---- "In context": a quotation opens to the sentences around it ----
+  // One open at a time; a second click, or Escape, closes it. The sentences come
+  // from the reader's own copy: the folder's data/ctx/<paper>.js, loaded the first
+  // time one of that paper's passages is opened (a <script src>, so it works
+  // opened from disk too), or the single file's own data (API.cx, set by its client).
+  var cxOpen=null, cxWait={};
+  function cxLoad(src,done){
+    if(cxWait[src]===true) return done();
+    if(cxWait[src]){ cxWait[src].push(done); return; }
+    cxWait[src]=[done];
+    var el=document.createElement("script");
+    el.src=src;
+    el.onload=el.onerror=function(){ var q=cxWait[src]; cxWait[src]=true; q.forEach(function(f){f();}); };
+    document.head.appendChild(el);
+  }
+  function cxGet(art,done){
+    if(API.cx) return done(API.cx(art.id));
+    var have=function(){ return (window.__UPC_CTX||{})[art.id]||null; };
+    if(have()) return done(have());
+    var src=art.getAttribute("data-cx");
+    if(!src) return done(null);
+    cxLoad(src,function(){ done(have()); });
+  }
+  function cxClose(art){
+    if(!art) return;
+    var bq=art.querySelector("blockquote[data-q]"), note=art.querySelector(".cxnote");
+    if(note) note.parentNode.removeChild(note);
+    if(bq){ if(bq.__q!=null){ bq.innerHTML=bq.__q; bq.__q=null; } bq.setAttribute("aria-expanded","false"); }
+    if(cxOpen===art) cxOpen=null;
+  }
+  function cxToggle(art){
+    if(cxOpen===art){ cxClose(art); return; }
+    var bq=art.querySelector("blockquote[data-q]");
+    if(!bq){ cxClose(cxOpen); return; }
+    // Closing one higher up the page moves this one up: keep it where it was clicked.
+    var top=bq.getBoundingClientRect().top;
+    cxClose(cxOpen);
+    var moved=bq.getBoundingClientRect().top-top;
+    if(moved) window.scrollBy(0,moved);
+    cxOpen=art;
+    bq.setAttribute("aria-expanded","true");
+    cxGet(art,function(w){
+      if(cxOpen!==art) return;                 // another was opened while this one loaded
+      var note=document.createElement("div"), orig=art.querySelector(".orig");
+      note.className="cxnote";
+      if(!w) note.textContent="The sentences around this passage could not be loaded.";
+      else note.innerHTML="<b>In context</b> · from the text "+
+        (bq.getAttribute("data-q")==="pdf"?"extracted from the PDF":"of the paper")+(orig?" · "+orig.outerHTML:"");
+      bq.parentNode.insertBefore(note,bq);
+      if(!w) return;
+      bq.__q=bq.innerHTML;
+      bq.innerHTML='<span class="cx">'+E(w[0].slice(0,w[1]))+"</span><mark>"+E(w[0].slice(w[1],w[2]))+
+        '</mark><span class="cx">'+E(w[0].slice(w[2]))+"</span>";
+    });
+  }
+  document.addEventListener("click",function(e){
+    var t=e.target, bq=t&&t.closest?t.closest("blockquote[data-q]"):null;
+    if(!bq) return;
+    // Selecting words to copy them is not a request to open the passage.
+    var sel=window.getSelection?window.getSelection():null;
+    if(sel&&String(sel)&&bq.contains(sel.anchorNode)) return;
+    var art=bq.closest("article");
+    if(art) cxToggle(art);
+  });
+  document.addEventListener("keydown",function(e){
+    var t=e.target;
+    if(e.key==="Escape"&&cxOpen){
+      var b=cxOpen.querySelector("blockquote[data-q]");
+      cxClose(cxOpen);
+      if(b) b.focus();
+      return;
+    }
+    if((e.key==="Enter"||e.key===" ")&&t&&t.matches&&t.matches("blockquote[data-q]")){
+      e.preventDefault();
+      var art=t.closest("article");
+      if(art) cxToggle(art);
+    }
+  });
+  // The single file's form of a window: [flags, a1, b1, a2, b2, …], ranges of the
+  // paper's text (UTF-16) to join by a space; flag 1 "…" before, 2 "…" after.
+  // The same string as windowText() in context.mjs, which the folder ships ready-made.
+  function windowText(t,cw,qa,qb){
+    var out="",qs=-1,qe=-1;
+    for(var k=1;k+1<cw.length;k+=2){
+      var a=cw[k],b=cw[k+1];
+      if(k>1) out+=" ";
+      if(qs<0&&qa>=a&&qa<=b) qs=out.length+(qa-a);
+      if(qe<0&&qb>=a&&qb<=b) qe=out.length+(qb-a);
+      out+=t.slice(a,b);
+    }
+    if(qs<0||qe<qs) return null;
+    var pre=out.slice(0,qs).replace(/\s+/g," ").replace(/^ /,""), q=out.slice(qs,qe).replace(/\s+/g," "),
+        post=out.slice(qe).replace(/\s+/g," ").replace(/ $/,"");
+    if(cw[0]&1) pre="…"+pre;
+    if(cw[0]&2) post+="…";
+    return [pre+q+post,pre.length,pre.length+q.length];
   }
 
   // ---- the two-pane browser ----
@@ -925,7 +1073,8 @@ const BROWSE_JS = String.raw`
     box.scrollTop+=(r.top-b.top)-box.clientHeight/2+r.height/2;
   }
 
-  var API={init:init,card:card,chip:chip,badge:badge,browse:browse,label:label,reveal:reveal,codeNote:codeNote,esc:E,plural:PL};
+  var API={init:init,card:card,chip:chip,badge:badge,browse:browse,label:label,reveal:reveal,codeNote:codeNote,esc:E,plural:PL,
+           windowText:windowText,open:function(art){ if(art&&cxOpen!==art) cxToggle(art); },close:function(){ cxClose(cxOpen); }};
   window.UPCB=API;
   // Printing includes everything: open whatever the reader left folded.
   window.addEventListener("beforeprint",function(){
@@ -1015,12 +1164,17 @@ function passageHtml(p, model, base, { showSource = true, context = true, compac
   const bad = p.badge === "failed";
   const status = STATUS_TEXT[p.status] || "";
   const srcHref = `${base}sources/${encodeURIComponent(p.source_slug)}.html#ex=${encodeURIComponent(p.id)}`;
+  const src = model.sourceById.get(p.source_id);
   let body;
   if (p.quote) {
     const q = `<mark>${esc(p.quote)}</mark>`;
-    body = context && (p.before || p.after)
-      ? `<blockquote class="ctx">…${esc(p.before.slice(-220))}${q}${esc(p.after.slice(0, 220))}…</blockquote>`
-      : `<blockquote>${q}</blockquote>`;
+    if (context && p.cx) {
+      // Where there is no script to open it (the code pages' <noscript> list), shown open.
+      const [t, a, b] = p.cx;
+      body = `<blockquote class="ctx">${esc(t.slice(0, a))}<mark>${esc(t.slice(a, b))}</mark>${esc(t.slice(b))}</blockquote>`;
+    } else {
+      body = p.cx ? `<blockquote ${quoteToggle(src && src.pdfRep)}>${q}</blockquote>` : `<blockquote>${q}</blockquote>`;
+    }
     if (bad && p.actual != null) {
       body += `<p class="small" style="color:var(--warn)">The source now reads: “${esc(p.actual.slice(0, 240))}”</p>`;
     }
@@ -1037,7 +1191,6 @@ function passageHtml(p, model, base, { showSource = true, context = true, compac
   const where = p.line_range ? `line ${p.line_range.start}` : "";
   const textHref = where
     ? `${base}sources/${encodeURIComponent(p.source_slug)}.html#text=${encodeURIComponent(p.id)}` : srcHref;
-  const src = model.sourceById.get(p.source_id);
   const pdfName = src && src.pdfRep ? path.basename(src.pdfRep.path) : "";
   const pdfLink = originalLinkHtml(p.page,
     model.filesDir && pdfName ? `${base}${model.filesDir}/${encodeURIComponent(pdfName)}` : null,
@@ -1057,7 +1210,9 @@ function passageHtml(p, model, base, { showSource = true, context = true, compac
     ? [p.source_title, p.cite, ...p.codings.map((c) => `${c.label} ${c.coder}`)].join(" ")
     : [p.quote, p.note, p.source_title, p.cite,
        ...p.codings.map((c) => `${c.label} ${c.code || c.value} ${c.codebook_slug} ${c.coder}`)].join(" ");
-  return `<article class="passage${bad ? " bad" : ""}" id="${attr(p.id)}" data-row
+  // The sentences around it ride in data/ctx/<paper>.js, loaded the first time one is opened.
+  const cxSrc = p.cx && !context ? ` data-cx="${base}data/ctx/${encodeURIComponent(p.source_slug)}.js"` : "";
+  return `<article class="passage${bad ? " bad" : ""}" id="${attr(p.id)}"${cxSrc} data-row
    data-code="${attr(p.codings.map((c) => `${c.codebook_slug}:${c.code != null ? c.code : c.value}`).join("|"))}"
    data-coder="${attr([...new Set(p.codings.map((c) => c.coder))].join("|"))}"
    data-source="${attr(p.source_id)}" data-year="${attr(p.year)}"
@@ -1613,11 +1768,19 @@ export function writeSite(root, opts = {}) {
   // browsing pages load with <script src> — no fetch, so `file://` still works.
   {
     const { sources, passages, codebooks, ck } = browsePayload(model);
+    model.passages.forEach((p, k) => { if (p.cx) passages[k].w = 1; });   // it has sentences to open (data/ctx)
     w("data/browse.js", `window.__UPCB_DATA=${j({
       sources, passages, codebooks, ck,
       badges: BADGE_TEXT,
       files: opts.bundle ? "files" : null,
     })};\n`);
+  }
+  // "In context": the sentences around each passage, one file per paper, loaded
+  // the first time a reader opens one of its passages on any page.
+  for (const s of model.sources) {
+    const cx = {};
+    for (const p of s.passages) if (p.cx) cx[p.id] = p.cx;
+    if (Object.keys(cx).length) w(`data/ctx/${s.slug}.js`, `Object.assign(window.__UPC_CTX=window.__UPC_CTX||{},${j(cx)});\n`);
   }
 
   w("index.html", homePage(model));
@@ -1744,6 +1907,15 @@ const CLIENT_ONE = String.raw`
     hrefCode:function(slug,code){ return "#/code/"+encodeURIComponent(slug)+"/"+encodeURIComponent(code); }
   });
   var badge=UPCB.badge, chip=UPCB.chip, passageCard=UPCB.card;
+  // "In context": a passage's sentences, joined from the text this file carries,
+  // or carried as they are when the file has no texts.
+  UPCB.cx=function(id){
+    var p=byId[id];
+    if(!p) return null;
+    if(p.cx) return p.cx;
+    if(p.cw&&p.o&&D.withText){ var t=textOf(p.s); if(t) return UPCB.windowText(t,p.cw,p.o[0],p.o[1]); }
+    return null;
+  };
 
   // Reading copies are parsed on demand. They are four fifths of this file, and
   // parsing all of them into memory before the first paint cost seconds for a
@@ -2082,6 +2254,8 @@ const CLIENT_ONE = String.raw`
       var id=decodeURIComponent(m[2]);
       var el=m[1]==="text"?document.getElementById("t-"+id)||document.getElementById(id)
                           :document.getElementById(id)||document.getElementById("t-"+id);
+      // No text to highlight it in (the light file): its card, opened in context.
+      if(el&&m[1]==="text"&&el.id===id) UPCB.open(el);
       if(el){ el.scrollIntoView({block:"center"});
         el.style.outline="2px solid var(--accent)";
         setTimeout(function(){el.style.outline="";},2400); }
@@ -2095,42 +2269,15 @@ const CLIENT_ONE = String.raw`
 // --- one file -------------------------------------------------------------
 
 /**
- * The same library as one self-contained HTML file.
- *
- * The multi-file site is the better artifact — real URLs, one page per source,
- * a browser that can print a single theme — but it is a *folder*, and a folder
- * is not what gets emailed, dropped in a shared drive, or opened by someone who
- * was sent "the literature review". Detached from its siblings, its index page
- * is a set of dead links.
- *
- * So this writes everything into one file: the stylesheet, the data, and a small
- * router that renders the same views from memory. No fetch, no siblings, no
- * server. Open it from a USB stick on a plane and it works.
- *
- * The one real cost is size. Reading copies dominate (17 MB of the 21 for a
- * 178-paper corpus), so `--no-text` drops them and keeps the passages and every
- * overview — about a seventh of the size, and still the thing most readers came
- * for.
- */
-/**
  * The compact record the browse engine reads, built once and used by both
  * shapes of the site so a passage cannot look like one thing in the file and
  * another in the folder. The keys are one letter because they repeat once per
  * passage — three thousand times in a real corpus. It used to carry 320
  * characters of context each side of every passage (half the folder's
- * data/browse.js), which no view ever showed; that is gone.
+ * data/browse.js), which no view ever showed; that is gone. The sentences shown
+ * when a passage is opened "In context" travel apart from it: a file per paper
+ * beside the folder's pages, or ranges of the text the single file carries.
  */
-/** Codepoint offsets → UTF-16 offsets into the same string, which is how a
- *  browser indexes it. The identity unless the text holds characters outside
- *  the Basic Multilingual Plane, each of which is two UTF-16 units. */
-function utf16Offsets(text) {
-  if (!/[\uD800-\uDFFF]/.test(text)) return (i) => i;
-  const map = [0];
-  let u = 0;
-  for (const ch of text) { u += ch.length; map.push(u); }
-  return (i) => map[i];
-}
-
 function browsePayload(model) {
   const srcIndex = new Map();
   const sources = model.sources.map((s, i) => {
@@ -2165,6 +2312,24 @@ function browsePayload(model) {
   return { srcIndex, sources, passages, codebooks, ck };
 }
 
+/**
+ * The same library as one self-contained HTML file.
+ *
+ * The multi-file site is the better artifact — real URLs, one page per source,
+ * a browser that can print a single theme — but it is a *folder*, and a folder
+ * is not what gets emailed, dropped in a shared drive, or opened by someone who
+ * was sent "the literature review". Detached from its siblings, its index page
+ * is a set of dead links.
+ *
+ * So this writes everything into one file: the stylesheet, the data, and a small
+ * router that renders the same views from memory. No fetch, no siblings, no
+ * server. Open it from a USB stick on a plane and it works.
+ *
+ * The one real cost is size. Reading copies dominate (17 MB of the 21 for a
+ * 178-paper corpus), so `--no-text` drops them and keeps the passages and every
+ * overview — about a seventh of the size, and still the thing most readers came
+ * for.
+ */
 export function writeSingleFile(root, opts = {}) {
   const loaded = U.loadCorpus(root);
   const model = buildSiteModel(loaded, opts);
@@ -2208,6 +2373,20 @@ export function writeSingleFile(root, opts = {}) {
       passages[k].o = [f(p.span[0]), f(p.span[1])];
     });
   }
+
+  // "In context". With the texts on board, a passage's sentences are ranges of
+  // the text the file already carries (the client joins them: UPCB.windowText);
+  // without them — the light file — the sentences themselves.
+  model.passages.forEach((p, k) => {
+    if (!p.cx) return;
+    const si = srcIndex.get(p.source_id);
+    const src = model.sources[si];
+    if (withText && passages[k].o && texts[si] && src && src.textRep && src.textRep.representation_id === p.rep) {
+      passages[k].cw = [(p.context.lead ? 1 : 0) | (p.context.tail ? 2 : 0), ...p.context.segs.flat()];
+    } else {
+      passages[k].cx = p.cx;
+    }
+  });
 
   const overviews = model.syntheses.map((syn) => {
     let body = "";

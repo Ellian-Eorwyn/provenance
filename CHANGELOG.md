@@ -3,6 +3,57 @@
 All notable changes to the Universal Provenance Corpus (UPC) standard.
 Versioning is semantic (§00 Versioning policy).
 
+## 1.14.2 — 2026-10-05
+
+**Patch release: passages in context.** No schema, vocabulary, id recipe, gate or
+spec requirement changed; context is read from the representation bytes at build
+time, as spec/09 already requires.
+
+### Added
+
+- **A passage opens to the sentences around it.** Clicking a quotation (or Enter
+  or Space on it) shows it **In context**: whole sentences before and after it,
+  at most about 1,600 characters, the passage marked, with "See in original,
+  p. N ↗" and a note that the text is the one extracted from the PDF. Opening
+  another passage closes the open one, keeping the one clicked where it was;
+  Escape closes it. Print shows passages closed.
+- **How a window is drawn** (`scripts/context.mjs`, new). A reading copy's
+  blank-line blocks are classed as prose, headings, captions, footnotes, labels,
+  noise or end matter. From the passage outwards, prose blocks join into one run;
+  captions, footnotes and figure labels between them are skipped, so a sentence
+  broken by a footnote reads whole. Sentences are split with abbreviations,
+  initials, section numbers and bullets in mind, and added before and after in
+  turn until the cap. A heading ends the window on its side — including one glued
+  to a paragraph by the PDF's text layer ("4.1. Politics and power To elaborate
+  …"), a section number left at a paragraph's end with its title in the next
+  block, and a footnote set inline ("34 In 2017 Volvo …"); a numbered list item
+  is text and does not. Front matter before the abstract and end matter
+  (references, declarations, CRediT) are never context. "…" marks a window that
+  starts or ends mid-sentence. Nothing is rewritten: a window is ranges of the
+  stored text, joined by a space.
+- Windows are drawn only around a quotation this build has just verified, and
+  only offered when they add at least 40 characters: a passage that already is
+  its whole paragraph does not offer to expand.
+- **Where the sentences travel.** The folder site writes one
+  `data/ctx/<paper>.js` per paper, loaded by `<script src>` on the first click
+  (so it works opened from disk); the browse data only flags which passages have
+  a window (`w`). The single file carries each window as ranges of the paper's
+  text it already embeds (`cw`, UTF-16), joined in the browser exactly as at
+  build time; the light file, which has no texts, carries the window text (`cx`).
+  The code pages' no-JavaScript lists show each window open.
+- From the light file, which has no texts to highlight in, "line N →" opens the
+  passage's card in context instead.
+
+On a library of 3,239 passages from 179 papers, 3,233 passages offer a window,
+median 1,517 characters. Of 60 windows read by hand, weighted to the hard cases
+(a line per block, characters outside the Basic Multilingual Plane, windows cut
+by a heading, windows over several blocks), 48 were clean, 8 carried an artefact
+of the extracted text (an equation, a running header, a table row) and 4 were not
+usable (a jump in the extraction, a table, figure text). Sizes: the folder site's
+`data/ctx` 5.0 MB over 179 files, `data/browse.js` 2.0 MB (+19 KB), the code
+pages +5.6 MB (their no-JavaScript lists), the single file 19.8 → 19.9 MB, the
+light file 2.8 → 7.7 MB.
+
 ## 1.14.1 — 2026-10-05
 
 **Patch release: the reader's site.** No schema, vocabulary, id recipe, gate or
