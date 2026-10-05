@@ -403,7 +403,7 @@ function anchorChips(e){
 // ---- Source viewer -------------------------------------------------------
 // Shows the representation itself, in place. The bytes were embedded at build
 // time (\u00a709: context comes from the representation, never from the record), so
-// this works identically offline from file:// and served over http.
+// this works identically opened from disk and served over http.
 let VIEW=null;               // {repId, focus, key}
 const VIEWERS=new Set();     // mounted viewer shells to repaint
 const repOf=id=>(DATA.reps||{})[id];

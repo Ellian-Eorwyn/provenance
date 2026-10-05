@@ -509,7 +509,7 @@ const JS = `
     if(sels.length||q)apply();
 
     // Two-pane browsing, on the pages that ask for it. The data rides in
-    // data/browse.js as a <script src>, so this still works from file://.
+    // data/browse.js as a <script src>, so this still works when opened from disk.
     var host=document.querySelector("[data-browse]");
     if(host&&window.UPCB&&window.__UPCB_DATA){
       var B=window.__UPCB_DATA, base=host.getAttribute("data-base")||"";
