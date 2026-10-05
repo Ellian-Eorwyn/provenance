@@ -393,6 +393,9 @@ export function buildSiteModel(loaded, opts = {}) {
   // through this, not through an overview id: ids are content hashes (spec/06),
   // so re-running an overview mints a new one and a hard-coded link would die.
   const overviewByCode = new Map();
+  // A revision stands where the first in its chain stood, so the list doesn't reshuffle.
+  const firstPos = new Map(allSyn.map((o, i) => [o.synthesis_id, i]));
+  syntheses.sort((a, b) => firstPos.get(a._addr) - firstPos.get(b._addr));
   for (const x of syntheses) if (x._group && x._code) overviewByCode.set(`${x._group.slug}:${x._code}`, x);
   // Newest placed summary wins; its prose is read here so either shape can render it.
   let homeSummary = null;
