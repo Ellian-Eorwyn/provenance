@@ -169,6 +169,13 @@ detail lives:
 }
 ```
 
+`kind` says what sort of rater a handle is: `model`, `human`, `ensemble` (a vote
+of several runs or models, whose manifest entry names them), `adjudicator`, or,
+since 1.15.0, `rule`: a deterministic procedure that no model or person judged,
+such as a citation tier computed from a bibliometric record. A projection names
+the kind wherever it names the coder (§09), so a rule's output never reads as a
+judgement and a model's never reads as a rule.
+
 If the model version were embedded in `coder`, every model upgrade would re-mint
 every coding id and destroy the agreement history. Keeping identity stable and
 detail in the manifest means a rater's record survives its implementation. To

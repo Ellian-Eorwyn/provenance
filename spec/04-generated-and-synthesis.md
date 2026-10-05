@@ -106,6 +106,25 @@ and sources that support it.
   source id its claims depend on (`uncited_in_output`) and MUST NOT contain
   hand-authored, unsourced findings.
 
+### Revising a synthesis (1.15.0)
+
+A synthesis is never edited in place: its id is a content hash (§06). A revised
+version is a new synthesis that names the one it replaces in `supersedes`, and
+the replaced one gains `superseded_by` (§07). Neither field is part of the id
+recipe, so writing the back-link changes no id. Both versions stay in the corpus,
+each with its own provenance, so a reader can always see what was said before.
+
+- `upc add synthesis --supersedes <syn-id>` refuses an id that isn't in the
+  corpus, records `supersedes` on the new synthesis, and writes `superseded_by`
+  into the old one in the same step.
+- A `supersedes` or `superseded_by` that names no synthesis, or names its own
+  synthesis, is `dangling_synthesis` (§08, rule 1.2). A superseded synthesis is
+  not an error: it is history.
+- A projection shows the newest synthesis in a chain where the first one was
+  shown, under the first one's address (§09), so links made to it keep working.
+- Why the revision was made goes in `ext["upc-site"].revision`
+  (`{label, date, note}`), which a projection shows beside the text.
+
 ## The hop-C gate (output ↔ extraction)
 
 Generated prose is where a fabricated quotation would do its damage, so UPC gates

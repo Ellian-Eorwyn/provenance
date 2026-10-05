@@ -38,6 +38,8 @@
       "additionalProperties": true
     },
     "stale": { "type": "boolean" },
+    "supersedes": { "type": "string", "pattern": "^syn-[0-9a-f]{12}$", "description": "1.15.0: the synthesis this one revises (§04 Revising a synthesis). Both stay in the corpus; a reader's surface shows the newest in the chain in the place of the first." },
+    "superseded_by": { "type": "string", "pattern": "^syn-[0-9a-f]{12}$", "description": "1.15.0: the synthesis that revises this one; written by the tool that adds the revision." },
     "provenance": { "$ref": "provenance-stamp.schema.json" },
     "ext": { "type": "object", "additionalProperties": true }
   },

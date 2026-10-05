@@ -21,7 +21,7 @@
         "required": ["coder"],
         "properties": {
           "coder": { "type": "string", "minLength": 1, "description": "The stable handle, matching coding.coder." },
-          "kind": { "type": "string", "enum": ["model", "human", "ensemble", "adjudicator"], "description": "What sort of rater this is. §09 requires a code never to be shown without its coder, so a reader can tell one model's guess from a human's judgement." },
+          "kind": { "type": "string", "enum": ["model", "human", "ensemble", "adjudicator", "rule"], "description": "What sort of rater this is (1.15.0 adds `rule`: a deterministic procedure, such as a citation tier computed from a bibliometric record, which no model or person judged). §09 requires a code never to be shown without its coder, so a reader can tell one model's guess from a human's judgement." },
           "display_name": { "type": "string" },
           "model": { "type": "string", "description": "Volatile: the model behind a model coder. Lives here, not in the coding id." },
           "tool": { "type": "string" },

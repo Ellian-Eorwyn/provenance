@@ -13,7 +13,7 @@
 //                    obsidian: [-o <dir> | --into <vault>] [--strip none|standard|aggressive]
 //                    [--frontmatter approved|extended] [--allow-rewrite-body] [--profile <f>]
 //                    [--filenames title|citation] [--image-names id|citation] [--force]
-//   upc anchor --corpus <dir> --rep <rep-id> [--set <id>] [--dry-run]  (JSONL candidates on stdin)
+//   upc anchor --corpus <dir> --rep <rep-id> [--set <id> [--hidden]] [--dry-run]  (JSONL candidates on stdin)
 //   upc code --corpus <dir> --set <cds-id> [--dry-run]     (JSONL codings on stdin)
 //   upc codebook <dir> [<cbk-id>]
 //   upc mint [--batch] <src|rep|ext|gen|syn|cod|cbk>       (JSON object / JSONL on stdin)
@@ -62,7 +62,7 @@ function findSpecDirs() {
 
 // The VERSION file at the spec root is the single source of truth for the spec
 // version; the fallback exists only so a detached scripts/ copy still reports.
-const FALLBACK_SPEC_VERSION = "1.14.2";
+const FALLBACK_SPEC_VERSION = "1.15.0";
 function specVersion() {
   try {
     const { specRoot } = findSpecDirs();
@@ -583,6 +583,10 @@ export function validateCorpus(root, opts = {}) {
     else checkDerivedRefs(o, id);
     if (!(o.provenance && o.provenance.input_digest)) err("missing_input_digest", 2, id, "synthesis without provenance.input_digest");
     else staleCheck(o, id);
+    // A revision names the synthesis it revises (1.15.0, §04); both must be here.
+    if (o.supersedes && !model.synById.has(o.supersedes)) err("dangling_synthesis", 2, id, `supersedes ${o.supersedes}`);
+    if (o.superseded_by && !model.synById.has(o.superseded_by)) err("dangling_synthesis", 2, id, `superseded_by ${o.superseded_by}`);
+    if (o.supersedes === id) err("dangling_synthesis", 2, id, "supersedes itself");
     // claim integrity
     const citedIds = new Set();
     for (const c of o.claims || []) {
@@ -1750,6 +1754,10 @@ function addSynthesisCmd(root, obj, opts = {}) {
   union("source_ids", sourceIds);
   union("representation_refs", repRefs);
   const known = new Set((loaded.syntheses || []).map((x) => x.obj && x.obj.synthesis_id).filter(Boolean));
+  if (opts.supersedes && !known.has(opts.supersedes) && !opts.allowUnverified) {
+    return { status: "refused", wrote: 0, failures: [{ marker: opts.supersedes, reason: "no such synthesis in this corpus" }],
+             detail: "--supersedes names a synthesis that is not in the corpus; nothing was written" };
+  }
   const unknownSyn = (merged.synthesis_ids || []).filter((id) => !known.has(id));
   if (unknownSyn.length && !opts.allowUnverified) {
     return { status: "refused", wrote: 0,
@@ -1775,6 +1783,7 @@ function addSynthesisCmd(root, obj, opts = {}) {
     ...(obj.question ? { question: obj.question } : {}),
     ...(claims.length ? { claims } : {}),
     stale: false,
+    ...(opts.supersedes ? { supersedes: opts.supersedes } : {}),
     provenance: stamp,
     ...(obj.ext ? { ext: obj.ext } : {}),
   };
@@ -1795,11 +1804,24 @@ function addSynthesisCmd(root, obj, opts = {}) {
   U.atomicWriteFile(mdAbs, text);
   const { abs: jAbs } = U.resolveInside(loaded.root, path.posix.join(dirRel, "synthesis.json"));
   U.atomicWriteFile(jAbs, JSON.stringify(syn, null, 2) + "\n");
+  // The revised one points forward to its revision. superseded_by is not in the
+  // synthesis id recipe (spec/06), so the old id holds; its text is untouched.
+  let revised = null;
+  if (opts.supersedes && opts.supersedes !== syn.synthesis_id) {
+    const old = (loaded.syntheses || []).find((x) => x.obj && x.obj.synthesis_id === opts.supersedes);
+    const oldAbs = old && U.resolveInside(loaded.root, path.posix.join(old.dirRel, "synthesis.json"));
+    if (oldAbs && oldAbs.contained && fs.existsSync(oldAbs.abs)) {
+      old.obj.superseded_by = syn.synthesis_id;
+      U.atomicWriteFile(oldAbs.abs, JSON.stringify(old.obj, null, 2) + "\n");
+      revised = opts.supersedes;
+    }
+  }
   ensureSection(loaded, "syntheses", base);
   appendEvent(loaded, {
     activity_type: "synthesize", tool: opts.tool || "upc", started_at: nowStamp(), status: "success",
-    inputs: { extraction_ids: evidenceIds }, outputs: { synthesis_ids: [syn.synthesis_id] },
-    notes: `${syn.type}: ${syn.title || syn.synthesis_id}`,
+    inputs: { extraction_ids: evidenceIds, ...(revised ? { synthesis_ids: [revised] } : {}) },
+    outputs: { synthesis_ids: [syn.synthesis_id] },
+    notes: `${syn.type}: ${syn.title || syn.synthesis_id}${revised ? ` (revises ${revised})` : ""}`,
   });
   return { status: "ok", wrote: 1, synthesis_id: syn.synthesis_id, path: dirRel,
            claims: claims.length, cited_passages: evidenceIds.length, failures };
@@ -1903,8 +1925,15 @@ function anchorCmd(root, repId, candidates, opts = {}) {
       if (!fs.existsSync(manAbs)) {
         U.atomicWriteFile(manAbs, JSON.stringify({
           set_id: opts.set, title: opts.title || opts.set, query: opts.query || "", items_path: targetRel,
+          // --hidden (1.15.0): quotations that back a judgement, checked like any other but never listed as passages
+          ...(opts.hidden ? { ext: { "upc-site": { hidden: true } } } : {}),
           provenance: { produced_by: { tool: opts.tool || "upc", method: "model" }, created_at: nowStamp() },
         }, null, 2) + "\n");
+      } else if (opts.hidden) {
+        const man = JSON.parse(fs.readFileSync(manAbs, "utf8"));
+        if (!(man.ext && man.ext["upc-site"] && man.ext["upc-site"].hidden)) {
+          throw new Error(`set ${opts.set} already holds listed passages; --hidden needs a set of its own`);
+        }
       }
     } else {
       const src = model.sourceById.get(sourceId);
@@ -2210,11 +2239,14 @@ async function main() {
         // export had two options; with --into/--strip/--profile it would happily
         // read a flag's argument as the corpus directory.
         const VALUE_FLAGS = new Set(["--format", "-o", "--into", "--profile", "--strip",
-          "--frontmatter", "--filenames", "--image-names", "--domain", "--matrix", "--files"]);
+          "--frontmatter", "--filenames", "--image-names", "--domain", "--matrix", "--files",
+          "--about", "--original-edition"]);
         const dir = rest.find((a, i) => !a.startsWith("-") && !(i > 0 && VALUE_FLAGS.has(rest[i - 1])));
         const format = arg(rest, "--format");
         const out = arg(rest, "-o");
-        if (!dir || !format) { process.stderr.write("usage: upc export <dir> --format bibtex|ris|csl-json|jsonl|markdown|ro-crate|prov|obsidian|site|site-one [-o <dir|file>] [--copy] [--bundle] [--single-file] [--no-text] [--matrix <a>:<b>]\n"); process.exit(2); }
+        if (!dir || !format) { process.stderr.write("usage: upc export <dir> --format bibtex|ris|csl-json|jsonl|markdown|ro-crate|prov|obsidian|site|site-one [-o <dir|file>] [--copy] [--bundle] [--single-file] [--no-text] [--matrix <a>:<b>] [--about <md>] [--original-edition <url>]\n"); process.exit(2); }
+        // 1.15.0: a Methods page from a Markdown file, and where a revised overview's previous version lives.
+        const siteExtras = { about: arg(rest, "--about") || null, originalEdition: arg(rest, "--original-edition") || null };
         if (format === "site-one" || (format === "site" && rest.includes("--single-file"))) {
           const mx = arg(rest, "--matrix");
           const filesArg = arg(rest, "--files");
@@ -2223,6 +2255,7 @@ async function main() {
             // --bundle puts the PDFs in a folder named after the file
             files: filesArg || (rest.includes("--bundle")
               ? path.basename(out || "corpus.html").replace(/\.html?$/i, "") + "_files" : null),
+            ...siteExtras,
           }));
           break;
         }
@@ -2230,7 +2263,7 @@ async function main() {
           const mx = arg(rest, "--matrix");
           print(writeSite(dir, {
             out, bundle: rest.includes("--bundle"), allCodes: rest.includes("--all-codes"),
-            matrix: mx ? mx.split(":") : null,
+            matrix: mx ? mx.split(":") : null, ...siteExtras,
           }));
           break;
         }
@@ -2277,12 +2310,12 @@ async function main() {
         break;
       }
       case "add": {
-        const ADD_VALUE_FLAGS = new Set(["--corpus", "--output", "--tool"]);
+        const ADD_VALUE_FLAGS = new Set(["--corpus", "--output", "--tool", "--supersedes"]);
         const kind = rest.filter((a, i) => !a.startsWith("--") && !(i > 0 && ADD_VALUE_FLAGS.has(rest[i - 1])))[0];
         const corpus = arg(rest, "--corpus");
         if (!corpus || !["source", "synthesis", "generation"].includes(kind)) {
           process.stderr.write("usage: upc add source --corpus <dir> [--batch] [--hardlink] [--tool <t>] [--dry-run] < source.json\n"
-            + "       upc add synthesis --corpus <dir> --output <file.md> [--tool <t>] [--allow-unverified] [--dry-run] < synthesis.json\n"
+            + "       upc add synthesis --corpus <dir> --output <file.md> [--supersedes <syn-id>] [--tool <t>] [--allow-unverified] [--dry-run] < synthesis.json\n"
             + "       upc add generation --corpus <dir> [--output <file>] [--replace] [--tool <t>] [--allow-unverified] [--dry-run] < generation.json\n");
           process.exit(2);
         }
@@ -2298,7 +2331,7 @@ async function main() {
         }
         if (kind === "synthesis") {
           const out = addSynthesisCmd(corpus, JSON.parse(stdin), {
-            output: arg(rest, "--output"), tool: arg(rest, "--tool"),
+            output: arg(rest, "--output"), tool: arg(rest, "--tool"), supersedes: arg(rest, "--supersedes"),
             allowUnverified: rest.includes("--allow-unverified"), dryRun: rest.includes("--dry-run"),
           });
           print(out);
@@ -2331,12 +2364,12 @@ async function main() {
       case "anchor": {
         const corpus = arg(rest, "--corpus");
         const repId = arg(rest, "--rep");
-        if (!corpus || !repId) { process.stderr.write("usage: upc anchor --corpus <dir> --rep <rep-id> [--set <id>] [--type <t>] [--query <q>] [--tool <t>] [--model <m>] [--normalize] [--dry-run] < candidates.jsonl\n"); process.exit(2); }
+        if (!corpus || !repId) { process.stderr.write("usage: upc anchor --corpus <dir> --rep <rep-id> [--set <id> [--hidden]] [--type <t>] [--query <q>] [--tool <t>] [--model <m>] [--normalize] [--dry-run] < candidates.jsonl\n"); process.exit(2); }
         const cands = readJsonlText(fs.readFileSync(0, "utf8"));
         const out = anchorCmd(corpus, repId, cands, {
           set: arg(rest, "--set"), type: arg(rest, "--type"), query: arg(rest, "--query"),
           tool: arg(rest, "--tool"), model: arg(rest, "--model"), promptVersion: arg(rest, "--prompt-version"),
-          normalize: rest.includes("--normalize"),
+          normalize: rest.includes("--normalize"), hidden: rest.includes("--hidden"),
           dryRun: rest.includes("--dry-run"),
         });
         print(out);
@@ -2345,7 +2378,7 @@ async function main() {
       case "code": {
         const corpus = arg(rest, "--corpus");
         const set = arg(rest, "--set");
-        if (!corpus || !set) { process.stderr.write("usage: upc code --corpus <dir> --set <cds-id> [--coder-kind model|human] [--tool <t>] [--model <m>] [--dry-run] < codings.jsonl\n"); process.exit(2); }
+        if (!corpus || !set) { process.stderr.write("usage: upc code --corpus <dir> --set <cds-id> [--coder-kind model|human|ensemble|adjudicator|rule] [--tool <t>] [--model <m>] [--dry-run] < codings.jsonl\n"); process.exit(2); }
         const recs = readJsonlText(fs.readFileSync(0, "utf8"));
         const out = codeCmd(corpus, set, recs, {
           query: arg(rest, "--query"), tool: arg(rest, "--tool"), model: arg(rest, "--model"),

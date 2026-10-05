@@ -1632,6 +1632,189 @@ ok("filename rejects reserved", !checkFilename("sources/con/x.md").ok);
   fs.rmSync(stage, { recursive: true, force: true });
 }
 
+// ---------------------------------------------------------------------------
+// 1.15.0 — evidence schemes, rule coders, hidden sets, revisions, support, Methods
+// ---------------------------------------------------------------------------
+{
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "upc-115-"));
+  const stage = fs.mkdtempSync(path.join(os.tmpdir(), "upc-115s-"));
+  fs.mkdirSync(path.join(dir, "provenance"), { recursive: true });
+  fs.mkdirSync(path.join(dir, "codebooks"), { recursive: true });
+  fs.writeFileSync(path.join(dir, "provenance", "events.jsonl"), "");
+  fs.writeFileSync(path.join(dir, "corpus.json"), JSON.stringify({
+    upc_spec_version: specVersion(), corpus_id: "cor-000000000115", title: "Fixture 1.15",
+    sections: { sources: "sources/", codebooks: "codebooks/", codings: "codings/", provenance: "provenance/events.jsonl" },
+  }, null, 2));
+  const txt = path.join(stage, "paper.txt");
+  fs.writeFileSync(txt, "Heat pumps cut bills in cold climates. Installers often lack training.\n\nThe sample was small and self-selected.\n");
+  const added = addSourceCmd(dir, [{ slug: "hp", title: "Heat pumps", source_kind: "document",
+    bibliographic: { item_type: "article-journal", title: "Heat pumps", issued: { date_parts: [[2024]] } },
+    files: [{ path: txt, role: "text", media_type: "text/plain", produced_by: "import" }] }], { tool: "selftest" });
+  const rep = added.results[0].representation_ids[0], sid = added.results[0].source_id;
+  clearRepCache();
+  const an = anchorCmd(dir, rep, [{ quote: "Heat pumps cut bills in cold climates." }, { quote: "Installers often lack training." }], { tool: "selftest" });
+  const [e1, e2] = an.results.map((r) => r.extraction_id);
+
+  // Hidden sets: quotations behind a rating, checked like any other, never listed.
+  clearRepCache();
+  const hid = anchorCmd(dir, rep, [{ quote: "The sample was small and self-selected." }], { tool: "selftest", set: "exs-appraise", hidden: true });
+  const eh = hid.results[0].extraction_id;
+  const man = JSON.parse(fs.readFileSync(path.join(dir, "extractions", "exs-appraise", "manifest.json"), "utf8"));
+  ok("1.15 hidden: --hidden marks the set's manifest", man.ext && man.ext["upc-site"].hidden === true);
+  clearRepCache();
+  anchorCmd(dir, rep, [{ quote: "Installers often lack" }], { tool: "selftest", set: "exs-listed" });
+  clearRepCache();
+  let threw = false;
+  try { anchorCmd(dir, rep, [{ quote: "often lack training" }], { tool: "selftest", set: "exs-listed", hidden: true }); } catch { threw = true; }
+  ok("1.15 hidden: a set of listed passages can't be made hidden", threw);
+
+  // Codebooks: one topical, two in the evidence group.
+  const stamp = { produced_by: { tool: "selftest", method: "import" }, created_at: "2026-10-05T00:00:00Z" };
+  const mkCb = (slug, title, codes, ext) => {
+    const cb = { codebook_id: "", namespace: "demo", slug, title, closed: true, revision: 1,
+                 revision_digest: codebookRevisionDigest(codes), codes, provenance: stamp, ...(ext ? { ext } : {}) };
+    cb.codebook_id = mintCbkId(cb);
+    fs.writeFileSync(path.join(dir, "codebooks", cb.codebook_id + ".json"), JSON.stringify(cb, null, 2));
+    return cb;
+  };
+  const EV = { "upc-site": { group: "evidence" } };
+  const theme = mkCb("theme", "Theme", [{ code: "heat-pumps", label: "Heat pumps" }, { code: "workforce", label: "Workforce" }]);
+  const grade = mkCb("evidence-grade", "Evidence grade", [{ code: "moderate", label: "Moderate" }, { code: "low", label: "Low" }], EV);
+  const origin = mkCb("claim-origin", "Whose claim", [{ code: "own-finding", label: "Own finding" }, { code: "reported", label: "Reported" }], EV);
+  const impact = mkCb("impact", "Citation impact", [{ code: "top-10", label: "Top 10% in field and year" }], EV);
+  clearRepCache();
+  codeCmd(dir, "cds-theme", [
+    { codebook_ref: theme.codebook_id, code: "heat-pumps", target: { kind: "extraction", id: e1 }, coder: "model-a" },
+    { codebook_ref: theme.codebook_id, code: "workforce", target: { kind: "extraction", id: e2 }, coder: "model-a" },
+  ], { tool: "selftest" });
+  clearRepCache();
+  codeCmd(dir, "cds-appraise", [
+    { codebook_ref: grade.codebook_id, code: "low", target: { kind: "source", id: sid }, coder: "appraise-v1" },
+    { codebook_ref: origin.codebook_id, code: "own-finding", target: { kind: "extraction", id: e1 }, coder: "appraise-v1" },
+  ], { tool: "selftest", coderKind: "ensemble" });
+  clearRepCache();
+  const ruled = codeCmd(dir, "cds-impact", [
+    { codebook_ref: impact.codebook_id, code: "top-10", target: { kind: "source", id: sid }, coder: "citation-tier" },
+  ], { tool: "selftest", coderKind: "rule" });
+  eq("1.15 rule: a rule coder's coding lands", ruled.results[0].status, "coded");
+  clearRepCache();
+  {
+    const v = validateCorpus(dir);
+    eq("1.15 rule: a corpus with a rule coder validates", v.status, "passed");
+    eq("1.15 rule: and its coder kind raises nothing", (v.errors || []).map((e) => e.code + " " + (e.detail || e.message || "")), []);
+  }
+
+  // A rating card: a generation with ext["upc-site"].card, quoting the hidden set.
+  const ratingMd = path.join(stage, "rating.md");
+  fs.writeFileSync(ratingMd, `**Grade: Low.** Execution: "The sample was small and self-selected." [${eh}]\n`);
+  clearRepCache();
+  const g = addGenerationCmd(dir, { type: "rating", title: "Evidence rating", source_id: sid,
+    ext: { "upc-site": { card: "Evidence rating (advisory, model-made)" } } }, { output: ratingMd, tool: "selftest" });
+  eq("1.15 card: a rating quoting a hidden passage passes the gate", g.status, "ok");
+
+  // An overview, then its revision.
+  const ov1 = path.join(stage, "ov1.md");
+  fs.writeFileSync(ov1, `# Heat pumps\n\n"Heat pumps cut bills in cold climates." [${e1}] Training lags: "Installers often lack training." [${e2}]\n\n- \`${sid}\`\n`);
+  const claims = [{ claim_id: "cl-0001", text: "Heat pumps cut bills.", evidence_ids: [e1] },
+                  { claim_id: "cl-0002", text: "Installers lack training.", evidence_ids: [e2] }];
+  clearRepCache();
+  const s1 = addSynthesisCmd(dir, { type: "thematic", title: "Heat pumps", claims }, { output: ov1, tool: "selftest" });
+  const ov2 = path.join(stage, "ov2.md");
+  fs.writeFileSync(ov2, `# Heat pumps\n\nOne study (Low) finds "Heat pumps cut bills in cold climates." [${e1}]\n\n- \`${sid}\`\n`);
+  const rev = { label: "Revised from rated evidence", date: "2026-10-06" };
+  clearRepCache();
+  eq("1.15 revision: superseding an unknown synthesis is refused",
+     addSynthesisCmd(dir, { type: "thematic", title: "Heat pumps", claims: [claims[0]] },
+                     { output: ov2, tool: "selftest", supersedes: "syn-000000000000" }).status, "refused");
+  clearRepCache();
+  const s2 = addSynthesisCmd(dir, { type: "thematic", title: "Heat pumps", claims: [claims[0]], ext: { "upc-site": { revision: rev } } },
+                             { output: ov2, tool: "selftest", supersedes: s1.synthesis_id });
+  eq("1.15 revision: written", s2.status, "ok");
+  const old = JSON.parse(fs.readFileSync(path.join(dir, "syntheses", s1.synthesis_id, "synthesis.json"), "utf8"));
+  const neu = JSON.parse(fs.readFileSync(path.join(dir, "syntheses", s2.synthesis_id, "synthesis.json"), "utf8"));
+  eq("1.15 revision: the new one names what it revises", neu.supersedes, s1.synthesis_id);
+  eq("1.15 revision: the old one points forward", old.superseded_by, s2.synthesis_id);
+
+  // Support for each statement: an evidence_matrix derived from the revision.
+  const mx = path.join(stage, "mx.md");
+  fs.writeFileSync(mx, `# Support\n\n"Heat pumps cut bills in cold climates." [${e1}]\n\n- \`${sid}\`\n`);
+  clearRepCache();
+  const sm = addSynthesisCmd(dir, { type: "evidence_matrix", title: "Support: Heat pumps",
+    claims: [{ claim_id: "cl-0001", text: "Heat pumps cut bills.", evidence_ids: [e1],
+      ext: { "upc-corpus": { ipcc: "low confidence", evidence: "limited", agreement: "medium", independent: 1,
+        passages: [{ extraction_id: e1, verdict: "partly", gap: "broader" }] } } }],
+    provenance: { produced_by: { tool: "selftest", method: "model" }, derived_from: { synthesis_ids: [s2.synthesis_id] } } },
+    { output: mx, tool: "selftest" });
+  eq("1.15 support: the matrix is written", sm.status, "ok");
+  clearRepCache();
+  {
+    const v = validateCorpus(dir);
+    eq("1.15: the whole fixture validates", v.status, "passed");
+    eq("1.15: at L2", v.level, "L2");
+  }
+  // A dangling link is an error, not a silent gap.
+  const oldPath = path.join(dir, "syntheses", s1.synthesis_id, "synthesis.json");
+  const oldText = fs.readFileSync(oldPath, "utf8");
+  fs.writeFileSync(oldPath, JSON.stringify({ ...old, superseded_by: "syn-000000000000" }, null, 2));
+  clearRepCache();
+  ok("1.15 revision: a dangling superseded_by is dangling_synthesis",
+     (validateCorpus(dir).errors || []).some((e) => e.code === "dangling_synthesis"));
+  fs.writeFileSync(oldPath, oldText);
+
+  // The folder site.
+  const about = path.join(stage, "methods.md");
+  fs.writeFileSync(about, "# How this library was made\n\nEvery paper was rated. See [theme:theme/heat-pumps]. " +
+    "After [MMAT 2018](https://example.org/mmat?a=1&b=2).\n");
+  clearRepCache();
+  const out = fs.mkdtempSync(path.join(os.tmpdir(), "upc-115o-"));
+  writeSite(dir, { out, about, originalEdition: "https://example.org/2.1/" });
+  const read = (rel) => fs.readFileSync(path.join(out, rel), "utf8");
+  const home = read("index.html");
+  ok("1.15 site: home counts topical codebooks only", /<span class="n">1<\/span><br><span class="u">codebooks/.test(home));
+  ok("1.15 site: a Methods page and its nav item", fs.existsSync(path.join(out, "methods.html")) && /href="methods\.html"/.test(home));
+  ok("1.15 site: Methods renders theme links", /How this library was made/.test(read("methods.html")) && /overviews\//.test(read("methods.html")));
+  ok("1.15 markdown: [text](url) becomes a link", read("methods.html").includes('<a href="https://example.org/mmat?a=1&amp;b=2" target="_blank" rel="noopener">MMAT 2018</a>'));
+  const codes = read("codes/index.html");
+  ok("1.15 site: evidence schemes get their own section on Codes", codes.indexOf('id="evidence"') > codes.indexOf(">Theme<") &&
+     codes.indexOf(">Evidence grade<") > codes.indexOf('id="evidence"'));
+  const src = read("sources/hp.html");
+  ok("1.15 site: the paper's page shows its rating card", /<details class="card evcard"><summary><strong>Evidence rating \(advisory, model-made\)/.test(src));
+  ok("1.15 site: the card's quotation is checked but not linked as a passage", /[^>]“The sample was small and self-selected\.” <span class="small" title="Found word for word in the paper">✓<\/span>/.test(src));
+  ok("1.15 site: impact and grade sit in the evidence card, not the topical one", /class="card evcard"><div class="small muted">Evidence ratings \(advisory\)/.test(src));
+  ok("1.15 site: passages on the paper's page show their evidence chips", /<div class="evshow">/.test(src));
+  ok("1.15 site: a hidden passage is not listed", !src.includes(`id="${eh}"`) && !read("data/browse.js").includes(eh));
+  ok("1.15 site: the revision lives at the first one's address", fs.existsSync(path.join(out, "overviews", s1.synthesis_id + ".html")) &&
+     !fs.existsSync(path.join(out, "overviews", s2.synthesis_id + ".html")));
+  const ovp = read(`overviews/${s1.synthesis_id}.html`);
+  ok("1.15 site: it carries the revised text", /One study \(Low\) finds/.test(ovp));
+  ok("1.15 site: labelled, dated, linked to the original edition", /Revised from rated evidence<\/strong> · 6 Oct 2026/.test(ovp) &&
+     ovp.includes(`https://example.org/2.1/overviews/${s1.synthesis_id}.html`));
+  ok("1.15 site: the matrix is not an overview of its own", !fs.existsSync(path.join(out, "overviews", sm.synthesis_id + ".html")) &&
+     !read("overviews/index.html").includes("Support: Heat pumps"));
+  ok("1.15 site: support columns behind a switch that starts off", /<input type="checkbox" data-support>/.test(ovp) &&
+     /<table class="claims">/.test(ovp) && /low confidence/.test(ovp) && /partly \(broader\)/.test(ovp));
+  ok("1.15 site: one list entry for the theme", (read("overviews/index.html").match(/>Heat pumps</g) || []).length === 1);
+
+  // The single file: the same, from memory.
+  clearRepCache();
+  const file = path.join(out, "one.html");
+  writeSingleFile(dir, { out: file, about, originalEdition: "https://example.org/2.1/" });
+  const html = fs.readFileSync(file, "utf8");
+  const P = JSON.parse(html.match(/<script type="application\/json" id="upc-data">([\s\S]*?)<\/script>/)[1]);
+  ok("1.15 one: evidence codebooks are flagged", P.codebooks.filter((c) => c.ev).length === 3 && !P.codebooks.find((c) => c.slug === "theme").ev);
+  ok("1.15 one: the overview keeps the first address and carries the revision", P.overviews.length === 1 &&
+     P.overviews[0].id === s1.synthesis_id && /Revised from rated evidence/.test(P.overviews[0].rv));
+  ok("1.15 one: the support table comes prerendered", /data-support/.test(P.overviews[0].ct) && /#\/source\/0\?ex=/.test(P.overviews[0].ct));
+  ok("1.15 one: the paper carries its card", P.sources[0].cd && P.sources[0].cd[0][0] === "Evidence rating (advisory, model-made)");
+  ok("1.15 one: hidden passages are not in the payload", !P.passages.some((p) => p.id === eh));
+  ok("1.15 one: Methods travels with it", P.about && P.about.t === "How this library was made" && /#\/overviews\//.test(P.about.h));
+  ok("1.15 one: the evidence section's wording travels too", P.evTitle === "Evidence ratings (advisory)");
+  ok("1.15 markdown: **strong** renders", /<strong>Grade: Low\.<\/strong>/.test(P.sources[0].cd[0][1]));
+  fs.rmSync(out, { recursive: true, force: true });
+  fs.rmSync(dir, { recursive: true, force: true });
+  fs.rmSync(stage, { recursive: true, force: true });
+}
+
 // --- an overview's markdown, as a reader should see it ---
 //
 // Found on the live site: the list of papers each overview drew on rendered as

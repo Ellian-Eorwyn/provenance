@@ -16,7 +16,7 @@ only if `corpus.json` declares those keys — there is no directory sniffing.
   dangling an existing coding. `revision` and `revision_digest` carry evolution
   and are advisory. `codes[]` needs at least one entry, even when `closed: false`.
 - `codings/<set-id>/{manifest.json, items.jsonl}` — the manifest declares
-  `coders[]` (`coder`, `kind: model|human|ensemble|adjudicator`, and the volatile
+  `coders[]` (`coder`, `kind: model|human|ensemble|adjudicator|rule`, and the volatile
   model/prompt detail), so a model upgrade does not destroy agreement history.
 - A coding **never carries a locator**. Its `target` is an `extraction`, `source`
   or `representation`, so a span-level coding points at something that already

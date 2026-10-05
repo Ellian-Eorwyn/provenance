@@ -133,7 +133,10 @@ with the `inputs` array **sorted by `id`** and JCS the canonical serialization o
 Beyond `derived_from`, objects MAY carry weak relations:
 
 - `supersedes` / `superseded_by` — a newer capture, edition, or re-anchored
-  extraction replaces an older one. Both ids remain in the corpus.
+  extraction replaces an older one. Both ids remain in the corpus. Since 1.15.0
+  a synthesis may carry them too: a revised overview names the one it revises
+  (§04 "Revising a synthesis"). Unlike the other relations, a synthesis's
+  `supersedes` / `superseded_by` must resolve (`dangling_synthesis`, §08).
 - `duplicate_of` — a representation determined to be a byte-or-content duplicate
   of another.
 

@@ -3,6 +3,50 @@
 All notable changes to the Universal Provenance Corpus (UPC) standard.
 Versioning is semantic (§00 Versioning policy).
 
+## 1.15.0 — 2026-10-05
+
+**Minor release: ratings of the evidence, kept apart from the themes, and revised
+overviews.** One enum value is added (coder kind `rule`) and two optional fields
+(a synthesis's `supersedes` / `superseded_by`), so a 1.14 corpus is a valid 1.15
+corpus and is rendered exactly as before: a 179-paper library rebuilt with
+1.15.0 shows 0 changed and 0 added against its 1.14.2 build.
+
+### Added
+
+- **Coder kind `rule`** (spec/12, `schemas/coding-set.schema.json`): a
+  deterministic procedure, such as a citation tier, which no model or person
+  judged. `upc code --coder-kind rule`. A chip's tooltip names the kind ("a
+  rule", "a vote of model runs"), and the visible coder note mentions rules.
+- **Revising a synthesis** (spec/04, spec/07): `upc add synthesis --supersedes
+  <syn-id>` refuses an unknown id, records `supersedes`, and writes
+  `superseded_by` into the old synthesis. Neither field is in the id recipe. The
+  validator reports a link that resolves to nothing, or to itself, as
+  `dangling_synthesis`.
+- **Hidden extraction sets** (spec/09 req. 10): `upc anchor --set <id> --hidden`
+  marks the set's manifest `ext["upc-site"].hidden`; its quotations are checked
+  like any other but never listed as passages. A set already holding listed
+  passages can't be made hidden.
+- **The reader's site** (spec/09 req. 9–14):
+  - evidence schemes (`ext["upc-site"].group: "evidence"`): their own section on
+    Codes, "Evidence ratings (advisory)"; not counted on Home; last and closed in
+    the filters; chips only on a paper's page and in an opened passage; an "About
+    the paper" filter group from source-level evidence codes; `facet: false`
+    keeps a scheme out of the filters;
+  - cards about a paper: a generation with `ext["upc-site"].card` shows, folded,
+    on its paper's page;
+  - revisions: the newest overview in a chain at the first one's address, with
+    its label and date, and a link to the previous version given
+    `--original-edition <url>`;
+  - statement support: an `evidence_matrix` derived from an overview joins its
+    claims table as columns behind "Show support for each statement" (off by
+    default);
+  - `--about <md>`: a Methods page and a nav item.
+  Both shapes (folder and single file) and the light file render all of these.
+  Evidence chips are drawn as outlines, so a rating never looks like a theme.
+- **Overview markdown** gains `**strong**` and `[text](https://…)` links (rating cards and
+  Methods pages use them). No overview written before used either, so nothing
+  already published renders differently.
+
 ## 1.14.2 — 2026-10-05
 
 **Patch release: passages in context.** No schema, vocabulary, id recipe, gate or

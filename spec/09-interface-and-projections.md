@@ -295,6 +295,42 @@ Normative requirements, in addition to everything the browser must already do:
    as citations, and a theme resolves at build time to *its current* overview.
    Overview ids are content hashes (spec/06), so a link by id would break the next
    time the overview was written; a link by theme cannot.
+9. **Evidence schemes (1.15.0).** A codebook whose `ext["upc-site"].group` is
+   `"evidence"` rates the evidence (a paper's grade, whose claim a passage makes)
+   rather than naming a topic. It MUST NOT change what the topical views show: it
+   is left out of the home page's count of codebooks, gets its own section on the
+   Codes page under a heading that says the ratings are advisory, sorts after
+   every topical scheme in the filters and starts closed there, and its chips
+   appear on a paper's own page and on a passage opened in context, not on list
+   cards. Source-level codings in these schemes MAY be offered as filters on
+   passages ("About the paper"). `ext["upc-site"].facet: false` keeps a scheme
+   out of the filters altogether. All the code-display rules still apply: the
+   chip names its coder and the coder's kind.
+10. **Hidden extraction sets (1.15.0).** An extraction set whose manifest carries
+    `ext["upc-site"].hidden: true` (`upc anchor --set <id> --hidden`) holds
+    quotations that back a judgement — the evidence for a rating — rather than
+    passages for a reader to browse. Its extractions are gated and validated like
+    any other, MUST be checked when quoted in a generation or synthesis, and MUST
+    NOT be listed, counted or exported as passages. A quotation of one in prose is
+    shown with its check mark but without a link to a passage card.
+11. **Cards about a paper (1.15.0).** A generation whose `ext["upc-site"].card`
+    names a heading is shown on its source's page, folded, under that heading
+    (the newest per heading). Two cards are never merged: a citation figure and
+    an evidence grade, say, are each shown in their own.
+12. **Revisions (1.15.0).** Of a chain of syntheses linked by `supersedes`
+    (§04), only the newest is listed, and it is shown at the address of the
+    first, with its `ext["upc-site"].revision` label and date. Given the address
+    of an earlier edition (`--original-edition <url>`), the label links to the
+    previous version there.
+13. **Support for each statement (1.15.0).** An `evidence_matrix` synthesis whose
+    `derived_from.synthesis_ids` names an overview is not an overview of its own:
+    it joins that overview's claims table, as columns behind a switch that starts
+    off. Each matrix claim mirrors a claim id of the overview and MAY carry, in
+    `ext["upc-corpus"]`, a confidence, the number of independent papers, and a
+    verdict per passage. These are judgements and MUST be labelled as such.
+14. **A Methods page (1.15.0).** `--about <file.md>` adds a page, linked from the
+    navigation, rendered with the overviews' grammar so its theme links resolve
+    and its quotations are checked.
 
 ### The Obsidian vault export
 

@@ -117,6 +117,24 @@ function shortCite(src) {
  * Build everything the pages need, reading representation bytes once.
  * Pure apart from the file reads; the renderers below take only this.
  */
+/** What a UPC object asks of the reader's site: its ext["upc-site"], or {}. */
+const siteExt = (o) => ((o && o.ext) || {})["upc-site"] || {};
+/** A codebook in the evidence group (1.15.0): ratings, kept apart from the topics. */
+const isEvidence = (cb) => !!cb && siteExt(cb).group === "evidence";
+/** A codebook whose codes are shown but offered as no filter (low agreement, say). */
+const noFacet = (cb) => !!cb && siteExt(cb).facet === false;
+/** How a revised synthesis labels itself: {label, date}. */
+const revisionOf = (o) => {
+  const r = siteExt(o).revision || {};
+  return { label: r.label || "Revised", date: r.date || String((o.provenance || {}).created_at || "").slice(0, 10),
+           note: r.note || "", first: o.supersedes };
+};
+const DATE_FMT = (d) => {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(d || "");
+  if (!m) return d || "";
+  return `${+m[3]} ${["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"][+m[2] - 1]} ${m[1]}`;
+};
+
 export function buildSiteModel(loaded, opts = {}) {
   const repById = new Map();
   for (const r of loaded.representations) repById.set(r.obj.representation_id, r);
@@ -128,6 +146,8 @@ export function buildSiteModel(loaded, opts = {}) {
   // codebooks
   const codebooks = (loaded.codebooks || []).map((c) => c.obj);
   const cbkById = new Map(codebooks.map((c) => [c.codebook_id, c]));
+  // Schemes in the "evidence" group (1.15.0): ratings of the evidence rather than
+  // topics. They never change what a topical page shows (spec/09).
   const coderKind = new Map();
   for (const set of loaded.codingSets || []) {
     for (const c of set.obj.coders || []) coderKind.set(c.coder, c);
@@ -157,6 +177,7 @@ export function buildSiteModel(loaded, opts = {}) {
       coder_model: (coderKind.get(o.coder) || {}).model || "",
       confidence: o.confidence || "",
       rationale: o.rationale || "",
+      ev: isEvidence(cbk),
     });
   }
 
@@ -169,9 +190,24 @@ export function buildSiteModel(loaded, opts = {}) {
     if (!perText.has(rec)) perText.set(rec, { blocks: textBlocks(rec.text), u16: utf16Offsets(rec.text) });
     return perText.get(rec);
   };
+  // Hidden sets (1.15.0): quotations that back a judgement (a rating's evidence),
+  // checked like any other but never listed as passages.
+  const hiddenTags = new Set((loaded.extractionSets || []).filter((x) => x.obj && siteExt(x.obj).hidden)
+    .map((x) => "set:" + String(x.dirRel).split("/").pop()));
+  const hiddenById = new Map();
   for (const e of loaded.extractions) {
     const o = e.obj;
     const repEntry = repById.get(o.representation_ref);
+    if (hiddenTags.has(e.tag)) {
+      let rec = null;
+      if (repEntry && repEntry.contained && fs.existsSync(repEntry.abs)) {
+        const r = U.getRepFile(repEntry.abs);
+        if (r.utf8ok) rec = r;
+      }
+      hiddenById.set(o.extraction_id, { id: o.extraction_id, source_id: o.source_id, quote: o.direct_quote || "",
+        badge: U.badgeForExtraction(o, repEntry ? repEntry.obj : null, rec, lookupRep).badge });
+      continue;
+    }
     const repObj = repEntry ? repEntry.obj : null;
     let repRec = null;
     if (repEntry && repEntry.contained && fs.existsSync(repEntry.abs)) {
@@ -293,6 +329,7 @@ export function buildSiteModel(loaded, opts = {}) {
     for (const [cbkId, list] of byBook) {
       const cbk = cbkById.get(cbkId);
       if (cbk && cbk.multi_label === true) continue;
+      if (isEvidence(cbk)) continue;     // shown as two chips where the rating is opened, not as a banner
       const labels = new Set(list.map((c) => (c.code != null ? c.code : c.value)));
       const coders = new Set(list.map((c) => c.coder));
       if (labels.size > 1 && coders.size > 1) p.disagreements.push(cbkId);
@@ -314,7 +351,31 @@ export function buildSiteModel(loaded, opts = {}) {
   // not listed, counted or grouped with them.
   const isHome = (o) => ((o.ext || {})["upc-site"] || {}).placement === "home";
   const allSyn = (loaded.syntheses || []).map((x) => x.obj).filter(Boolean);
-  const syntheses = allSyn.filter((o) => !isHome(o)).map((o) => {
+  // Revisions (1.15.0, spec/04): a synthesis another one supersedes steps aside,
+  // and the newest in the chain is shown at the address of the first, so every
+  // link made to the theme keeps working.
+  const synById = new Map(allSyn.map((o) => [o.synthesis_id, o]));
+  const supersededIds = new Set(allSyn.map((o) => o.supersedes).filter((id) => synById.has(id)));
+  const isSuperseded = (o) => supersededIds.has(o.synthesis_id) || !!(o.superseded_by && synById.has(o.superseded_by));
+  const firstOf = (o) => {
+    let x = o;
+    const seen = new Set([o.synthesis_id]);
+    while (x.supersedes && synById.has(x.supersedes) && !seen.has(x.supersedes)) { seen.add(x.supersedes); x = synById.get(x.supersedes); }
+    return x.synthesis_id;
+  };
+  // A statement-support matrix: an evidence_matrix derived from an overview. It
+  // joins that overview's claims table instead of being an overview of its own.
+  const supportFor = (o) => o.type === "evidence_matrix"
+    ? (((o.provenance || {}).derived_from || {}).synthesis_ids || [])
+        .filter((id) => synById.has(id) && synById.get(id).type !== "evidence_matrix") : [];
+  const supports = new Map();
+  for (const o of allSyn) {
+    for (const id of supportFor(o)) {
+      const cur = supports.get(id);
+      if (!cur || String((o.provenance || {}).created_at || "") > String((cur.provenance || {}).created_at || "")) supports.set(id, o);
+    }
+  }
+  const syntheses = allSyn.filter((o) => !isHome(o) && !isSuperseded(o) && !supportFor(o).length).map((o) => {
     const declared = ((o.ext || {})["upc-corpus"] || {}).codebook;
     const title = String(o.title || "").toLowerCase();
     let owner = null;
@@ -324,7 +385,9 @@ export function buildSiteModel(loaded, opts = {}) {
     } else {
       owner = labelOwner.get(title) || null;
     }
-    return { ...o, _group: owner && owner.cb ? owner.cb : null, _code: owner && owner.code ? owner.code.code : null };
+    return { ...o, _group: owner && owner.cb ? owner.cb : null, _code: owner && owner.code ? owner.code.code : null,
+             _addr: firstOf(o), _support: supports.get(o.synthesis_id) || null,
+             _revision: o.supersedes && synById.has(o.supersedes) ? revisionOf(o) : null };
   });
   // The overview written for each code. A link that names a theme resolves
   // through this, not through an overview id: ids are content hashes (spec/06),
@@ -333,7 +396,7 @@ export function buildSiteModel(loaded, opts = {}) {
   for (const x of syntheses) if (x._group && x._code) overviewByCode.set(`${x._group.slug}:${x._code}`, x);
   // Newest placed summary wins; its prose is read here so either shape can render it.
   let homeSummary = null;
-  const homes = allSyn.filter(isHome).sort((a, b) =>
+  const homes = allSyn.filter((o) => isHome(o) && !isSuperseded(o)).sort((a, b) =>
     String((b.provenance || {}).created_at || "").localeCompare(String((a.provenance || {}).created_at || "")));
   if (homes.length) {
     const h = homes[0];
@@ -345,14 +408,43 @@ export function buildSiteModel(loaded, opts = {}) {
     }
     const want = h.output && h.output.sha256;
     homeSummary = { ...h, md: md.replace(/^\s*#\s+.*\n+/, ""),
-                    _changed: !!(want && md && "sha256:" + U.sha256Hex(Buffer.from(md, "utf8")) !== want) };
+                    _changed: !!(want && md && "sha256:" + U.sha256Hex(Buffer.from(md, "utf8")) !== want),
+                    _revision: h.supersedes && synById.has(h.supersedes) ? revisionOf(h) : null };
   }
+
+  // Cards about a paper (1.15.0): a generation whose ext["upc-site"].card names
+  // its heading — an evidence rating, say — shown on the paper's page. The
+  // newest per heading; generations without one are not shown, as before.
+  const cardsBySource = new Map();
+  for (const g of loaded.generations || []) {
+    const o = g.obj || {};
+    const card = siteExt(o).card;
+    const sid = o.source_id || ((((o.provenance || {}).derived_from || {}).source_ids || [])[0]);
+    if (!card || !sid) continue;
+    let md = "";
+    const outPath = o.output && o.output.path;
+    if (outPath) {
+      const { abs, contained } = U.resolveInside(loaded.root, outPath);
+      if (contained && fs.existsSync(abs)) md = fs.readFileSync(abs, "utf8");
+    }
+    if (!md && o.output && typeof o.output.value === "string") md = o.output.value;
+    const list = cardsBySource.get(sid) || [];
+    const at = list.findIndex((c) => c.card === card);
+    const rec = { card, id: o.generation_id, md: md.replace(/^\s*#\s+.*\n+/, ""), created: String((o.provenance || {}).created_at || ""),
+                  order: Number(siteExt(o).order || 0) };
+    if (at < 0) list.push(rec);
+    else if (rec.created > list[at].created) list[at] = rec;
+    cardsBySource.set(sid, list);
+  }
+  for (const s of sources) s.cards = (cardsBySource.get(s.id) || []).sort((a, b) => a.order - b.order || a.card.localeCompare(b.card));
 
   return {
     title: (loaded.corpus && loaded.corpus.title) || "Research corpus",
     specVersion: loaded.corpus && loaded.corpus.upc_spec_version,
     sources, sourceById, passages, passageById,
-    codebooks, cbkById, codeIndex, syntheses, homeSummary, overviewByCode, homeCandidates: homes.length,
+    codebooks, cbkById, codeIndex, syntheses, homeSummary, overviewByCode, homeCandidates: homes.length, hiddenById,
+    about: typeof opts.about === "string" ? readAbout(opts.about) : (opts.about || null),
+    originalEdition: opts.originalEdition || null,
     coders: [...new Set(passages.flatMap((p) => p.codings.map((c) => c.coder)).concat(sources.flatMap((s) => s.codings.map((c) => c.coder))))],
     failures,
     generatedFrom: loaded.root,
@@ -510,6 +602,17 @@ a.pn:hover{background:var(--accent-soft);text-decoration:none}
 /* Only the lazily-built list opts into this: a card the reader can deep-link to
    must not be skipped, and .reading collapses under it (see above). */
 .lazy .passage{content-visibility:auto;contain-intrinsic-size:auto 190px}
+/* evidence ratings (1.15.0): kept apart from the themes, shown where a passage is opened or on its paper's page */
+.passage .evchips{display:none}
+.passage blockquote[aria-expanded="true"] ~ .meta .evchips,.evshow .passage .evchips{display:inline-flex;gap:.35rem;flex-wrap:wrap}
+.evcard{margin:.7rem 0}
+.evchips .chip,.evcard .chip{background:transparent;border-style:solid}
+.evcard>summary{cursor:pointer;font-family:ui-sans-serif,system-ui,sans-serif;font-size:.92rem}
+.evcard ul{padding-left:1.15rem}
+.evcard li{margin:.35rem 0}
+p.revised{background:var(--accent-soft);color:var(--ink);border-radius:8px;padding:.45rem .7rem;max-width:74ch;margin:.2rem 0 .9rem}
+table.claims .sup{display:none}
+table.claims.show-support .sup{display:table-cell}
 @media (max-width:860px){
   .split{grid-template-columns:1fr}
   .side{position:static;max-height:20rem}
@@ -695,7 +798,7 @@ const BROWSE_JS = String.raw`
   function chip(g,detached){
     var d=codeDef[g[0]+":"+g[1]], lbl=d?d.c.label:g[1];
     var kind=(X.coderKind||{})[g[2]];
-    var tip=(d&&d.c.def?d.c.label+": "+d.c.def+"\n":"")+"Coded by "+g[2]+(kind?" ("+kind+")":"")+
+    var tip=(d&&d.c.def?d.c.label+": "+d.c.def+"\n":"")+"Coded by "+g[2]+(kind?" ("+({rule:"a rule",ensemble:"a vote of model runs"}[kind]||kind)+")":"")+
       (g[3]?" · confidence "+g[3]:"")+(g[4]?"\nWhy: "+g[4]:"");
     return '<span class="chip'+(detached?" detached":"")+'" title="'+E(tip)+'">'+
       '<a href="'+E(X.hrefCode(g[0],g[1]))+'">'+E(lbl)+"</a></span>";
@@ -727,13 +830,18 @@ const BROWSE_JS = String.raw`
   function codeNote(){
     var k={}, ck=X.coderKind||{};
     Object.keys(ck).forEach(function(c){ k[ck[c]||"other"]=1; });
-    var who=k.model&&k.human?"a language model and by people":k.human?"people":k.model?"a language model":"";
+    var m=k.model||k.ensemble;
+    var who=m&&k.human?"a language model and by people":k.human?"people":m?"a language model":"";
+    if(k.rule) who=who?who+", and some by rules":"rules";
     return (who?"Codes were assigned by "+who+". ":"Codes are judgements, not checks. ")+
       "Hover a code to see who assigned it, how sure they were, and why.";
   }
+  // An evidence scheme's code (1.15.0): shown where the passage is opened, not on the list.
+  function isEv(g){ var d=codeDef[g[0]+":"+g[1]]; return !!(d&&d.cb.ev); }
   function card(p,opts){
     opts=opts||{};
     var s=X.sources[p.s]||{}, bad=p.b==="failed";
+    var top=p.g.filter(function(g){return !isEv(g);}), ev=p.g.filter(isEv);
     var cx=!!(p.q&&(p.w||p.cx||p.cw));      // its sentences can be shown ("In context")
     var body;
     if(p.q){
@@ -753,7 +861,8 @@ const BROWSE_JS = String.raw`
       (p.dis?'<div class="disagree">Coders disagree here — both judgements are kept and shown.</div>':"")+
       '<div class="meta">'+badge(p.b,!!opts.terse)+
       (p.st?'<span class="badge plain">'+E(p.st)+"</span>":"")+
-      p.g.map(function(g){return chip(g,bad);}).join(" ")+
+      top.map(function(g){return chip(g,bad);}).join(" ")+
+      (ev.length?' <span class="evchips">'+ev.map(function(g){return chip(g,bad);}).join(" ")+"</span>":"")+
       '<span class="spacer"></span><span class="go"><a class="muted" href="'+E(href)+'">'+
       (opts.showSource===false?E(where||"in context"):E(s.k||"")+(where?" · "+E(where):""))+" →</a>"+original(p,s)+
       "</span></div></article>";
@@ -867,6 +976,8 @@ const BROWSE_JS = String.raw`
       var s=X.sources[p.s]||{};
       p._c=p.g.map(function(g){return g[0]+":"+g[1];});
       p._k=p.g.map(function(g){return g[2];});
+      // About the paper (1.15.0): its evidence-group codes, as filters on its passages
+      p._p=(s.g||[]).filter(isEv).map(function(g){return g[0]+":"+g[1];});
       p._h=((p.q||"")+" "+(p.n||"")+" "+(s.t||"")+" "+(s.k||"")+" "+(s.a||"")+" "+(s.y||"")+" "+
             p.g.map(function(g){return label(g[0],g[1])+" "+g[2];}).join(" ")).toLowerCase();
     });
@@ -892,7 +1003,7 @@ const BROWSE_JS = String.raw`
     // groups: one per codebook that anything is coded against, plus the coders
     var groups=[];
     X.codebooks.forEach(function(cb){
-      if(omit.indexOf(cb.slug)>=0) return;
+      if(omit.indexOf(cb.slug)>=0||cb.nf) return;
       var codes=[];
       cb.codes.forEach(function(c){
         var key=cb.slug+":"+c.code, n=0;
@@ -900,8 +1011,19 @@ const BROWSE_JS = String.raw`
         if(n) codes.push({key:key,label:c.label,def:c.def,n:n});
       });
       codes.sort(function(a,b){return b.n-a.n;});
-      if(codes.length) groups.push({id:cb.slug,title:cb.title,question:cb.question||"",kind:"code",codes:codes});
+      if(codes.length) groups.push({id:cb.slug,title:cb.title,question:cb.question||"",kind:"code",codes:codes,ev:!!cb.ev});
     });
+    // About the paper: its evidence-group codes, one section, after the themes.
+    var pc={};
+    items.forEach(function(p){ p._p.forEach(function(k){ pc[k]=(pc[k]||0)+1; }); });
+    var pk=Object.keys(pc).filter(function(k){ var d=codeDef[k]; return d&&!d.cb.nf; });
+    if(pk.length){
+      groups.push({id:"__paper",title:"About the paper",kind:"paper",ev:true,
+        question:"Ratings of the paper a passage comes from (advisory).",
+        codes:pk.sort(function(a,b){ var A=codeDef[a],B=codeDef[b];
+          return A.cb.slug<B.cb.slug?-1:A.cb.slug>B.cb.slug?1:pc[b]-pc[a]; }).map(function(k){
+          var d=codeDef[k]; return {key:k,label:d.cb.title+": "+d.c.label,def:d.c.def,n:pc[k]}; })});
+    }
     // The scheme that covers most of the list goes first, and is the one opened:
     // a sidebar whose first section is a scheme almost nothing was coded against
     // teaches the reader that the sidebar is not worth opening.
@@ -910,7 +1032,9 @@ const BROWSE_JS = String.raw`
         for(var i=0;i<p._c.length;i++) if(p._c[i].indexOf(g.id+":")===0) return true;
         return false; }).length;
     });
-    groups.sort(function(a,b){return b.total-a.total;});
+    // Evidence schemes after every theme, however much they cover.
+    groups.forEach(function(g){ if(g.kind==="paper") g.total=items.filter(function(p){return p._p.length;}).length; });
+    groups.sort(function(a,b){return (a.ev?1:0)-(b.ev?1:0)||b.total-a.total;});
     var coders={};
     items.forEach(function(p){ p._k.forEach(function(k){ coders[k]=(coders[k]||0)+1; }); });
     var ck=Object.keys(coders);
@@ -933,7 +1057,7 @@ const BROWSE_JS = String.raw`
         '<p class="small" style="margin:0 0 .5rem"><button class="btn" id="pclear">Clear all</button> '+
         '<button class="btn" id="pcsv">Download CSV</button></p>'+
         groups.map(function(g,i){
-          return '<details'+(i===0?" open":"")+' data-g="'+E(g.id)+'"><summary>'+E(g.title)+
+          return '<details'+(i===0&&!g.ev?" open":"")+' data-g="'+E(g.id)+'"><summary>'+E(g.title)+
             '<span class="n" data-gn></span></summary>'+
             (g.question?'<p class="small muted" style="margin:.1rem 0 .3rem">'+E(g.question)+"</p>":"")+
             g.codes.map(function(c){
@@ -958,7 +1082,7 @@ const BROWSE_JS = String.raw`
       for(var i=0;i<groups.length;i++){
         var g=groups[i]; if(g.id===skip) continue;
         var want=sel[g.id]; if(!want.length) continue;
-        var have=g.kind==="coder"?p._k:p._c, ok=false;
+        var have=g.kind==="coder"?p._k:g.kind==="paper"?p._p:p._c, ok=false;
         for(var k=0;k<want.length;k++){ if(have.indexOf(want[k])>=0){ok=true;break;} }
         if(!ok) return false;
       }
@@ -973,7 +1097,7 @@ const BROWSE_JS = String.raw`
         var pool=items.filter(function(p){return keep(p,g.id);});
         var seen={};
         pool.forEach(function(p){
-          var have=g.kind==="coder"?p._k:p._c;
+          var have=g.kind==="coder"?p._k:g.kind==="paper"?p._p:p._c;
           have.forEach(function(h){ seen[h]=(seen[h]||0)+1; });
         });
         var box=host.querySelector('details[data-g="'+g.id.replace(/"/g,"")+'"]');
@@ -1073,6 +1197,14 @@ const BROWSE_JS = String.raw`
     box.scrollTop+=(r.top-b.top)-box.clientHeight/2+r.height/2;
   }
 
+  // "Show support for each statement" (1.15.0): the claims table's extra columns.
+  document.addEventListener("change",function(e){
+    var t=e.target;
+    if(!t||!t.matches||!t.matches("input[data-support]")) return;
+    var box=t.closest("section,main")||document, tb=box.querySelector("table.claims");
+    if(tb) tb.classList.toggle("show-support",t.checked);
+  });
+
   var API={init:init,card:card,chip:chip,badge:badge,browse:browse,label:label,reveal:reveal,codeNote:codeNote,esc:E,plural:PL,
            windowText:windowText,open:function(art){ if(art&&cxOpen!==art) cxToggle(art); },close:function(){ cxClose(cxOpen); }};
   window.UPCB=API;
@@ -1094,6 +1226,7 @@ function page({ title, rel, body, model, active, extraHead = "", data = false })
     ["passages/", "Passages", "passages"],
     ...(model.syntheses.length ? [["overviews/", "Overviews", "overviews"]] : []),
     ...(model.matrix ? [["matrix.html", "Matrix", "matrix"]] : []),
+    ...(model.about ? [["methods.html", "Methods", "methods"]] : []),
   ];
   const banner = model.failures
     ? `<div class="banner"><strong>${plural(model.failures, "quotation does", "quotations do")} not match the source.</strong>
@@ -1138,19 +1271,25 @@ function chipHtml(c, base, detached) {
   // Who made the judgement lives in the tooltip, with its confidence and reason;
   // each page also says once, visibly, what kind of coder made its codes (§09).
   const title = [c.definition ? `${c.label}: ${c.definition}` : c.label,
-                 `Coded by ${c.coder}${c.coder_kind ? ` (${c.coder_kind})` : ""}${c.confidence ? ` · confidence ${c.confidence}` : ""}`,
+                 `Coded by ${c.coder}${c.coder_kind ? ` (${KIND_LABEL[c.coder_kind] || c.coder_kind})` : ""}${c.confidence ? ` · confidence ${c.confidence}` : ""}`,
                  c.rationale ? `Why: ${c.rationale}` : ""].filter(Boolean).join("\n");
   const href = c.code != null ? `${base}codes/${encodeURIComponent(c.codebook_slug)}/${encodeURIComponent(c.code)}.html` : null;
   return `<span class="chip${detached ? " detached" : ""}" data-id="${attr(c.coding_id)}" title="${attr(title)}">${
     href ? `<a href="${href}">${label}</a>` : label}</span>`;
 }
 
+/** How a chip's tooltip names a kind of coder. */
+const KIND_LABEL = { rule: "a rule", ensemble: "a vote of model runs" };
+
 /** Who made this corpus's codes: "a language model", "people", both, or "". */
 function codedBy(model) {
   const kinds = new Set();
   for (const x of [...model.passages, ...model.sources]) for (const c of x.codings) kinds.add(c.coder_kind || "other");
-  return kinds.has("model") && kinds.has("human") ? "a language model and by people"
-       : kinds.has("human") ? "people" : kinds.has("model") ? "a language model" : "";
+  const machine = kinds.has("model") || kinds.has("ensemble");
+  const base = machine && kinds.has("human") ? "a language model and by people"
+       : kinds.has("human") ? "people" : machine ? "a language model" : "";
+  // A citation tier is computed, not judged: say so when there are such codes.
+  return kinds.has("rule") ? (base ? `${base}, and some by rules` : "rules") : base;
 }
 
 /** The one visible sentence that replaces a coder name on every chip. */
@@ -1182,7 +1321,11 @@ function passageHtml(p, model, base, { showSource = true, context = true, compac
     // A summary is never dressed as a quotation (spec/09).
     body = `<p class="note">${esc(p.note)}</p>`;
   }
-  const chips = p.codings.map((c) => chipHtml(c, base, bad, compact)).join(" ");
+  // Evidence ratings (1.15.0) ride apart, shown where a passage is opened in
+  // context or read on its paper's page, never on a topical list's cards.
+  const ev = p.codings.filter((c) => c.ev);
+  const chips = p.codings.filter((c) => !c.ev).map((c) => chipHtml(c, base, bad, compact)).join(" ") +
+    (ev.length ? ` <span class="evchips">${ev.map((c) => chipHtml(c, base, bad, compact)).join(" ")}</span>` : "");
   const dis = p.disagreements.length
     ? `<div class="disagree">Coders disagree here — both judgements are kept and shown.</div>` : "";
   // "line N →" opens the passage where it sits in the paper's text (#text=, the
@@ -1239,7 +1382,7 @@ function homePage(model) {
   const tiles = [
     [model.sources.length, "sources", "sources/"],
     [nPass, "passages (quoted)", "passages/"],
-    [model.codebooks.length, "codebooks", "codes/"],
+    [model.codebooks.filter((cb) => !isEvidence(cb)).length, "codebooks", "codes/"],
     [model.syntheses.length, "overviews", "overviews/"],
   ].filter(([n, , href]) => n || href === "sources/");
   return page({
@@ -1247,7 +1390,7 @@ function homePage(model) {
     body: `<h1>${esc(model.title)}</h1>
 <p class="lede">A searchable library of what this literature actually says. Every quotation was compared with the
 source text character by character when this page was built${verified === nPass && nPass ? " — all of them matched" : ""}.</p>
-${hc ? `<section class="card homesum"><h2>${esc(hc.t)}</h2>${hc.h}</section>` : ""}
+${hc ? `<section class="card homesum"><h2>${esc(hc.t)}</h2>${hc.r || ""}${hc.h}</section>` : ""}
 ${model.syntheses.length ? `<p class="lede">${hc ? "<strong>Go deeper:</strong> read the" : "<strong>New here?</strong> Start with the"}
 <a href="overviews/">${plural(model.syntheses.length, "overview", "overviews")}</a> — a short review per theme,
 written from the coded passages, with every quotation linked back to the paper it came from. Then browse by
@@ -1269,20 +1412,8 @@ Hover a code to see who made it and why; where two coders disagree, both judgeme
 }
 
 function codesIndexPage(model) {
-  const byBook = model.codebooks.map((cb) => {
-    const rows = (cb.codes || []).map((c) => {
-      const rec = model.codeIndex.get(`${cb.codebook_id}:${c.code}`);
-      return { ...c, nP: rec ? rec.passages.length : 0, nS: rec ? rec.sources.size : 0 };
-    }).sort((a, b) => (b.nP - a.nP) || (b.nS - a.nS) || a.code.localeCompare(b.code));
-    return { cb, rows };
-  });
-  return page({
-    title: `Codes — ${model.title}`, rel: "codes/index.html", model, active: "codes",
-    body: `<h1>Codes</h1>
-<p class="lede">Each codebook asks one question of the literature. Counts state what they count:
-a <em>passage</em> is one quoted span; a <em>source</em> is one paper.</p>
-${byBook.map(({ cb, rows }) => `
-<h2>${esc(cb.title)}</h2>
+  const table = ({ cb, rows }, h = "h2") => `
+<${h}>${esc(cb.title)}</${h}>
 ${cb.question ? `<p class="small muted">${esc(cb.question)}</p>` : ""}
 <div class="wrap"><table>
 <thead><tr><th>Code</th><th>What it means</th><th class="num">Passages</th><th class="num">Sources</th></tr></thead>
@@ -1296,9 +1427,30 @@ ${rows.map((r) => `<tr>
 </tr>`).join("\n")}
 ${rows.every((r) => !r.nP && !r.nS)
   ? `<tr><td colspan="4" class="muted">Nothing has been coded against this scheme yet.</td></tr>` : ""}
-</tbody></table></div>`).join("\n")}`,
+</tbody></table></div>`;
+  const byBook = model.codebooks.map((cb) => {
+    const rows = (cb.codes || []).map((c) => {
+      const rec = model.codeIndex.get(`${cb.codebook_id}:${c.code}`);
+      return { ...c, nP: rec ? rec.passages.length : 0, nS: rec ? rec.sources.size : 0 };
+    }).sort((a, b) => (b.nP - a.nP) || (b.nS - a.nS) || a.code.localeCompare(b.code));
+    return { cb, rows };
+  });
+  const topical = byBook.filter((b) => !isEvidence(b.cb)), evidence = byBook.filter((b) => isEvidence(b.cb));
+  return page({
+    title: `Codes — ${model.title}`, rel: "codes/index.html", model, active: "codes",
+    body: `<h1>Codes</h1>
+<p class="lede">Each codebook asks one question of the literature. Counts state what they count:
+a <em>passage</em> is one quoted span; a <em>source</em> is one paper.</p>
+${topical.map((b) => table(b)).join("\n")}${evidence.length ? `
+<h2 id="evidence">${esc(EVIDENCE_TITLE)}</h2>
+<p class="small muted">${esc(EVIDENCE_NOTE)}${model.about ? ` <a href="../methods.html">How they were made</a>.` : ""}</p>
+${evidence.map((b) => table(b, "h3")).join("\n")}` : ""}`,
   });
 }
+
+const EVIDENCE_TITLE = "Evidence ratings (advisory)";
+const EVIDENCE_NOTE = "Judgements of how strong the evidence is, kept apart from the themes above. Each is a judgement " +
+  "like any code — hover one to see who made it and why — and none is a check mark.";
 
 /** "528 passages from 120 papers, plus 3 papers coded as a whole" — never one mixed number. */
 function countsLede(passages, allSources) {
@@ -1366,11 +1518,12 @@ function sourcePage(model, s, textInfo) {
 <h1>${esc(s.title)}</h1>
 <p class="lede">${esc(bits)}${s.doi ? ` · <a href="https://doi.org/${encodeURIComponent(s.doi)}">doi:${esc(s.doi)}</a>` : ""}</p>
 ${s.codings.length || s.passages.some((p) => p.codings.length) ? `<p class="small muted">${esc(codeNote(model))}</p>` : ""}
-${s.codings.length ? `<div class="card"><div class="small muted">Judgements about this paper as a whole</div>
-  <div class="meta" style="margin-top:.4rem">${s.codings.map((c) => chipHtml(c, base, false)).join(" ")}</div></div>` : ""}
+${s.codings.some((c) => !c.ev) ? `<div class="card"><div class="small muted">Judgements about this paper as a whole</div>
+  <div class="meta" style="margin-top:.4rem">${s.codings.filter((c) => !c.ev).map((c) => chipHtml(c, base, false)).join(" ")}</div></div>` : ""}
+${sourceCardsHtml(model, s, folderLinks(base))}
 
 <h2>Passages (${s.passages.length})</h2>
-${s.passages.length ? s.passages.map((p) => passageHtml(p, model, base, { showSource: false, context: false })).join("\n")
+${s.passages.length ? `<div class="evshow">${s.passages.map((p) => passageHtml(p, model, base, { showSource: false, context: false })).join("\n")}</div>`
   : `<p class="muted">No passages have been coded from this paper yet.</p>`}
 
 <h2>The text this was checked against</h2>
@@ -1386,6 +1539,17 @@ ${textInfo && textInfo.inline != null
     : `<p class="muted">Not available.</p>`}
 ${marks.length ? `<p class="small muted">${plural(marks.length, "highlight", "highlights")} in the text above.</p>` : ""}`,
   });
+}
+
+/** A paper's evidence: its evidence-group codes, then each card (a rating, say),
+ *  each in its own box — an impact figure and an evidence grade are never one. */
+function sourceCardsHtml(model, s, links) {
+  const ev = s.codings.filter((c) => c.ev);
+  const base = links.source({ slug: "x" }).replace(/sources\/x\.html$/, "");
+  const head = ev.length ? `<div class="card evcard"><div class="small muted">${esc(EVIDENCE_TITLE)}</div>
+  <div class="meta" style="margin-top:.4rem">${ev.map((c) => chipHtml(c, base, false)).join(" ")}</div></div>` : "";
+  return head + (s.cards || []).map((c) => `<details class="card evcard"><summary><strong>${esc(c.card)}</strong></summary>
+${renderOverviewMarkdown(c.md, model, links)}</details>`).join("\n");
 }
 
 /** Render the reading copy as paragraphs, with every passage highlighted.
@@ -1523,8 +1687,8 @@ function overviewSide(model, selectedId) {
 ${overviewGroups(model).map((g) => `<details open data-ovg>
 <summary>${g.cb ? esc(g.cb.title) : "Other overviews"}<span class="n">${g.items.length}</span></summary>
 ${g.cb && g.cb.question ? `<p class="small muted" style="margin:.1rem 0 .3rem">${esc(g.cb.question)}</p>` : ""}
-<ul class="ovlist">${g.items.map((s) => `<li><a class="${s.synthesis_id === selectedId ? "on" : ""}"
-  href="${encodeURIComponent(s.synthesis_id)}.html">${esc(s.title || s.synthesis_id)}</a></li>`).join("")}</ul>
+<ul class="ovlist">${g.items.map((s) => `<li><a class="${s._addr === selectedId ? "on" : ""}"
+  href="${encodeURIComponent(s._addr)}.html">${esc(s.title || s.synthesis_id)}</a></li>`).join("")}</ul>
 </details>`).join("\n")}
 </aside>`;
 }
@@ -1551,6 +1715,12 @@ export function renderOverviewMarkdown(md, model, links, opts = {}) {
     // gate's own spacing rule (upc_common.parseQuoteMarkers).
     .replace(/&quot;((?:(?!&quot;)[^\n])+?)&quot;\s?\[(ext-[0-9a-f]{12})\]/g, (m, q, id) => {
       const p = model.passageById.get(id);
+      // A quotation from a hidden set (a rating's evidence): checked, never a card to link to.
+      const hid = !p && model.hiddenById && model.hiddenById.get(id);
+      if (hid) {
+        const ok = unesc(q) === hid.quote && U.VERIFIED_BADGES.has(hid.badge);
+        return `“${q}” <span class="small" title="${attr(ok ? "Found word for word in the paper" : "Doesn't match the paper")}">${ok ? "✓" : "⚠"}</span>`;
+      }
       if (!p) return m;
       // ✓ only when the words quoted here are the passage's own words *and* the
       // passage still matches its paper — re-checked at every build, so prose
@@ -1568,7 +1738,8 @@ export function renderOverviewMarkdown(md, model, links, opts = {}) {
     })
     // bare markers, one or a run of them
     .replace(/\[(ext-[0-9a-f]{12})\](?:[ ,;]*\[ext-[0-9a-f]{12}\])*/g, (run) => {
-      const ids = run.match(/ext-[0-9a-f]{12}/g);
+      const ids = run.match(/ext-[0-9a-f]{12}/g).filter((id) => !(model.hiddenById && model.hiddenById.has(id)));
+      if (!ids.length) return "";
       if (inRefs) {
         // The item already names its paper, so its passages are just numbered.
         const nums = ids.map((id, i) => {
@@ -1618,6 +1789,12 @@ export function renderOverviewMarkdown(md, model, links, opts = {}) {
       return links.view ? `<a href="${attr(links.view(name))}">${esc(text)}</a>` : esc(text);
     })
     .replace(/`([^`\n]+)`/g, "<code>$1</code>")
+    // [text](https://…) (1.15.0: a Methods page cites its sources). The text is already
+    // escaped; only http(s) targets, opened in a new tab.
+    .replace(/\[([^\]\n]+)\]\((https?:\/\/[^\s)"<>]+)\)/g,
+      (m, t, u) => `<a href="${u}" target="_blank" rel="noopener">${t}</a>`)
+    // **strong** (1.15.0: rating cards and Methods pages use it), before *em*
+    .replace(/\*\*([^*\s](?:[^*\n]*?[^*\s])?)\*\*/g, "<strong>$1</strong>")
     .replace(/(^|[^*\w])\*([^*\s][^*\n]*?)\*(?=[^*\w]|$)/g, "$1<em>$2</em>");
 
   const html = [];
@@ -1668,7 +1845,7 @@ function folderLinks(base) {
   return {
     passage: (p) => `${base}sources/${e(p.source_slug)}.html#ex=${e(p.id)}`,
     source: (src) => `${base}sources/${e(src.slug)}.html`,
-    overview: (syn) => `${base}overviews/${e(syn.synthesis_id)}.html`,
+    overview: (syn) => `${base}overviews/${e(syn._addr || syn.synthesis_id)}.html`,
     code: (slug, code) => `${base}codes/${e(slug)}/${e(code)}.html`,
     view: (name) => base + ({ matrix: "matrix.html", passages: "passages/", overviews: "overviews/",
                               codes: "codes/", sources: "sources/" }[name] || ""),
@@ -1686,6 +1863,7 @@ function homeCard(model, links) {
   const changed = h._changed
     ? '<p class="small" style="color:var(--warn)">⚠ This text was changed after its quotations were checked.</p>' : "";
   return { t: h.title || "What the literature says",
+           r: h._revision ? revisionHtml(model, h._revision, null) : "",
            h: changed + renderOverviewMarkdown(h.md, model, links, { foldRefs: true }) };
 }
 
@@ -1701,16 +1879,52 @@ function overviewBodyHtml(model, syn, root) {
   body = body.replace(/^\s*#\s+.*\n+/, "");
   // Render the marker grammar: "…" [ext-id] becomes a linked, badged quotation.
   const rendered = renderOverviewMarkdown(body, model, folderLinks(base));
-  const claims = syn.claims || [];
   return `<h1 style="margin-top:0">${esc(syn.title || syn.synthesis_id)}</h1>
+${syn._revision ? revisionHtml(model, syn._revision, syn._addr) : ""}
 <div class="card" style="max-width:74ch">${rendered || `<p class="muted">No text.</p>`}</div>
-${claims.length ? `<h2>What this says, and what backs it</h2>
-<div class="wrap"><table><thead><tr><th>Claim</th><th>Passages</th></tr></thead><tbody>
+${claimsTableHtml(model, syn, folderLinks(base))}`;
+}
+
+/** "Revised from rated evidence · 6 Oct 2026 · the previous version ↗" */
+function revisionHtml(model, rev, addr) {
+  const prev = model.originalEdition && addr
+    ? ` · <a href="${attr(model.originalEdition.replace(/\/?$/, "/") + "overviews/" + encodeURIComponent(addr) + ".html")}"
+  target="_blank" rel="noopener">the previous version, in the original edition ↗</a>` : "";
+  return `<p class="revised sans small"><strong>${esc(rev.label)}</strong>${rev.date ? ` · ${esc(DATE_FMT(rev.date))}` : ""}${prev}${
+    rev.note ? `<br><span class="muted">${esc(rev.note)}</span>` : ""}</p>`;
+}
+
+/** The claims table, and — when a support matrix names this overview — its
+ *  columns, behind a switch that starts off (1.15.0). One renderer, both shapes. */
+export function claimsTableHtml(model, syn, links) {
+  const claims = syn.claims || [];
+  if (!claims.length) return "";
+  const sup = syn._support;
+  const byClaim = new Map(((sup && sup.claims) || []).map((c) => [c.claim_id, c]));
+  const cell = (c) => {
+    const m = byClaim.get(c.claim_id);
+    if (!m) return `<td class="sup"><span class="muted">—</span></td><td class="sup"></td><td class="sup"></td>`;
+    const x = (m.ext || {})["upc-corpus"] || {};
+    const verdicts = (x.passages || []).map((v) => {
+      const p = model.passageById.get(v.extraction_id);
+      return `${p ? `<a href="${attr(links.passage(p))}">${esc(p.cite)}</a>` : esc(v.extraction_id)}: ${esc(v.verdict || "?")}${
+        v.gap && v.gap !== "none" ? ` (${esc(v.gap)})` : ""}`;
+    }).join("<br>");
+    return `<td class="sup"><strong>${esc(x.ipcc || m.confidence || "")}</strong>${
+      x.evidence ? `<br><span class="small muted">${esc(x.evidence)} evidence, ${esc(x.agreement)} agreement</span>` : ""}</td>` +
+      `<td class="sup num">${x.independent == null ? "" : x.independent}</td><td class="sup small">${verdicts}${
+      m.notes ? `<br><span class="muted">${esc(m.notes)}</span>` : ""}</td>`;
+  };
+  return `<h2>What this says, and what backs it</h2>
+${sup ? `<p class="sans small"><label><input type="checkbox" data-support> Show support for each statement</label>
+<span class="muted"> — how many independent papers back it, and what a check of each passage found (advisory).</span></p>` : ""}
+<div class="wrap"><table${sup ? ' class="claims"' : ""}><thead><tr><th>Claim</th><th>Passages</th>${sup
+    ? `<th class="sup">Confidence</th><th class="sup num">Independent papers</th><th class="sup">The check, passage by passage</th>` : ""}</tr></thead><tbody>
 ${claims.map((c) => `<tr><td>${esc(c.text)}</td><td>${(c.evidence_ids || []).map((id) => {
     const p = model.passageById.get(id);
-    return p ? `<a href="${base}sources/${encodeURIComponent(p.source_slug)}.html#ex=${encodeURIComponent(id)}">${esc(p.cite)}</a>` : esc(id);
-  }).join("; ")}</td></tr>`).join("\n")}
-</tbody></table></div>` : ""}`;
+    return p ? `<a href="${attr(links.passage(p))}">${esc(p.cite)}</a>` : esc(id);
+  }).join("; ")}</td>${sup ? cell(c) : ""}</tr>`).join("\n")}
+</tbody></table></div>`;
 }
 
 const OVERVIEW_LEDE = (model) =>
@@ -1736,11 +1950,37 @@ character, the sentences around them were not.</p>
 function overviewPage(model, syn, root) {
   return page({
     title: `${syn.title || syn.synthesis_id} — ${model.title}`,
-    rel: `overviews/${syn.synthesis_id}.html`, model, active: "overviews",
+    rel: `overviews/${syn._addr}.html`, model, active: "overviews",
     body: `<h1>Overviews</h1>${OVERVIEW_LEDE(model)}
-<div class="split">${overviewSide(model, syn.synthesis_id)}
+<div class="split">${overviewSide(model, syn._addr)}
 <section class="pane">${overviewBodyHtml(model, syn, root)}</section></div>`,
   });
+}
+
+/** The Methods page (`--about <md>`): how this library was made, in the
+ *  overviews' own grammar, so its theme links and numbers stay live. */
+function methodsPage(model) {
+  const md = model.about.md || "";
+  const h1 = /^\s*#\s+(.*)\n/.exec(md);
+  const title = h1 ? h1[1].trim() : "Methods";
+  return page({
+    title: `${title} — ${model.title}`, rel: "methods.html", model, active: "methods",
+    body: `<h1>${esc(title)}</h1>
+<div class="card" style="max-width:74ch">${renderOverviewMarkdown(md.replace(/^\s*#\s+.*\n+/, ""), model, folderLinks(""))}</div>`,
+  });
+}
+
+/** The Methods page for the single file: {t, h}. */
+function aboutPayload(model, links) {
+  const md = model.about.md || "";
+  const h1 = /^\s*#\s+(.*)\n/.exec(md);
+  return { t: h1 ? h1[1].trim() : "Methods", h: renderOverviewMarkdown(md.replace(/^\s*#\s+.*\n+/, ""), model, links) };
+}
+
+/** Read `--about <md>`, or null. */
+export function readAbout(file) {
+  if (!file) return null;
+  return { md: fs.readFileSync(path.resolve(file), "utf8").replace(/\r\n/g, "\n"), file: path.resolve(file) };
 }
 
 // --- writer ---------------------------------------------------------------
@@ -1822,8 +2062,9 @@ export function writeSite(root, opts = {}) {
 
   if (model.syntheses.length) {
     w("overviews/index.html", overviewsIndexPage(model));
-    for (const syn of model.syntheses) w(`overviews/${syn.synthesis_id}.html`, overviewPage(model, syn, loaded.root));
+    for (const syn of model.syntheses) w(`overviews/${syn._addr}.html`, overviewPage(model, syn, loaded.root));
   }
+  if (model.about) w("methods.html", methodsPage(model));
   if (model.matrix) {
     const m = matrixPage(model);
     if (m) w("matrix.html", m);
@@ -1931,14 +2172,17 @@ const CLIENT_ONE = String.raw`
 
   // ---- views ----
   var V={};
+  // Evidence schemes (1.15.0) are kept apart from the themes: their own section on
+  // Codes, not counted on the home page, chips only where a passage is opened.
+  var topical=D.codebooks.filter(function(cb){return !cb.ev;}), evidence=D.codebooks.filter(function(cb){return cb.ev;});
   V.home=function(){
     var nq=D.passages.filter(function(p){return p.q;}).length;
     var tiles=[[D.sources.length,"sources","#/sources"],[nq,"passages (quoted)","#/passages"],
-               [D.codebooks.length,"codebooks","#/codes"],[D.overviews.length,"overviews","#/overviews"]];
+               [topical.length,"codebooks","#/codes"],[D.overviews.length,"overviews","#/overviews"]];
     return "<h1>"+E(D.title)+"</h1>"+
       '<p class="lede">A searchable library of what this literature actually says. Every quotation was compared '+
       "with the source text character by character when this file was built"+(D.failures?"":" — all of them matched")+".</p>"+
-      (D.home?'<section class="card homesum"><h2>'+E(D.home.t)+"</h2>"+D.home.h+"</section>":"")+
+      (D.home?'<section class="card homesum"><h2>'+E(D.home.t)+"</h2>"+(D.home.r||"")+D.home.h+"</section>":"")+
       (D.overviews.length?'<p class="lede">'+(D.home?"<strong>Go deeper:</strong> read the":"<strong>New here?</strong> Start with the")+' <a href="#/overviews">'+
         PL(D.overviews.length,"overview","overviews")+"</a> — a short review per theme, written from the coded "+
         'passages, with every quotation linked back to the paper it came from. Then browse by <a href="#/codes">theme</a>, '+
@@ -1954,7 +2198,12 @@ const CLIENT_ONE = String.raw`
   V.codes=function(){
     return "<h1>Codes</h1><p class=\"lede\">Each codebook asks one question of the literature. Counts state what they "+
       "count: a <em>passage</em> is one quoted span; a <em>source</em> is one paper.</p>"+
-      D.codebooks.map(function(cb){
+      codeTables(topical)+
+      (evidence.length?'<h2 id="evidence">'+E(D.evTitle)+'</h2><p class="small muted">'+E(D.evNote)+
+        (D.about?' <a href="#/methods">How they were made</a>.':"")+"</p>"+codeTables(evidence):"");
+  };
+  function codeTables(list){
+    return list.map(function(cb){
         var rows=cb.codes.map(function(c){
           var r=codeIndex[cb.slug+":"+c.code]||{p:[],s:{}};
           return {c:c,nP:r.p.length,nS:Object.keys(r.s).length};
@@ -1970,7 +2219,7 @@ const CLIENT_ONE = String.raw`
           (any?"":'<tr><td colspan="4" class="muted">Nothing has been coded against this scheme yet.</td></tr>')+
           "</tbody></table></div>";
       }).join("");
-  };
+  }
   function codeList(a){
     var cb=bySlug[a[0]]; if(!cb) return null;
     var c=null; cb.codes.forEach(function(x){ if(x.code===a[1]) c=x; });
@@ -2016,6 +2265,8 @@ const CLIENT_ONE = String.raw`
     var s=D.sources[+a[0]]; if(!s) return "<h1>Unknown source</h1>";
     var mine=passagesOf[s.i]||[];
     var bits=[s.a,s.y?String(s.y):"",s.c].filter(Boolean).join(" · ");
+    var isEv=function(g){ var d=codeDef[g[0]+":"+g[1]]; return !!(d&&d.cb.ev); };
+    var sTop=s.g.filter(function(g){return !isEv(g);}), sEv=s.g.filter(isEv);
     var reading="";
     if(D.withText&&textOf(s.i)){
       var text=textOf(s.i), marks=[];
@@ -2052,10 +2303,13 @@ const CLIENT_ONE = String.raw`
       '<p class="lede">'+E(bits)+(s.d?' · <a href="https://doi.org/'+encodeURIComponent(s.d)+'">doi:'+E(s.d)+"</a>":"")+
         ((D.files&&s.p)?' · <a href="'+E(D.files+"/"+encodeURIComponent(s.p))+'" target="_blank" rel="noopener">open the PDF ↗</a>':"")+"</p>"+
       ((s.g.length||mine.some(function(p){return p.g.length;}))?'<p class="small muted">'+E(UPCB.codeNote())+"</p>":"")+
-      (s.g.length?'<div class="card"><div class="small muted">Judgements about this paper as a whole</div>'+
-        '<div class="meta" style="margin-top:.4rem">'+s.g.map(function(g){return chip(g);}).join(" ")+"</div></div>":"")+
+      (sTop.length?'<div class="card"><div class="small muted">Judgements about this paper as a whole</div>'+
+        '<div class="meta" style="margin-top:.4rem">'+sTop.map(function(g){return chip(g);}).join(" ")+"</div></div>":"")+
+      (sEv.length?'<div class="card evcard"><div class="small muted">'+E(D.evTitle)+"</div>"+
+        '<div class="meta" style="margin-top:.4rem">'+sEv.map(function(g){return chip(g);}).join(" ")+"</div></div>":"")+
+      (s.cd||[]).map(function(c){ return '<details class="card evcard"><summary><strong>'+E(c[0])+"</strong></summary>"+c[1]+"</details>"; }).join("")+
       "<h2>Passages ("+mine.length+")</h2>"+
-      (mine.length?mine.map(function(p){return passageCard(p,{showSource:false,context:false});}).join(""):'<p class="muted">No passages from this paper yet.</p>')+
+      (mine.length?'<div class="evshow">'+mine.map(function(p){return passageCard(p,{showSource:false,context:false});}).join("")+"</div>":'<p class="muted">No passages from this paper yet.</p>')+
       (reading?'<h2>The text this was checked against</h2><p class="small muted">Extracted from the PDF. Highlighted spans are the passages above.</p>'+reading:"");
   };
   V.passages=function(){
@@ -2088,14 +2342,19 @@ const CLIENT_ONE = String.raw`
       "citation to the paper. A review is written by a model from coded passages: the quotations in it "+
       "were checked character by character, the sentences around them were not.</p></div>";
     var html=o.h||"";   // rendered at build time by renderOverviewMarkdown
-    return "<h1 style=\"margin-top:0\">"+E(o.t)+"</h1>"+
+    return "<h1 style=\"margin-top:0\">"+E(o.t)+"</h1>"+(o.rv||"")+
       '<div class="card" style="max-width:74ch">'+html+"</div>"+
-      (o.cl.length?"<h2>What this says, and what backs it</h2><div class=\"wrap\"><table><thead><tr><th>Claim</th>"+
+      // A support matrix's columns come prerendered (claimsTableHtml, as the folder's pages).
+      (o.ct?o.ct:o.cl.length?"<h2>What this says, and what backs it</h2><div class=\"wrap\"><table><thead><tr><th>Claim</th>"+
         "<th>Passages</th></tr></thead><tbody>"+o.cl.map(function(c){
           return "<tr><td>"+E(c[0])+"</td><td>"+c[1].map(function(id2){ var p=byId[id2];
             return p?'<a href="#/source/'+p.s+"?ex="+encodeURIComponent(id2)+'">'+E((D.sources[p.s]||{}).k||"")+"</a>":E(id2);
           }).join("; ")+"</td></tr>";}).join("")+"</tbody></table></div>":"");
   }
+  V.methods=function(){
+    if(!D.about) return "<h1>No methods page</h1>";
+    return "<h1>"+E(D.about.t)+"</h1><div class=\"card\" style=\"max-width:74ch\">"+D.about.h+"</div>";
+  };
   function markOverview(id){
     [].slice.call(document.querySelectorAll("#ov-side a[data-ov]")).forEach(function(a){
       var on=a.getAttribute("data-ov")===id;
@@ -2214,6 +2473,7 @@ const CLIENT_ONE = String.raw`
            ["#/passages","Passages","passages"]];
   if(D.overviews.length) NAV.push(["#/overviews","Overviews","overviews"]);
   if(D.matrix) NAV.push(["#/matrix","Matrix","matrix"]);
+  if(D.about) NAV.push(["#/methods","Methods","methods"]);
 
   var lastView="";
   function route(){
@@ -2304,6 +2564,7 @@ function browsePayload(model) {
   const codebooks = model.codebooks.map((cb) => ({
     slug: cb.slug, title: cb.title, question: cb.question || "",
     unit: cb.unit || "passage",
+    ...(isEvidence(cb) ? { ev: 1 } : {}), ...(noFacet(cb) ? { nf: 1 } : {}),
     codes: (cb.codes || []).map((c) => ({ code: c.code, label: c.label || c.code, def: c.definition || "" })),
   }));
   // coder handle -> kind (model / human), for the tooltips and the one visible note
@@ -2338,10 +2599,14 @@ export function writeSingleFile(root, opts = {}) {
   const oneLinks = {
     passage: (p) => `#/source/${srcIndex.get(p.source_id)}?ex=${encodeURIComponent(p.id)}`,
     source: (src) => `#/source/${srcIndex.get(src.id)}`,
-    overview: (syn) => `#/overviews/${encodeURIComponent(syn.synthesis_id)}`,
+    overview: (syn) => `#/overviews/${encodeURIComponent(syn._addr || syn.synthesis_id)}`,
     code: (slug, code) => `#/code/${encodeURIComponent(slug)}/${encodeURIComponent(code)}`,
     view: (name) => `#/${name}`,
   };
+  // A paper's cards (a rating, say), rendered here by the folder's renderer.
+  model.sources.forEach((s, i) => {
+    if (s.cards && s.cards.length) sources[i].cd = s.cards.map((c) => [c.card, renderOverviewMarkdown(c.md, model, oneLinks)]);
+  });
 
   const texts = [];
   if (withText) {
@@ -2396,9 +2661,12 @@ export function writeSingleFile(root, opts = {}) {
       if (contained && fs.existsSync(abs)) body = fs.readFileSync(abs, "utf8");
     }
     return {
-      id: syn.synthesis_id,
+      // A revision lives at the address of the overview it revises.
+      id: syn._addr || syn.synthesis_id,
       t: syn.title || syn.synthesis_id,
       grp: syn._group ? syn._group.slug : "",
+      ...(syn._revision ? { rv: revisionHtml(model, syn._revision, syn._addr) } : {}),
+      ...(syn._support ? { ct: claimsTableHtml(model, syn, oneLinks) } : {}),
       // Rendered here, by the same function as the folder's pages.
       h: renderOverviewMarkdown(body.replace(/^\s*#\s+.*\n+/, ""), model, oneLinks),
       cl: (syn.claims || []).map((c) => [c.text, c.evidence_ids || []]),
@@ -2416,6 +2684,8 @@ export function writeSingleFile(root, opts = {}) {
     withText,
     badges: BADGE_TEXT,
     sources, passages, codebooks, overviews, ck, home,
+    ...(codebooks.some((cb) => cb.ev) ? { evTitle: EVIDENCE_TITLE, evNote: EVIDENCE_NOTE } : {}),
+    ...(model.about ? { about: aboutPayload(model, oneLinks) } : {}),
   };
 
   // Each reading copy gets its own island, parsed only when its paper is opened.
