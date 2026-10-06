@@ -1,0 +1,19 @@
+{
+ "profile": "grey-literature",
+ "title": "Reports (grey literature)",
+ "version": "profiles.v1",
+ "covers": "Reports, working papers, policy documents and theses not written as journal studies. A report with its own data or model is also rated under that design's profile, and the lower grade stands.",
+ "critical": ["D6", "D1", "D4"],
+ "adapted_from": [
+  {"name": "AACODS: Authority, Accuracy, Coverage, Objectivity, Date, Significance (Tyndall 2010)", "url": "https://canberra.libguides.com/c.php?g=599348&p=4148869"}
+ ],
+ "questions": [
+  {"id": "q1", "dim": "D6", "text": "Authority: are the issuing organisation and the authors identified, with relevant expertise?"},
+  {"id": "q2", "dim": "D6", "text": "Objectivity: are funding, sponsors and the issuer's interests stated, and are the conclusions free of advocacy that shapes them?"},
+  {"id": "q3", "dim": "D6", "text": "Was it reviewed: peer review, external review, a thesis committee or an advisory group?"},
+  {"id": "q4", "dim": "D1", "text": "Accuracy: are the data and sources behind its figures cited or described?"},
+  {"id": "q5", "dim": "D4", "text": "Coverage: are its scope, limits and exclusions stated?"},
+  {"id": "q6", "dim": "D4", "text": "Date: are the dates of its data stated, with cost or performance figures no more than about five years older than the report?"},
+  {"id": "q7", "dim": "D5", "text": "Significance: does it relate its findings to other studies or evidence?"}
+ ]
+}

@@ -1,0 +1,11 @@
+# Python 3.11 or newer. Most scripts use the standard library only; these cover the rest.
+requests>=2.31     # model servers, ASR fetches, preflight
+numpy>=1.26        # embeddings, claim groups, table screening
+openpyxl>=3.1      # Excel manifests and spreadsheet coding
+
+# Not Python, but needed on the PATH:
+#   node >= 18       the `upc` CLI, ctx_windows.mjs, place_summary.mjs
+#   pdftotext, pdfinfo (poppler)   reading PDFs (ingest.py, paginate.py)
+# Optional:
+#   the ASR CLI (https://github.com/Ellian-Eorwyn/authority) for citations.py and
+#   add_acquired.py; found at ~/Documents/GitHub/authority or ~/authority, or AUTHORITY_CLI.

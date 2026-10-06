@@ -3,6 +3,39 @@
 All notable changes to the Universal Provenance Corpus (UPC) standard.
 Versioning is semantic (§00 Versioning policy).
 
+## 1.15.1 — 2026-10-06
+
+**Patch release: the upc-corpus toolkit joins the repository.** No schema or
+specification change; corpora, the CLI and the site are as in 1.15.0.
+
+### Added
+
+- **`skill/upc-corpus/`**, a Python toolkit (3.11+, `requests`, `numpy`,
+  `openpyxl`) that builds, codes, rates and publishes UPC corpora with local
+  language models, driving `upc` for every write. It finds the CLI beside it, in
+  `skill/universal-provenance/`.
+  - In: PDFs and a manifest (`ingest.py`), Markdown bundles (`import_bundle.py`),
+    fetched material with its retrieval record (`add_acquired.py`), spreadsheets
+    (`tables.py`).
+  - Coding, screening, search, spot-checks and overviews (`code_pass.py`,
+    `screen.py`, `embed.py`, `search.py`, `spotcheck.py`, `synthesize.py`).
+  - Evidence ratings (`appraise.py`): a grade per paper from one of five
+    appraisal profiles, passage labels, and a check of every overview statement
+    against its passages, three runs with a majority vote; every yes or partly
+    needs a quotation the CLI finds in the paper. Agreement run to run and against
+    a blind second coder. Citation standing beside the grade, never combined
+    (`citations.py`). The rubric and its sources are in
+    `references/appraisal/`.
+  - Overviews revised from rated evidence, with claim groups (`synthesize.py
+    --v2`, `claim_groups.py`, `references/criteria-v2.md`), a Methods page
+    (`methods.py`), and site builds compared with what is published
+    (`publish.py`, `compare_site.py --content`).
+  - Settings: a machine config (model servers, a server pool, an optional notice
+    command) and per-corpus settings (namespace, coders, the team's setting, the
+    audience), in `references/settings.md`.
+  - Tests: `python3 -m unittest discover -s skill/upc-corpus/tests`, with no model
+    server needed.
+
 ## 1.15.0 — 2026-10-05
 
 **Minor release: ratings of the evidence, kept apart from the themes, and revised

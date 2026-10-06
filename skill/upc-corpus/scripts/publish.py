@@ -1,0 +1,193 @@
+#!/usr/bin/env python3
+"""Turn a finished corpus into the thing you actually hand someone.
+
+    python3 publish.py --corpus <dir> --out <dir> --name Library-literature \\
+                       [--matrix theory:analytical-dimension] [--pdfs] [--zip] [--folder-site]
+
+Produces, in `--out`:
+
+    <name>.html            one self-contained file: passages, codes, overviews,
+                           the matrix, and the full reading copy of every paper
+    <name>-light.html      the same without the reading copies (a fifth of the size)
+    <name>_files/          the original PDFs, if --pdfs — every passage links to
+                           its own page in them
+    <name>.zip             all of the above, if --zip
+    <name>-site/           the multi-page version, if --folder-site
+
+Why both shapes: the folder version has real URLs, one page per source and prints
+a theme cleanly, but it only works opened from *inside* its folder — send someone
+its index page alone and every link is dead. The single file has no such trap. It
+is the one to email; the folder is the one to host.
+
+Both browse identically: a sidebar of checkable codes on Passages and on each code
+page, a list built as it is scrolled, and Overviews as a list beside the review
+being read. That needs `upc` 1.10 or newer; on an older CLI the same corpus still
+publishes, with the previous dropdown filters.
+
+`paginate.py` should have run first, or the PDF links will point at a file rather
+than a page. This says so rather than quietly producing weaker links.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import shutil
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent))
+import common as C  # noqa: E402
+
+
+def pages_present(corpus: Path) -> tuple[int, int]:
+    total = with_page = 0
+    files = list(corpus.glob("sources/*/extractions.jsonl")) + list(corpus.glob("extractions/*/items.jsonl"))
+    for f in files:
+        for line in f.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            o = json.loads(line)
+            if not o.get("direct_quote"):
+                continue
+            total += 1
+            if any(s.get("type") == "page" for s in (o.get("secondary_locators") or [])):
+                with_page += 1
+    return with_page, total
+
+
+def human(n: int) -> str:
+    return f"{n / 1e6:.1f} MB" if n >= 1e6 else f"{n / 1e3:.0f} KB"
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--corpus", required=True)
+    ap.add_argument("--out", required=True)
+    ap.add_argument("--name", default="corpus")
+    ap.add_argument("--matrix", default="")
+    ap.add_argument("--pdfs", action="store_true", help="copy the PDFs beside the file and link every passage to its page")
+    ap.add_argument("--zip", dest="do_zip", action="store_true", help="also write one .zip of everything")
+    ap.add_argument("--folder-site", action="store_true", help="also write the multi-page version")
+    ap.add_argument("--about", default="", help="a Methods page from this Markdown file (UPC 1.15.0)")
+    ap.add_argument("--original-edition", default="",
+                    help="URL of the edition a revised overview links back to, e.g. https://example.org/library/1.0/")
+    ap.add_argument("--findings", default="",
+                    help="starting points and wording for the Findings pages (JSON; UPC 1.15.0). "
+                         "Default: <corpus>/.upc/upc-corpus/site/findings.json when it exists")
+    ap.add_argument("--plan", action="store_true")
+    args = ap.parse_args()
+
+    corpus = Path(args.corpus).expanduser()
+    out = Path(args.out).expanduser()
+    try:
+        C.check_compat()
+    except C.Unavailable as e:
+        C.die(str(e))
+
+    rep = C.upc("validate", str(corpus))
+    if not isinstance(rep, dict):
+        C.die("validate did not return a report; fix that before publishing")
+    errors = len(rep.get("errors", []))
+    with_page, total = pages_present(corpus)
+
+    C.counts_header("Publishing", [
+        ("corpus", f"{rep.get('status')} at {rep.get('level')}, {errors} errors"),
+        ("sources", rep.get("counts", {}).get("sources", "?")),
+        ("passages", rep.get("counts", {}).get("extractions", "?")),
+        ("syntheses (overviews + summaries)", rep.get("counts", {}).get("syntheses", 0)),
+        ("passages with a page number", f"{with_page} of {total}"),
+        ("into", str(out)),
+    ])
+    if errors:
+        print("Refusing to publish a corpus that does not validate. Fix the errors first.")
+        return 1
+    import citations as CIT  # noqa: E402
+    if CIT.impact_codings(corpus):
+        n_ok, problems = CIT.check(corpus)
+        if problems:
+            print(f"Refusing to publish: {len(problems)} citation figures aren't found again in ASR's payloads "
+                  f"(citations.py check --corpus {corpus}).")
+            for p in problems[:5]:
+                print(f"  {p}")
+            return 1
+        print(f"  citation figures: all {n_ok} found again in ASR's payloads")
+    if args.pdfs and with_page < total:
+        print(f"  NOTE {total - with_page} passages have no page number — run paginate.py first")
+        print("       for links that open the PDF at the right page rather than page 1.")
+    if args.plan:
+        print("Planning only; nothing was written.")
+        return 0
+
+    out.mkdir(parents=True, exist_ok=True)
+    made, t0 = [], time.time()
+    mx = ["--matrix", args.matrix] if args.matrix else []
+    if args.about:
+        mx += ["--about", str(Path(args.about).expanduser().resolve())]
+    if args.original_edition:
+        mx += ["--original-edition", args.original_edition]
+    findings = Path(args.findings).expanduser() if args.findings else corpus / ".upc" / "upc-corpus" / "site" / "findings.json"
+    if findings.exists():
+        mx += ["--findings", str(findings.resolve())]
+    elif args.findings:
+        C.die(f"no such file: {findings}")
+
+    full = out / f"{args.name}.html"
+    r = C.upc("export", str(corpus), "--format", "site-one", "-o", str(full), *mx,
+              *(["--bundle"] if args.pdfs else []))
+    made.append((full, r if isinstance(r, dict) else {}))
+
+    light = out / f"{args.name}-light.html"
+    C.upc("export", str(corpus), "--format", "site-one", "--no-text", "-o", str(light), *mx)
+    made.append((light, {}))
+
+    if args.folder_site:
+        site = out / f"{args.name}-site"
+        C.upc("export", str(corpus), "--format", "site", "-o", str(site), *mx, "--bundle")
+        made.append((site, {}))
+
+    files_dir = out / f"{args.name}_files"
+    if args.do_zip:
+        # Zip the file plus its PDFs, so one thing travels.
+        stage = out / f".{args.name}-zip"
+        shutil.rmtree(stage, ignore_errors=True)
+        stage.mkdir(parents=True)
+        shutil.copy2(full, stage / full.name)
+        shutil.copy2(light, stage / light.name)
+        if files_dir.exists():
+            shutil.copytree(files_dir, stage / files_dir.name)
+        archive = shutil.make_archive(str(out / args.name), "zip", root_dir=str(stage))
+        shutil.rmtree(stage, ignore_errors=True)
+        made.append((Path(archive), {}))
+
+    rows = []
+    for p, meta in made:
+        if p.is_dir():
+            size = sum(f.stat().st_size for f in p.rglob("*") if f.is_file())
+            rows.append((p.name + "/", human(size), f"{sum(1 for _ in p.rglob('*.html'))} pages"))
+        else:
+            rows.append((p.name, human(p.stat().st_size),
+                         f"{meta.get('pdfs_bundled', 0)} PDFs bundled" if meta.get("pdfs_bundled") else ""))
+    if files_dir.exists():
+        size = sum(f.stat().st_size for f in files_dir.rglob("*") if f.is_file())
+        rows.append((files_dir.name + "/", human(size), "the original PDFs"))
+
+    print("Written:")
+    w = max(len(r[0]) for r in rows)
+    for name, size, note in rows:
+        print(f"  {name.ljust(w)}  {size.rjust(9)}  {note}")
+    print(f"\nHand over `{args.name}.html`"
+          + (f" together with `{args.name}_files/`" if args.pdfs else "")
+          + (f", or just `{args.name}.zip`" if args.do_zip else "") + ".")
+    print("It opens with no internet, no server and nothing else installed.")
+    print(f"Took {time.time() - t0:.0f}s. Publishing finished.")
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except C.Unavailable as exc:
+        C.die(str(exc))

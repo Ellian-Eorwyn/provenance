@@ -1,0 +1,23 @@
+{
+ "profile": "quantitative-causal",
+ "title": "Quantitative / causal",
+ "version": "profiles.v1",
+ "covers": "Experiments, quasi-experiments, programme evaluations, surveys, regressions, choice experiments and adoption models.",
+ "critical": ["D2", "D3"],
+ "adapted_from": [
+  {"name": "MMAT 2018, §2–4 (randomised, non-randomised, quantitative descriptive)", "url": "https://journals.sagepub.com/doi/abs/10.3233/EFI-180221"},
+  {"name": "Maryland Scientific Methods Scale", "url": "https://whatworksgrowth.org/resource-library/the-maryland-scientific-methods-scale-sms/"},
+  {"name": "What Works Clearinghouse Handbook v5.0 (attrition, baseline equivalence)", "url": "https://ies.ed.gov/ncee/wwc/Docs/referenceresources/Final_WWC-HandbookVer5.0-0-508.pdf"},
+  {"name": "Haber et al. 2018 (causal language and design)", "url": "https://journals.plos.org/plosone/article?id=10.1371%2Fjournal.pone.0196346"}
+ ],
+ "questions": [
+  {"id": "q1", "dim": "D1", "text": "Does the paper analyse its own quantitative data and say where they come from (survey, administrative records, meters, an experiment)?"},
+  {"id": "q2", "dim": "D2", "text": "For its causal claims, is there a comparison group, or a before-and-after comparison with a comparison group (Maryland level 3 or higher)? Answer 'yes' if the paper makes no causal claims and says so."},
+  {"id": "q3", "dim": "D2", "text": "Do the main conclusions stay within what the design can show: correlational wording for a correlational design, and generalising no further than the sample?"},
+  {"id": "q4", "dim": "D3", "text": "Are confounders addressed, by randomisation, matching, control variables, fixed effects or a stated identification strategy?"},
+  {"id": "q5", "dim": "D3", "text": "Are non-response, attrition or missing data reported, and handled?"},
+  {"id": "q6", "dim": "D4", "text": "Is the sample size stated and adequate for the claims, and is uncertainty reported (confidence intervals, standard errors, significance tests)?"},
+  {"id": "q7", "dim": "D5", "text": "Are the results checked with robustness tests or alternative specifications, or set against earlier findings?"},
+  {"id": "q8", "dim": "D6", "text": "Are the data, code or questionnaire available, and are funding and conflicts of interest stated?"}
+ ]
+}

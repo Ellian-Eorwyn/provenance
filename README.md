@@ -129,6 +129,7 @@ registry and error-code table; independent implementations can self-test against
 | `profiles/` | The UPC RO-Crate profile (`profiles/ro-crate/`) that RO-Crate exports declare via `conformsTo`, and the Obsidian vault profile (`profiles/obsidian/`) that describes the vault an Obsidian export writes. |
 | `docs/` | [`adoption-plan.md`](docs/adoption-plan.md) — the living program for putting UPC underneath ResearchAssistant and pi-forge, with the measurements that shaped it. |
 | `skill/universal-provenance/` | Portable zero-dep skill: `upc.mjs` CLI, common lib, references. |
+| `skill/upc-corpus/` | A Python toolkit that builds, codes, rates and publishes corpora with local language models, driving the CLI (below). Not part of the npm package. |
 | `package.json` | Installable, zero-dependency package (`@ellian-eorwyn/upc`, `bin: upc`). |
 | `CHANGELOG.md` | Version history. |
 
@@ -256,6 +257,29 @@ profile](profiles/ro-crate/profile.md), with [Web Annotation](crosswalks/web-ann
 selectors and [PROV](crosswalks/prov.md)-mappable derivation. What each level
 mechanically guarantees — and, deliberately, what it does not — is stated in
 [spec/11-guarantees.md](spec/11-guarantees.md).
+
+## Building corpora with local models
+
+`skill/upc-corpus/` is a toolkit that does the work around the standard, with language
+models running on your own machines: PDFs, Markdown bundles or spreadsheets in;
+quote-checked passages, codings, screening, search, overviews and the reader's site out. It
+also rates the evidence: a grade per paper from a design-specific checklist, whose claim
+each passage makes and what backs it, and whether each overview statement is supported by
+the passages it cites, three runs per item with a majority vote, every rating labelled
+advisory and model-made. Overviews can then be revised from the rated evidence, and the
+site gains a Findings page, an evidence map and a Methods page.
+
+The model proposes; the CLI decides. A quotation the model half-remembered fails to anchor
+and is reported, never stored, so a small local model is safe to use.
+
+```bash
+pip install -r skill/upc-corpus/requirements.txt
+cp skill/upc-corpus/config.example.json ~/.config/upc-corpus/config.json   # then edit: where your model servers are
+python3 skill/upc-corpus/scripts/preflight.py --corpus <corpus>
+```
+
+[`skill/upc-corpus/SKILL.md`](skill/upc-corpus/SKILL.md) is the runbook, one task per
+section, and [`skill/upc-corpus/README.md`](skill/upc-corpus/README.md) the overview.
 
 ## License
 

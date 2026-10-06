@@ -1,0 +1,74 @@
+{
+ "profile": "theory-review",
+ "title": "Theory and reviews",
+ "version": "profiles.v1",
+ "covers": "Systematic and narrative reviews, theory and conceptual papers, commentaries and perspectives.",
+ "critical": [
+  "D2",
+  "D5"
+ ],
+ "adapted_from": [
+  {
+   "name": "JBI Checklist for Text and Opinion",
+   "url": "https://jbi.global/sites/default/files/2020-08/Checklist_for_Text_and_Opinion.pdf"
+  },
+  {
+   "name": "SANRA, the Scale for the Assessment of Narrative Review Articles (Baethge et al. 2019; cited from memory, not in the research briefing: check before quoting)",
+   "url": null
+  },
+  {
+   "name": "Toulmin, The Uses of Argument (claim, warrant, qualifier, rebuttal)",
+   "url": "https://catdir.loc.gov/catdir/samples/cam034/2003043502.pdf"
+  },
+  {
+   "name": "Jaakkola 2020, designs for conceptual papers",
+   "url": "https://doi.org/10.1007/s13162-020-00161-0"
+  },
+  {
+   "name": "CEESAT (transparency of review methods)",
+   "url": "https://environmentalevidence.org/ceeder/about-ceesat/"
+  }
+ ],
+ "questions": [
+  {
+   "id": "q1",
+   "dim": "D2",
+   "text": "Are the paper's aim and the kind of contribution it makes clear (a review, a theory synthesis or adaptation, a typology, a model, a position)?"
+  },
+  {
+   "id": "q2",
+   "dim": "D2",
+   "text": "Does the argument follow a stated logic from its premises to its claims, with qualifiers and limits where they are needed?"
+  },
+  {
+   "id": "q3",
+   "dim": "D5",
+   "text": "Does it engage the relevant literature, including work that takes a different view?"
+  },
+  {
+   "id": "q4",
+   "dim": "D5",
+   "text": "Where it disagrees with other work, does it defend that with reasons or evidence?"
+  },
+  {
+   "id": "q5",
+   "dim": "D1",
+   "text": "Are its empirical statements attributed to sources rather than simply asserted?"
+  },
+  {
+   "id": "q6",
+   "dim": "D6",
+   "text": "Is it clear how the literature it draws on was found and chosen (a search and inclusion criteria for a review; a stated scope for other papers)?"
+  },
+  {
+   "id": "q7",
+   "dim": "D3",
+   "text": "Are the works it relies on weighed (their strength, context or limits), not only listed?"
+  },
+  {
+   "id": "q8",
+   "dim": "D4",
+   "text": "Does it state the scope and limits of its argument or review: what it does not cover?"
+  }
+ ]
+}

@@ -1,0 +1,21 @@
+{
+ "domain": "us-residential-buildings",
+ "version": "domains.v2",
+ "title": "US residential buildings",
+ "team_setting": "US residential buildings",
+ "target": {
+  "sectors": ["residential buildings", "buildings (mixed)"],
+  "places": ["us"]
+ },
+ "setting_rules": [
+  {"label": "target", "when": "the paper's sector is one of target.sectors and one of its countries is in target.places"},
+  {"label": "near", "when": "one of the two, not both"},
+  {"label": "other", "when": "neither, including not sector-specific"}
+ ],
+ "words": {
+  "target": "Setting: the target (US residential buildings).",
+  "near": "Setting: near the target (residential buildings, or the US).",
+  "other": "Setting: elsewhere (not residential buildings, not the US)."
+ },
+ "why": "GRADE's indirectness and GRADE-CERQual's relevance: evidence from another setting supports a statement about the target setting less directly."
+}

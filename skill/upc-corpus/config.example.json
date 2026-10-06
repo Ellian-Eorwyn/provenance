@@ -1,0 +1,20 @@
+{
+  "chat_url": "http://127.0.0.1:8080/v1/chat/completions",
+  "task_url": "http://127.0.0.1:8081/v1/chat/completions",
+  "embed_url": "http://127.0.0.1:8082/v1/embeddings",
+  "default_model": "think",
+  "model_tag": "27b",
+  "pool": {
+    "gpu-box": "http://gpu-box:8080/v1/chat/completions",
+    "desk": "http://127.0.0.1:8080/v1/chat/completions"
+  },
+  "relay": {
+    "header": "X-LLM-Served-By",
+    "value": "fallback",
+    "to": "desk"
+  },
+  "notify": ["/usr/local/bin/notify-me", "--channel", "research", "{text}"],
+  "agent_name": "the assistant",
+  "contact": "you@example.org",
+  "overnight_window": ["22:00", "06:00"]
+}

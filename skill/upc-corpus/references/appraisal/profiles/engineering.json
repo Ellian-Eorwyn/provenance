@@ -1,0 +1,24 @@
+{
+ "profile": "engineering",
+ "title": "Engineering: measurement and modelling",
+ "version": "profiles.v1",
+ "covers": "Field monitoring of equipment and buildings, building-energy and techno-economic models, system models and scenarios.",
+ "critical": ["D1", "D4"],
+ "adapted_from": [
+  {"name": "Sovacool, Axsen & Sorrell 2018, code of practice for quantitative energy modelling", "url": "https://doi.org/10.1016/j.erss.2018.07.007"},
+  {"name": "ASHRAE Guideline 14 calibration thresholds (NMBE ≤5%, CV(RMSE) ≤15% monthly; 10% and 30% hourly), as quoted by OSTI", "url": "https://www.osti.gov/servlets/purl/1407808"},
+  {"name": "Fowlie, Greenstone & Wolfram 2018 (modelled savings about 2.5× realised)", "url": "https://www.nber.org/papers/w21331"},
+  {"name": "Gleeson & Lowe 2013 (heat pump SPF boundaries, 622 systems)", "url": "https://www.sciencedirect.com/science/article/abs/pii/S0378778813004556"},
+  {"name": "UK Electrification of Heat project (open monitoring data, cleaning rules)", "url": "https://esc-production-2021.s3.eu-west-2.amazonaws.com/wp-content/uploads/2024/12/18093251/EoH-Insights-from-Heat-Pump-Performance-Data.pdf"}
+ ],
+ "questions": [
+  {"id": "q1", "dim": "D1", "text": "Do the main figures rest on field measurement, or on a model calibrated or validated against measurement with its error stated? Manufacturer ratings or an unvalidated model are 'not found'."},
+  {"id": "q2", "dim": "D2", "text": "Is the system boundary stated: what the measurement or model includes and excludes (for a heat pump, which seasonal-performance boundary)?"},
+  {"id": "q3", "dim": "D4", "text": "Are the number of sites or systems and the period covered stated, and adequate (for heating, at least one full heating season)?"},
+  {"id": "q4", "dim": "D4", "text": "Is uncertainty reported: measurement accuracy, data-cleaning or completeness rules, or the model's error or sensitivity ranges?"},
+  {"id": "q5", "dim": "D3", "text": "Are the key assumptions (prices, weather, occupancy, efficiencies, costs) stated, with their sources?"},
+  {"id": "q6", "dim": "D2", "text": "Do claims about savings, costs or performance stay within the conditions that were measured or modelled?"},
+  {"id": "q7", "dim": "D5", "text": "Are the results compared with other measured studies, a baseline, or another model?"},
+  {"id": "q8", "dim": "D6", "text": "Are data, code or model inputs published, and are funding and conflicts of interest stated?"}
+ ]
+}

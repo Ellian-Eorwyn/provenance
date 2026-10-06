@@ -1,0 +1,25 @@
+{
+ "profile": "qualitative-case",
+ "title": "Qualitative / case study",
+ "version": "profiles.v1",
+ "covers": "Case studies, process tracing, historical cases, interviews, focus groups, ethnography and document analysis.",
+ "critical": ["D3", "D2"],
+ "adapted_from": [
+  {"name": "MMAT 2018, §1 (qualitative)", "url": "https://journals.sagepub.com/doi/abs/10.3233/EFI-180221"},
+  {"name": "CASP qualitative checklist", "url": "https://casp-uk.net/checklists-archive/casp-qualitative-studies-checklist.pdf"},
+  {"name": "Lincoln & Guba trustworthiness, as set out by Nowell et al. 2017", "url": "https://journals.sagepub.com/doi/10.1177/1609406917733847"},
+  {"name": "Yin 2018, case-study tactics", "url": "https://www.vitalsource.com/products/case-study-research-and-applications-design-and-robert-k-yin-v9781506336176"},
+  {"name": "Gibbert, Ruigrok & Wicki 2008 (internal and construct validity)", "url": "https://sms.onlinelibrary.wiley.com/doi/10.1002/smj.722"},
+  {"name": "GRADE-CERQual, adequacy of data (Lewin et al. 2018)", "url": "https://link.springer.com/article/10.1186/s13012-017-0688-3"}
+ ],
+ "questions": [
+  {"id": "q1", "dim": "D1", "text": "Are the data sources described: who was interviewed or observed, which documents, and how many?"},
+  {"id": "q2", "dim": "D2", "text": "Is the choice of cases or participants explained, and suited to the question?"},
+  {"id": "q3", "dim": "D2", "text": "Do the conclusions stay within the cases studied, or is any wider claim argued (for example by replication across cases)?"},
+  {"id": "q4", "dim": "D3", "text": "Is the analysis described: how the data were coded, compared or traced to reach the findings?"},
+  {"id": "q5", "dim": "D3", "text": "Are the findings shown with evidence from the data: quotations, documents, events or detailed description?"},
+  {"id": "q6", "dim": "D5", "text": "Are findings checked across several sources, or are rival explanations considered?"},
+  {"id": "q7", "dim": "D4", "text": "Is there enough data for the claims made: enough cases, interviews or depth?"},
+  {"id": "q8", "dim": "D6", "text": "Do the authors state their own role or position, and the study's funding?"}
+ ]
+}
