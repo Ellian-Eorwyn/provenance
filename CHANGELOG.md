@@ -306,7 +306,7 @@ separated. Everything is escaped before any rule applies.
 
 ### Changed — who made a code moves into its tooltip (spec/09, site only)
 
-Every chip printed its coder's handle ("forge-27b-v1 (model)"): identical on every
+Every chip printed its coder's handle ("project-27b-v1 (model)"): identical on every
 chip of a single-coder corpus, and meaningless to a reader of the literature. The
 site now carries the coder — with the confidence and the rationale — in the
 chip's tooltip, and every view that shows codes says once, visibly, what kind of
