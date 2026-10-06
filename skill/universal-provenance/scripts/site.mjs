@@ -129,6 +129,44 @@ const revisionOf = (o) => {
   return { label: r.label || "Revised", date: r.date || String((o.provenance || {}).created_at || "").slice(0, 10),
            note: r.note || "", first: o.supersedes };
 };
+// --- findings (1.15.0): a support matrix's statements in plain words --------
+//
+// A rated corpus records each statement's support on the IPCC scale (evidence ×
+// agreement). The pages say four plain words instead, and keep the IPCC term in
+// a tooltip and on the Methods page: readers came with a question about the
+// literature, not about a confidence scale. Very high and high are one word.
+const SUPPORT_KEYS = ["well", "some", "limited", "weak"];
+const SUPPORT_WORDS = { well: "Well supported", some: "Some support", limited: "Limited", weak: "Weak or unclear" };
+const SUPPORT_DOTS = { well: "●●●●", some: "●●●○", limited: "●●○○", weak: "●○○○" };
+const IPCC_SUPPORT = { "very high": "well", high: "well", medium: "some", low: "limited", "very low": "weak" };
+const KIND_WORDS = { finding: "Finding from data or cases", framework: "About a framework", argument: "Argument or interpretation",
+                     recommendation: "Recommendation", unsupported: "Not backed by its passages" };
+const PLACE_WORDS = { us: "United States", europe: "Europe", elsewhere: "Elsewhere", "not-stated": "No one place" };
+/** A matrix claim's plain support key: the producer's own, or read off its IPCC term. */
+const supportOf = (x) => SUPPORT_WORDS[x.support] ? x.support
+  : IPCC_SUPPORT[String(x.ipcc || "").replace(/ confidence$/, "")] || "weak";
+/** Does a statement fall under a starting point's `match`? groups and themes name
+ *  the overview's scheme (slug) or theme (slug:code); the rest are any-of lists. */
+function matchStart(f, m) {
+  if (!m) return true;
+  const g = f.group || "", t = f.theme || "";
+  if (m.groups && m.groups.length && !m.groups.includes(g)) return false;
+  if (m.themes && m.themes.length && !m.themes.includes(t)) return false;
+  if (m.kinds && m.kinds.length && !m.kinds.includes(f.kind)) return false;
+  if (m.support && m.support.length && !m.support.includes(f.support)) return false;
+  if (m.places && m.places.length && !f.places.some((p) => m.places.includes(p))) return false;
+  return true;
+}
+/** `--findings <json>`: starting points and wording for the Findings pages. */
+export function readFindingsSettings(file) {
+  if (!file) return null;
+  const o = JSON.parse(fs.readFileSync(path.resolve(file), "utf8"));
+  // A theme may be written as in an overview's markers (actor/installers) or as a key (actor:installers).
+  const starts = (Array.isArray(o.starting_points) ? o.starting_points : []).map((x) => ({ ...x,
+    match: x.match ? { ...x.match, ...(x.match.themes ? { themes: x.match.themes.map((t) => String(t).replace("/", ":")) } : {}) } : null }));
+  return { starts, words: o.words || {}, mapPlace: o.map_place || "" };
+}
+
 const DATE_FMT = (d) => {
   const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(d || "");
   if (!m) return d || "";
@@ -389,6 +427,28 @@ export function buildSiteModel(loaded, opts = {}) {
              _addr: firstOf(o), _support: supports.get(o.synthesis_id) || null,
              _revision: o.supersedes && synById.has(o.supersedes) ? revisionOf(o) : null };
   });
+  // Findings (1.15.0): every statement of a current overview whose support was
+  // checked, in the overview's own order, with its matrix's plain fields.
+  const findings = [];
+  for (const s of syntheses) {
+    if (!s._support) continue;
+    const byClaim = new Map((s._support.claims || []).map((c) => [c.claim_id, c]));
+    const order = (s.claims || []).map((c) => c.claim_id).filter((id) => byClaim.has(id));
+    const ids = order.concat([...byClaim.keys()].filter((id) => !order.includes(id)));
+    ids.forEach((id, k) => {
+      const m = byClaim.get(id), x = (m.ext || {})["upc-corpus"] || {};
+      findings.push({
+        syn: s, claim_id: id, ord: k, text: m.text || "",
+        group: s._group ? s._group.slug : "", theme: s._group && s._code ? `${s._group.slug}:${s._code}` : "",
+        support: supportOf(x), ipcc: x.ipcc || "", evidence: x.evidence || "", agreement: x.agreement || "",
+        studies: x.studies != null ? x.studies : (x.independent || 0), papers: x.papers != null ? x.papers : (x.independent || 0),
+        same_lead: !!x.same_lead, relayed_only: !!x.relayed_only, kind: x.kind || "",
+        places: x.places || [], countries: x.countries || [], designs: x.designs || [],
+        passages: (x.passages || []).map((v) => ({ id: v.extraction_id, verdict: v.verdict || "", gap: v.gap || "" })),
+      });
+    });
+  }
+
   // The overview written for each code. A link that names a theme resolves
   // through this, not through an overview id: ids are content hashes (spec/06),
   // so re-running an overview mints a new one and a hard-coded link would die.
@@ -447,6 +507,9 @@ export function buildSiteModel(loaded, opts = {}) {
     sources, sourceById, passages, passageById,
     codebooks, cbkById, codeIndex, syntheses, homeSummary, overviewByCode, homeCandidates: homes.length, hiddenById,
     about: typeof opts.about === "string" ? readAbout(opts.about) : (opts.about || null),
+    findings,
+    findingsSettings: (typeof opts.findings === "string" ? readFindingsSettings(opts.findings) : opts.findings) ||
+      { starts: [], words: {}, mapPlace: "" },
     originalEdition: opts.originalEdition || null,
     coders: [...new Set(passages.flatMap((p) => p.codings.map((c) => c.coder)).concat(sources.flatMap((s) => s.codings.map((c) => c.coder))))],
     failures,
@@ -462,17 +525,23 @@ const CSS = `
   --bg:#fbfaf8; --panel:#fff; --ink:#17202a; --muted:#5b6672; --line:#e3e0da;
   --accent:#0b6b57; --accent-soft:#e6f2ee; --warn:#a4341f; --warn-soft:#fbeae6;
   --chip:#eef1f5; --chip-ink:#2c3a47; --mark:#fdf3c7;
+  --well:#1f7a4d; --some:#2f7f96; --limited:#9a6b0c; --weak:#6b757b;
+  --well-bg:#e3f2e9; --some-bg:#e3eff3; --limited-bg:#f8eedb; --weak-bg:#eef0f1;
   --maxw:min(1180px,94vw);
 }
 @media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
   --bg:#12151a; --panel:#181d24; --ink:#e7ebf0; --muted:#9aa6b2; --line:#28303a;
   --accent:#5fd0ae; --accent-soft:#122a24; --warn:#ff9d86; --warn-soft:#2e1a16;
   --chip:#212a34; --chip-ink:#cbd5e0; --mark:#4a4020;
+  --well:#5cc39b; --some:#6fb6cc; --limited:#e0b04f; --weak:#9aa3a8;
+  --well-bg:#1f3a2d; --some-bg:#1d333b; --limited-bg:#3a3020; --weak-bg:#2a3135;
 }}
 :root[data-theme="dark"]{
   --bg:#12151a; --panel:#181d24; --ink:#e7ebf0; --muted:#9aa6b2; --line:#28303a;
   --accent:#5fd0ae; --accent-soft:#122a24; --warn:#ff9d86; --warn-soft:#2e1a16;
   --chip:#212a34; --chip-ink:#cbd5e0; --mark:#4a4020;
+  --well:#5cc39b; --some:#6fb6cc; --limited:#e0b04f; --weak:#9aa3a8;
+  --well-bg:#1f3a2d; --some-bg:#1d333b; --limited-bg:#3a3020; --weak-bg:#2a3135;
 }
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--ink);
@@ -480,9 +549,9 @@ body{margin:0;background:var(--bg);color:var(--ink);
 a{color:var(--accent);text-decoration:none}
 a:hover{text-decoration:underline}
 header.top{border-bottom:1px solid var(--line);background:var(--panel);position:sticky;top:0;z-index:10}
-header.top .in{max-width:var(--maxw);margin:0 auto;padding:.7rem 1rem;display:flex;gap:1.1rem;align-items:baseline;flex-wrap:wrap}
+header.top .in{max-width:var(--maxw);margin:0 auto;padding:.7rem 1rem;display:flex;gap:.8rem;align-items:baseline;flex-wrap:wrap}
 header.top .brand{font-weight:700;letter-spacing:-.01em}
-header.top nav{display:flex;gap:.9rem;flex-wrap:wrap;font-family:ui-sans-serif,system-ui,sans-serif;font-size:.86rem}
+header.top nav{display:flex;gap:.75rem;flex-wrap:wrap;font-family:ui-sans-serif,system-ui,sans-serif;font-size:.86rem}
 header.top nav a.on{color:var(--ink);border-bottom:2px solid var(--accent)}
 header.top .spacer{flex:1}
 button.theme{font:inherit;font-size:.8rem;background:var(--chip);color:var(--chip-ink);border:1px solid var(--line);
@@ -614,11 +683,63 @@ a.pn:hover{background:var(--accent-soft);text-decoration:none}
 .evcard ul{padding-left:1.15rem}
 .evcard li{margin:.35rem 0}
 p.revised{background:var(--accent-soft);color:var(--ink);border-radius:8px;padding:.45rem .7rem;max-width:74ch;margin:.2rem 0 .9rem}
+/* findings (1.15.0): plain support words, never colour alone (the dots carry it too) */
+.sup-b{display:inline-flex;align-items:center;gap:.35rem;font:600 .78rem/1.3 ui-sans-serif,system-ui,sans-serif;
+  padding:.1rem .5rem;border-radius:999px;white-space:nowrap}
+.sup-b .dots{letter-spacing:1px;font-size:.62rem}
+.sup-b.s-well,.legend .s-well::before{background:var(--well-bg);color:var(--well)}
+.sup-b.s-some,.legend .s-some::before{background:var(--some-bg);color:var(--some)}
+.sup-b.s-limited,.legend .s-limited::before{background:var(--limited-bg);color:var(--limited)}
+.sup-b.s-weak,.legend .s-weak::before{background:var(--weak-bg);color:var(--weak)}
+.strip{display:flex;height:.8rem;border-radius:999px;overflow:hidden;background:var(--weak-bg);min-width:5rem}
+.strip i{display:block;height:100%}
+.strip i.s-well{background:var(--well)} .strip i.s-some{background:var(--some)}
+.strip i.s-limited{background:var(--limited)} .strip i.s-weak{background:var(--weak)}
+.legend{display:flex;gap:.9rem;flex-wrap:wrap;font:.8rem ui-sans-serif,system-ui,sans-serif;color:var(--muted);margin-top:.45rem}
+.legend span::before{content:"";display:inline-block;width:.65rem;height:.65rem;border-radius:2px;margin-right:.3rem;vertical-align:-1px}
+.legend .s-well::before{background:var(--well)} .legend .s-some::before{background:var(--some)}
+.legend .s-limited::before{background:var(--limited)} .legend .s-weak::before{background:var(--weak)}
+.flag{font:600 .7rem/1.4 ui-sans-serif,system-ui,sans-serif;padding:.05rem .4rem;border-radius:4px;background:var(--warn-soft);color:var(--warn);white-space:nowrap}
+.kf{max-width:74ch;margin:.4rem 0 1.2rem;border-left:3px solid var(--accent)}
+.kf h2{margin:.1rem 0 .3rem}
+.kf h3{font-size:.95rem;margin:1rem 0 .3rem}
+.kf ol{padding-left:1.2rem;margin:.3rem 0}
+.kf li{margin:.45rem 0;line-height:1.5}
+.kf .ftext{margin-left:.15rem}
+.starts .tile strong{font-size:1rem}
+.fstarts{display:flex;flex-direction:column;gap:.35rem;margin-bottom:.6rem}
+.btn.sbtn{text-align:left;width:100%}
+.btn.sbtn small{display:block;color:var(--muted);font-size:.72rem}
+.btn.sbtn.on{background:var(--accent-soft);border-color:var(--accent);color:var(--ink)}
+.side .fwrap-d>summary{display:none}
+.side .fwrap-d{border-top:0;padding:0}
+.fnote{background:var(--accent-soft);border-radius:8px;padding:.55rem .8rem;margin:0 0 .7rem;font-size:.92rem}
+.fcount{display:flex;justify-content:space-between;gap:.6rem;flex-wrap:wrap;font-family:ui-sans-serif,system-ui,sans-serif;margin:.2rem 0 .6rem}
+article.fd{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:.7rem 1rem;margin:0 0 .65rem}
+.fd .ftop{display:flex;gap:.5rem;align-items:center;flex-wrap:wrap}
+.fd p.ftext{font-size:1.04rem;line-height:1.45;margin:.4rem 0 .25rem}
+.fd p.fmeta{margin:0;font-family:ui-sans-serif,system-ui,sans-serif}
+.fd details{margin-top:.35rem}
+.fd details>summary{cursor:pointer;color:var(--accent);font-family:ui-sans-serif,system-ui,sans-serif}
+.fpass{border-top:1px solid var(--line);margin-top:.5rem;padding-top:.35rem}
+.fpass .passage{margin:.3rem 0}
+.fpass p.fv{margin:.2rem 0;font-family:ui-sans-serif,system-ui,sans-serif}
+.v{font-weight:600;padding:0 .35rem;border-radius:4px}
+.v.v-yes{background:var(--well-bg);color:var(--well)} .v.v-part{background:var(--limited-bg);color:var(--limited)}
+.v.v-no{background:var(--weak-bg);color:var(--weak)}
+table.emap td{vertical-align:middle}
+table.emap tr.grp td{background:var(--bg);font:600 .95rem ui-serif,Georgia,serif;padding-top:.9rem}
+table.emap .strip{width:11rem}
+.fnote-card{max-width:80ch}
 table.claims .sup{display:none}
 table.claims.show-support .sup{display:table-cell}
 @media (max-width:860px){
   .split{grid-template-columns:1fr}
   .side{position:static;max-height:20rem}
+  #fside{max-height:none}
+  .side .fwrap-d>summary{display:flex}
+  table.emap .strip{width:5rem}
+  table.emap .hide-s{display:none}
 }
 @media print{.side{display:none}.split{display:block}}
 footer{max-width:var(--maxw);margin:0 auto;padding:1.5rem 1rem 3rem;color:var(--muted);font-size:.8rem;
@@ -692,8 +813,7 @@ const JS = `
     // Two-pane browsing, on the pages that ask for it. The data rides in
     // data/browse.js as a <script src>, so this still works when opened from disk.
     var host=document.querySelector("[data-browse]");
-    if(host&&window.UPCB&&window.__UPCB_DATA){
-      var B=window.__UPCB_DATA, base=host.getAttribute("data-base")||"";
+    function browseInit(B,base){
       UPCB.init({
         sources:B.sources, codebooks:B.codebooks, badges:B.badges, coderKind:B.ck,
         files:B.files?base+B.files:null,
@@ -713,6 +833,10 @@ const JS = `
           return base+"data/ctx/"+encodeURIComponent(src.sl||"")+".js";
         }
       });
+    }
+    if(host&&window.UPCB&&window.__UPCB_DATA){
+      var B=window.__UPCB_DATA, base=host.getAttribute("data-base")||"";
+      browseInit(B,base);
       var only=host.getAttribute("data-only"), omit=host.getAttribute("data-omit");
       var items=B.passages;
       if(only) items=items.filter(function(p){
@@ -723,6 +847,25 @@ const JS = `
       var mw=/[#&]with=([^&]+)/.exec(location.hash||"");
       host.innerHTML="";
       UPCB.browse(host,items,{omit:omit?[omit]:[],with:mw?decodeURIComponent(mw[1]).split(","):[]});
+    }
+
+    // Findings and the evidence map (1.15.0): the statements of the rated reviews.
+    var fh=document.querySelector("[data-findings]"), eh=document.querySelector("[data-evidence]");
+    if((fh||eh)&&window.UPCF&&window.__UPCF_DATA){
+      var FB=window.__UPCB_DATA||{sources:[],passages:[],codebooks:[],badges:{}};
+      if(window.UPCB) browseInit(FB,"");
+      UPCF.init({F:window.__UPCF_DATA, passages:FB.passages, sources:FB.sources,
+        label:UPCB.label, card:function(p){ return UPCB.card(p,{context:false}); },
+        placeCount:function(want){
+          var n=0; FB.sources.forEach(function(s){ if((s.g||[]).some(function(g){return g[0]==="place"&&want.indexOf(g[1])>=0;})) n++; });
+          return [n,FB.sources.length];
+        },
+        hrefFindings:function(q){ return "findings.html"+(q?"#"+q:""); },
+        setQuery:function(q){ try{ history.replaceState(null,"",q?"#"+q:location.pathname+location.search); }catch(e){} }});
+      if(fh) UPCF.findings(fh,location.hash);
+      if(eh) UPCF.map(eh);
+      // A link to this page with other filters (#start=…) arrives as a hash change, not a load.
+      if(fh) window.addEventListener("hashchange",function(){ UPCF.findings(fh,location.hash); });
     }
 
     // The overviews list: filtered in place, never replaced.
@@ -802,7 +945,7 @@ const BROWSE_JS = String.raw`
     var d=codeDef[g[0]+":"+g[1]], lbl=d?d.c.label:g[1];
     var kind=(X.coderKind||{})[g[2]];
     var tip=(d&&d.c.def?d.c.label+": "+d.c.def+"\n":"")+"Coded by "+g[2]+(kind?" ("+({rule:"a rule",ensemble:"a vote of model runs"}[kind]||kind)+")":"")+
-      (g[3]?" · confidence "+g[3]:"")+(g[4]?"\nWhy: "+g[4]:"");
+      (g[3]?" · confidence "+g[3]:"")+(g[4]?"\nWhy: "+g[4]:"")+(g[5]?"\n"+g[5]:"");
     return '<span class="chip'+(detached?" detached":"")+'" title="'+E(tip)+'">'+
       '<a href="'+E(X.hrefCode(g[0],g[1]))+'">'+E(lbl)+"</a></span>";
   }
@@ -1218,16 +1361,301 @@ const BROWSE_JS = String.raw`
 })();
 `;
 
+// The findings engine (1.15.0), shared by both shapes: the Findings page — every
+// statement of the rated reviews, filtered by how well it is supported, what kind
+// of statement it is, where its evidence comes from and which review it is in,
+// with starting points a corpus names for its readers — and the evidence map.
+// Both read one payload (findingsPayload in site.mjs). A statement's passages are
+// rendered by the browse engine's own card, so "In context" works here as well.
+const FINDINGS_JS = String.raw`
+(function(){
+  var X=null, F=null, byId={}, S=null, host=null;
+  var E=function(s){return String(s==null?"":s).replace(/&/g,"&amp;").replace(/</g,"&lt;")
+      .replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#39;");};
+  var PL=function(n,a,b){return n+" "+(n===1?a:b);};
+  var KEYS=["well","some","limited","weak"], RANK={well:0,some:1,limited:2,weak:3}, STEP=40;
+  // What the passage's paper is, on one line: its grade, design and place (never its citation impact,
+  // which is shown beside the grade on the paper's page and never combined with it).
+  var PAPER=["evidence-grade","study-design","place"];
+
+  function init(ctx){ X=ctx; F=ctx.F; byId={}; (ctx.passages||[]).forEach(function(p){ byId[p.id]=p; }); return API; }
+  function badge(s,i){
+    return '<span class="sup-b s-'+s+'"'+(i?' title="'+E("On the IPCC scale: "+i)+'"':"")+'><span class="dots" aria-hidden="true">'+
+      F.dots[s]+"</span>"+E(F.words[s])+"</span>";
+  }
+  function studies(f){
+    if(f.ro) return "only relayed from other work";
+    if(!f.n) return "no supporting study";
+    var t=f.n===1?"1 study":f.n+" studies agree";
+    return f.np>f.n?t+" ("+f.np+" papers)":t;
+  }
+  function flags(f){
+    return (f.sl?' <span class="flag" title="Every supporting paper has the same lead author">one lead author</span>':"")+
+           (f.ro?' <span class="flag" title="The papers cited only report this from other work">relayed only</span>':"");
+  }
+  function parse(q){
+    var o={};
+    String(q||"").replace(/^[#?]/,"").split("&").forEach(function(kv){
+      if(!kv) return; var i=kv.indexOf("=");
+      o[i<0?kv:kv.slice(0,i)]=i<0?"":decodeURIComponent(kv.slice(i+1));
+    });
+    return o;
+  }
+  function query(){
+    var a=[];
+    if(S.start) a.push("start="+encodeURIComponent(S.start));
+    if(S.theme) a.push("theme="+encodeURIComponent(S.theme));
+    if(S.group) a.push("group="+encodeURIComponent(S.group));
+    if(S.src>=0) a.push("src="+S.src);
+    if(S.support.length) a.push("support="+S.support.join(","));
+    if(S.kinds.length) a.push("kind="+S.kinds.join(","));
+    if(S.places.length) a.push("place="+S.places.join(","));
+    if(S.sort!=="strength") a.push("sort="+S.sort);
+    if(S.q) a.push("q="+encodeURIComponent(S.q));
+    return a.join("&");
+  }
+  function startOf(id){ for(var i=0;i<F.starts.length;i++) if(F.starts[i].id===id) return F.starts[i]; return null; }
+  function ov(f){ return F.ov[f.o]; }
+  function inStart(f,m){
+    if(!m) return true;
+    var o=ov(f);
+    if(m.groups&&m.groups.length&&m.groups.indexOf(o.g)<0) return false;
+    if(m.themes&&m.themes.length&&m.themes.indexOf(o.k)<0) return false;
+    if(m.kinds&&m.kinds.length&&m.kinds.indexOf(f.k)<0) return false;
+    if(m.support&&m.support.length&&m.support.indexOf(f.s)<0) return false;
+    if(m.places&&m.places.length&&!f.pl.some(function(p){return m.places.indexOf(p)>=0;})) return false;
+    return true;
+  }
+  function hay(f){
+    if(f._h==null){
+      var o=ov(f);
+      f._h=(f.t+" "+o.t+" "+f.co.join(" ")+" "+f.de.join(" ")+" "+f.ps.map(function(p){
+        var x=byId[p[0]], s=x&&X.sources[x.s]; return (s?s.k+" "+s.t:"")+" "+(x&&x.q||""); }).join(" ")).toLowerCase();
+    }
+    return f._h;
+  }
+  function keep(f,skip){
+    var st=startOf(S.start);
+    if(st&&!inStart(f,st.match)) return false;
+    if(skip!=="support"&&S.support.length&&S.support.indexOf(f.s)<0) return false;
+    if(skip!=="kinds"&&S.kinds.length&&S.kinds.indexOf(f.k)<0) return false;
+    if(skip!=="places"&&S.places.length&&!f.pl.some(function(p){return S.places.indexOf(p)>=0;})) return false;
+    var o=ov(f);
+    if(S.group&&o.g!==S.group) return false;
+    if(S.theme&&o.k!==S.theme&&o.a!==S.theme) return false;
+    if(S.src>=0&&!f.ps.some(function(p){return p[3]===S.src&&(p[1]==="supports"||p[1]==="partly");})) return false;
+    for(var i=0;i<S.terms.length;i++) if(hay(f).indexOf(S.terms[i])<0) return false;
+    return true;
+  }
+  var SORTS={
+    strength:function(a,b){ return RANK[a.s]-RANK[b.s]||b.n-a.n||a.o-b.o||a.r-b.r; },
+    studies:function(a,b){ return b.n-a.n||RANK[a.s]-RANK[b.s]||a.o-b.o||a.r-b.r; },
+    review:function(a,b){ var A=ov(a),B=ov(b); return A.g<B.g?-1:A.g>B.g?1:A.t<B.t?-1:A.t>B.t?1:a.r-b.r; }
+  };
+
+  // ---- the Findings page ----
+  function box(name,val,label){
+    return '<label><input type="checkbox" data-ff="'+name+'" value="'+E(val)+'"'+(S[name].indexOf(val)>=0?" checked":"")+
+      "><span>"+E(label)+'</span><span class="n" data-fn="'+name+":"+E(val)+'"></span></label>';
+  }
+  function side(){
+    var kinds=Object.keys(F.kinds).filter(function(k){ return F.f.some(function(f){return f.k===k;}); });
+    var places=Object.keys(F.places).filter(function(k){ return k!=="not-stated"; });
+    var themes=F.ov.map(function(o,i){return {o:o,i:i};}).filter(function(x){return !S.group||x.o.g===S.group;})
+      .sort(function(a,b){return a.o.t<b.o.t?-1:1;});
+    return (F.starts.length?'<div class="fstarts"><p class="small muted" style="margin:0 0 .3rem">Start from</p>'+
+        F.starts.map(function(s){
+          return '<button class="btn sbtn'+(S.start===s.id?" on":"")+'" data-start="'+E(s.id)+'">'+E(s.label)+
+            (s.task?"<small>"+E(s.task)+"</small>":"")+"</button>";
+        }).join("")+"</div>":"")+
+      '<input type="search" class="sidesearch" id="fq" placeholder="Search the statements…" value="'+E(S.q)+'">'+
+      '<p class="small" style="margin:.5rem 0"><button class="btn" id="fclear">Clear all</button></p>'+
+      '<details open><summary>How well supported</summary>'+KEYS.map(function(k){return box("support",k,F.words[k]);}).join("")+"</details>"+
+      '<details open><summary>What kind of statement</summary>'+kinds.map(function(k){return box("kinds",k,F.kinds[k]);}).join("")+"</details>"+
+      (places.length?'<details open><summary>Where the evidence is from</summary>'+places.map(function(k){return box("places",k,F.places[k]);}).join("")+
+        '<p class="small muted" style="margin:.2rem 0">Where the supporting studies did their research; a statement only relayed from other work has no place.</p></details>':"")+
+      '<details open><summary>Review</summary>'+
+        '<select id="fgroup" style="width:100%"><option value="">Every group</option>'+F.groups.map(function(g){
+          return '<option value="'+E(g.slug)+'"'+(S.group===g.slug?" selected":"")+">"+E(g.title)+"</option>"; }).join("")+"</select>"+
+        '<select id="ftheme" style="width:100%;margin-top:.35rem"><option value="">Every review</option>'+themes.map(function(x){
+          var v=x.o.k||x.o.a; return '<option value="'+E(v)+'"'+(S.theme===v?" selected":"")+">"+E(x.o.t)+"</option>"; }).join("")+"</select></details>"+
+      '<details open><summary>Order</summary><select id="fsort" style="width:100%">'+
+        [["strength","Best supported first"],["studies","Most studies first"],["review","By review, as written"]].map(function(o){
+          return '<option value="'+o[0]+'"'+(S.sort===o[0]?" selected":"")+">"+o[1]+"</option>"; }).join("")+"</select></details>";
+  }
+  function item(f,i){
+    var o=ov(f);
+    var meta=[F.kinds[f.k]||"", 'from <a href="'+E(o.h)+'">'+E(o.t)+"</a>",
+              f.co.length?E(f.co.join(", ")):"", f.de.length?E(f.de.join(", ")):""].filter(Boolean);
+    return '<article class="fd">'+
+      '<div class="ftop">'+badge(f.s,f.i)+' <span class="small muted">'+E(studies(f))+"</span>"+flags(f)+"</div>"+
+      '<p class="ftext">'+E(f.t)+"</p>"+
+      '<p class="small muted fmeta">'+meta.join(" · ")+"</p>"+
+      '<details data-fi="'+i+'"><summary class="small">The passages ('+f.ps.length+") and how each was checked</summary>"+
+      '<div class="fps"></div></details></article>';
+  }
+  function paperLine(s){
+    var bits=[];
+    PAPER.forEach(function(slug){ var mine=[];
+      (s.g||[]).forEach(function(g){ var l=X.label(g[0],g[1]); if(g[0]===slug&&mine.indexOf(l)<0) mine.push(l); });
+      if(mine.length) bits.push(mine.join(" / ")); });
+    return bits.join(" · ");
+  }
+  function passages(f){
+    return f.ps.map(function(p){
+      var x=byId[p[0]], s=x?(X.sources[x.s]||{}):{};
+      var v=p[1]||"no majority", cls=v==="supports"?"yes":v==="partly"?"part":"no";
+      return '<div class="fpass"><p class="small fv"><span class="v v-'+cls+'">'+E(v)+(p[2]&&p[2]!=="none"?" · "+E(p[2]):"")+"</span> "+
+        "<strong>"+E(s.k||"")+"</strong>"+(paperLine(s)?' <span class="muted">· '+E(paperLine(s))+"</span>":"")+"</p>"+
+        (x?X.card(x):'<p class="small muted">This passage is not in the library.</p>')+"</div>";
+    }).join("")+'<p class="small muted" style="margin:.3rem 0 0">A verdict says whether the passage backs the whole statement '+
+      "(supports), part of it, or not. Advisory: three runs of a model, by majority.</p>";
+  }
+  function notes(){
+    var out="", st=startOf(S.start);
+    if(st){
+      var pc="";
+      if(st.match&&st.match.places&&st.match.places.length&&X.placeCount){
+        var n=X.placeCount(st.match.places); if(n) pc=" "+n[0]+" of "+PL(n[1],"paper","papers")+" in the library studied there.";
+      }
+      out+='<div class="fnote"><strong>'+E(st.label)+(st.task?" ("+E(st.task)+")":"")+".</strong> "+E(st.note||"")+E(pc)+"</div>";
+    }
+    if(S.src>=0&&X.sources[S.src]){
+      var s=X.sources[S.src];
+      out+='<div class="fnote">Statements backed by <strong>'+E(s.k)+"</strong>, "+E(s.t)+'. <a href="#" data-fsrc>Show every paper’s</a></div>';
+    }
+    return out;
+  }
+  function counts(list){
+    return KEYS.map(function(k){ var n=list.filter(function(f){return f.s===k;}).length; return n?n+" "+F.words[k].toLowerCase():""; })
+      .filter(Boolean).join(" · ");
+  }
+  function draw(){
+    var list=F.f.filter(function(f){return keep(f,null);}).sort(SORTS[S.sort]||SORTS.strength);
+    var pane=host.querySelector("#fpane");
+    pane.innerHTML=notes()+'<p class="small fcount"><span>'+(list.length===F.f.length?PL(list.length,"statement","statements")
+        :"Showing "+list.length+" of "+PL(F.f.length,"statement","statements"))+"</span><span class=\"muted\">"+E(counts(list))+"</span></p>"+
+      (list.length?"":'<p class="muted">Nothing matches. <a href="#" data-fclear>Clear the filters</a>.</p>')+
+      '<div id="flist">'+list.slice(0,S.shown).map(function(f){return item(f,F.f.indexOf(f));}).join("")+"</div>"+
+      (list.length>S.shown?'<p><button class="btn" id="fmore">Show '+Math.min(STEP,list.length-S.shown)+" more</button></p>":"");
+    recount();
+    if(X.setQuery) X.setQuery(query());
+  }
+  function recount(){
+    ["support","kinds","places"].forEach(function(name){
+      var seen={};
+      F.f.forEach(function(f){ if(!keep(f,name)) return;
+        (name==="places"?f.pl:[name==="support"?f.s:f.k]).forEach(function(v){ seen[v]=(seen[v]||0)+1; }); });
+      [].slice.call(host.querySelectorAll('[data-fn^="'+name+':"]')).forEach(function(el){
+        var v=el.getAttribute("data-fn").slice(name.length+1), n=seen[v]||0;
+        el.textContent=n; el.parentNode.className=n||S[name].indexOf(v)>=0?"":"off";
+      });
+    });
+  }
+  function redrawSide(){ host.querySelector("#fside .fwrap").innerHTML=side(); }
+  function findings(el,q){
+    host=el;
+    var p=parse(q);
+    S={start:p.start&&startOf(p.start)?p.start:"", q:p.q||"", terms:[],
+       support:p.support?p.support.split(","):[], kinds:p.kind?p.kind.split(","):[], places:p.place?p.place.split(","):[],
+       group:p.group||"", theme:p.theme||"", src:p.src!=null&&p.src!==""?+p.src:-1, sort:SORTS[p.sort]?p.sort:"strength", shown:STEP};
+    S.terms=S.q.toLowerCase().trim().split(/\s+/).filter(Boolean);
+    var wide=!window.matchMedia||window.matchMedia("(min-width:861px)").matches;
+    host.innerHTML='<div class="split"><aside class="side" id="fside"><details class="fwrap-d"'+(wide?" open":"")+
+      '><summary>Filters and starting points</summary><div class="fwrap">'+side()+'</div></details></aside><section class="pane" id="fpane"></section></div>';
+    if(!host.__wired){ host.__wired=1; wire(); }
+    draw();
+  }
+  function wire(){
+    host.addEventListener("change",function(e){
+      var t=e.target; if(!t) return;
+      var ff=t.getAttribute&&t.getAttribute("data-ff");
+      if(ff){ var at=S[ff].indexOf(t.value); if(t.checked){ if(at<0) S[ff].push(t.value); } else if(at>=0) S[ff].splice(at,1); }
+      else if(t.id==="fgroup"){ S.group=t.value; S.theme=""; redrawSide(); }
+      else if(t.id==="ftheme"){ S.theme=t.value; }
+      else if(t.id==="fsort"){ S.sort=t.value; }
+      else return;
+      S.shown=STEP; draw();
+    });
+    var timer=null;
+    host.addEventListener("input",function(e){
+      if(!e.target||e.target.id!=="fq") return;
+      clearTimeout(timer);
+      timer=setTimeout(function(){ S.q=e.target.value; S.terms=S.q.toLowerCase().trim().split(/\s+/).filter(Boolean); S.shown=STEP; draw(); },80);
+    });
+    host.addEventListener("click",function(e){
+      var t=e.target&&e.target.closest?e.target.closest("[data-start],#fmore,#fclear,[data-fclear],[data-fsrc]"):null;
+      if(!t) return;
+      if(t.id==="fmore"){ S.shown+=STEP; draw(); return; }
+      e.preventDefault();
+      if(t.hasAttribute("data-start")){ var id=t.getAttribute("data-start"); S.start=S.start===id?"":id; S.group=""; S.theme=""; }
+      else if(t.hasAttribute("data-fsrc")){ S.src=-1; }
+      else { S.start=""; S.q=""; S.terms=[]; S.support=[]; S.kinds=[]; S.places=[]; S.group=""; S.theme=""; S.src=-1; }
+      S.shown=STEP; redrawSide(); draw();
+    });
+    // A statement's passages are built the first time it is opened.
+    host.addEventListener("toggle",function(e){
+      var d=e.target;
+      if(!d||!d.hasAttribute||!d.hasAttribute("data-fi")||!d.open) return;
+      var box=d.querySelector(".fps");
+      if(box&&!box.__done){ box.__done=1; box.innerHTML=passages(F.f[+d.getAttribute("data-fi")]); }
+    },true);
+  }
+
+  // ---- the evidence map ----
+  function strip(c){
+    var tot=c.n||1;
+    return '<div class="strip">'+KEYS.map(function(k){ return c[k]?'<i class="s-'+k+'" style="width:'+(100*c[k]/tot).toFixed(2)+'%" title="'+
+      E(c[k]+" "+F.words[k].toLowerCase())+'"></i>':""; }).join("")+"</div>";
+  }
+  function map(el){
+    var rows=F.ov.map(function(o,i){
+      var c={n:0,well:0,some:0,limited:0,weak:0,finding:0,place:0};
+      F.f.forEach(function(f){ if(f.o!==i) return; c.n++; c[f.s]++; if(f.k==="finding") c.finding++;
+        if(F.mapPlace&&f.pl.indexOf(F.mapPlace)>=0) c.place++; });
+      c.good=c.n?(c.well+c.some)/c.n:0;
+      return {o:o,c:c};
+    });
+    var thin=rows.filter(function(r){return !r.c.well&&!r.c.some;});
+    var pl=F.mapPlace?(F.places[F.mapPlace]||F.mapPlace):"";
+    var tot={n:0,well:0,some:0,limited:0,weak:0}; F.f.forEach(function(f){ tot.n++; tot[f.s]++; });
+    el.innerHTML=(F.notes.map_note?'<div class="card fnote-card"><p style="margin:0">'+E(F.notes.map_note)+"</p></div>":"")+
+      '<div class="card" style="margin:.8rem 0">'+strip(tot)+'<div class="legend">'+KEYS.map(function(k){
+        return '<span class="s-'+k+'">'+E(F.words[k])+" "+tot[k]+"</span>"; }).join("")+"</div>"+
+      (thin.length?'<p class="small" style="margin:.5rem 0 0">'+PL(thin.length,"review has","reviews have")+
+        " no statement above limited support: "+thin.map(function(r){return E(r.o.t);}).join(", ")+".</p>":"")+"</div>"+
+      '<div class="wrap"><table class="emap"><thead><tr><th>Review</th><th class="num">Papers</th><th class="num">Statements</th>'+
+      '<th>Support</th><th class="num hide-s">From data or cases</th>'+(pl?'<th class="num hide-s">With evidence from '+E(pl)+"</th>":"")+
+      "</tr></thead><tbody>"+F.groups.map(function(g){
+        var rs=rows.filter(function(r){return r.o.g===g.slug;}).sort(function(a,b){return b.c.good-a.c.good||b.c.n-a.c.n;});
+        if(!rs.length) return "";
+        return '<tr class="grp"><td colspan="'+(pl?6:5)+'">'+E(g.title)+"</td></tr>"+rs.map(function(r){
+          var t=r.o.k||r.o.a;
+          return "<tr"+(!r.c.well&&!r.c.some?' class="thin"':"")+'><td><a href="'+E(r.o.h)+'">'+E(r.o.t)+"</a>"+
+            (!r.c.well&&!r.c.some?' <span class="flag">thin</span>':"")+'</td><td class="num">'+r.o.np+
+            '</td><td class="num"><a href="'+E(X.hrefFindings("theme="+encodeURIComponent(t)))+'" title="See its statements">'+r.c.n+"</a></td>"+
+            "<td>"+strip(r.c)+'</td><td class="num hide-s">'+(r.c.finding||"")+"</td>"+(pl?'<td class="num hide-s">'+(r.c.place||"")+"</td>":"")+"</tr>";
+        }).join("");
+      }).join("")+"</tbody></table></div>";
+  }
+
+  var API={init:init,findings:findings,map:map,parse:parse};
+  window.UPCF=API;
+})();
+`;
+
 function page({ title, rel, body, model, active, extraHead = "", data = false }) {
   const up = rel.split("/").length - 1;
   const base = up ? "../".repeat(up) : "";
+  const library = [["codes/", "Codes", "codes"], ["sources/", "Sources", "sources"], ["passages/", "Passages", "passages"]];
+  const reviews = model.syntheses.length ? [["overviews/", "Overviews", "overviews"]] : [];
   const nav = [
     // Not "": on a top-level page (the matrix) an empty link is *this* page.
     ["index.html", "Home", "home"],
-    ["codes/", "Codes", "codes"],
-    ["sources/", "Sources", "sources"],
-    ["passages/", "Passages", "passages"],
-    ...(model.syntheses.length ? [["overviews/", "Overviews", "overviews"]] : []),
+    // A rated library (1.15.0) leads with what the literature says, then how it was built.
+    ...(model.findings.length
+      ? [["findings.html", "Findings", "findings"], ["evidence.html", "Evidence map", "evidence"], ...reviews, ...library]
+      : [...library, ...reviews]),
     ...(model.matrix ? [["matrix.html", "Matrix", "matrix"]] : []),
     ...(model.about ? [["methods.html", "Methods", "methods"]] : []),
   ];
@@ -1242,6 +1670,7 @@ function page({ title, rel, body, model, active, extraHead = "", data = false })
 <link rel="stylesheet" href="${base}assets/site.css">
 ${extraHead}
 ${data ? `<script src="${base}data/browse.js" defer></script>` : ""}
+${data === "findings" ? `<script src="${base}data/findings.js" defer></script>` : ""}
 <script src="${base}assets/site.js" defer></script>
 </head><body>
 <header class="top"><div class="in">
@@ -1279,6 +1708,24 @@ function chipHtml(c, base, detached) {
   const href = c.code != null ? `${base}codes/${encodeURIComponent(c.codebook_slug)}/${encodeURIComponent(c.code)}.html` : null;
   return `<span class="chip${detached ? " detached" : ""}" data-id="${attr(c.coding_id)}" title="${attr(title)}">${
     href ? `<a href="${href}">${label}</a>` : label}</span>`;
+}
+
+/** A paper's evidence codes, one chip per code: when two coders gave the same code
+ *  (the vote of model runs and a blind second coder, say) the chip names both in its
+ *  tooltip. Different codes still get a chip each, so a disagreement stays visible. */
+function evChipsHtml(list, base) {
+  const groups = new Map();
+  for (const c of list) {
+    const k = `${c.codebook_slug}:${c.code != null ? c.code : c.value}`;
+    if (!groups.has(k)) groups.set(k, []);
+    groups.get(k).push(c);
+  }
+  return [...groups.values()].map((cs) => {
+    const html = chipHtml(cs[0], base, false);
+    if (cs.length < 2) return html;
+    const more = cs.slice(1).map((c) => `Also coded so by ${c.coder}${c.coder_kind ? ` (${KIND_LABEL[c.coder_kind] || c.coder_kind})` : ""}`).join("\n");
+    return html.replace(/title="([^"]*)"/, (m, t) => `title="${t}\n${attr(more)}"`);
+  }).join(" ");
 }
 
 /** How a chip's tooltip names a kind of coder. */
@@ -1393,7 +1840,8 @@ function homePage(model) {
     body: `<h1>${esc(model.title)}</h1>
 <p class="lede">A searchable library of what this literature actually says. Every quotation was compared with the
 source text character by character when this page was built${verified === nPass && nPass ? " — all of them matched" : ""}.</p>
-${hc ? `<section class="card homesum"><h2>${esc(hc.t)}</h2>${hc.r || ""}${hc.h}</section>` : ""}
+${findingsHomeHtml(model, folderLinks(""))}
+${hc ? `${model.findings.length ? "<h2>What the literature says</h2>" : ""}<section class="card homesum"><h2>${esc(hc.t)}</h2>${hc.r || ""}${hc.h}</section>` : ""}
 ${model.syntheses.length ? `<p class="lede">${hc ? "<strong>Go deeper:</strong> read the" : "<strong>New here?</strong> Start with the"}
 <a href="overviews/">${plural(model.syntheses.length, "overview", "overviews")}</a> — a short review per theme,
 written from the coded passages, with every quotation linked back to the paper it came from. Then browse by
@@ -1521,6 +1969,7 @@ function sourcePage(model, s, textInfo) {
 <h1>${esc(s.title)}</h1>
 <p class="lede">${esc(bits)}${s.doi ? ` · <a href="https://doi.org/${encodeURIComponent(s.doi)}">doi:${esc(s.doi)}</a>` : ""}</p>
 ${s.codings.length || s.passages.some((p) => p.codings.length) ? `<p class="small muted">${esc(codeNote(model))}</p>` : ""}
+${contributesHtml(model, s, folderLinks(base))}
 ${s.codings.some((c) => !c.ev) ? `<div class="card"><div class="small muted">Judgements about this paper as a whole</div>
   <div class="meta" style="margin-top:.4rem">${s.codings.filter((c) => !c.ev).map((c) => chipHtml(c, base, false)).join(" ")}</div></div>` : ""}
 ${sourceCardsHtml(model, s, folderLinks(base))}
@@ -1550,7 +1999,7 @@ function sourceCardsHtml(model, s, links) {
   const ev = s.codings.filter((c) => c.ev);
   const base = links.source({ slug: "x" }).replace(/sources\/x\.html$/, "");
   const head = ev.length ? `<div class="card evcard"><div class="small muted">${esc(EVIDENCE_TITLE)}</div>
-  <div class="meta" style="margin-top:.4rem">${ev.map((c) => chipHtml(c, base, false)).join(" ")}</div></div>` : "";
+  <div class="meta" style="margin-top:.4rem">${evChipsHtml(ev, base)}</div></div>` : "";
   return head + (s.cards || []).map((c) => `<details class="card evcard"><summary><strong>${esc(c.card)}</strong></summary>
 ${renderOverviewMarkdown(c.md, model, links)}</details>`).join("\n");
 }
@@ -1781,8 +2230,11 @@ export function renderOverviewMarkdown(md, model, links, opts = {}) {
       return name + n;
     })
     // [view:<name>] — one of the site's own views.
-    .replace(/\[view:(matrix|passages|overviews|codes|sources)\]/g, (m, name) => {
-      let text = { passages: "every passage", overviews: "the overviews", codes: "the codes", sources: "the papers" }[name];
+    .replace(/\[view:(matrix|passages|overviews|codes|sources|findings|evidence|methods)\]/g, (m, name) => {
+      let text = { passages: "every passage", overviews: "the overviews", codes: "the codes", sources: "the papers",
+                   findings: "the findings", evidence: "the evidence map", methods: "how this was made" }[name];
+      if ((name === "findings" || name === "evidence") && !model.findings.length) return esc(text);
+      if (name === "methods" && !model.about) return esc(text);
       if (name === "matrix") {
         const [a, b] = model.matrix || [];
         const A = model.codebooks.find((c) => c.slug === a), B = model.codebooks.find((c) => c.slug === b);
@@ -1842,6 +2294,13 @@ export function renderOverviewMarkdown(md, model, links, opts = {}) {
   return html.join("\n");
 }
 
+/** "#start=task3&theme=actor%3Ainstallers" for the Findings page; "" for none. */
+const findingsQuery = (q, sep = "#") => {
+  const parts = Object.entries(q || {}).filter(([, v]) => v !== "" && v != null && v !== -1)
+    .map(([k, v]) => `${k}=${encodeURIComponent(v)}`);
+  return parts.length ? sep + parts.join("&") : "";
+};
+
 /** Where every kind of link points, for a folder page `base` levels deep. */
 function folderLinks(base) {
   const e = encodeURIComponent;
@@ -1851,7 +2310,10 @@ function folderLinks(base) {
     overview: (syn) => `${base}overviews/${e(syn._addr || syn.synthesis_id)}.html`,
     code: (slug, code) => `${base}codes/${e(slug)}/${e(code)}.html`,
     view: (name) => base + ({ matrix: "matrix.html", passages: "passages/", overviews: "overviews/",
-                              codes: "codes/", sources: "sources/" }[name] || ""),
+                              codes: "codes/", sources: "sources/", findings: "findings.html", evidence: "evidence.html",
+                              methods: "methods.html" }[name] || ""),
+    // #start=<id>&theme=<slug:code>&src=<n>: the Findings page, filtered
+    findings: (q) => `${base}findings.html` + findingsQuery(q),
   };
 }
 
@@ -1866,7 +2328,7 @@ function homeCard(model, links) {
   const changed = h._changed
     ? '<p class="small" style="color:var(--warn)">⚠ This text was changed after its quotations were checked.</p>' : "";
   return { t: h.title || "What the literature says",
-           r: h._revision ? revisionHtml(model, h._revision, null) : "",
+           r: h._revision ? revisionHtml(model, h._revision, "") : "",
            h: changed + renderOverviewMarkdown(h.md, model, links, { foldRefs: true }) };
 }
 
@@ -1882,19 +2344,172 @@ function overviewBodyHtml(model, syn, root) {
   body = body.replace(/^\s*#\s+.*\n+/, "");
   // Render the marker grammar: "…" [ext-id] becomes a linked, badged quotation.
   const rendered = renderOverviewMarkdown(body, model, folderLinks(base));
+  const kf = keyFindingsHtml(model, syn, folderLinks(base));
   return `<h1 style="margin-top:0">${esc(syn.title || syn.synthesis_id)}</h1>
 ${syn._revision ? revisionHtml(model, syn._revision, syn._addr) : ""}
+${kf}${kf ? `<h2>The review</h2>` : ""}
 <div class="card" style="max-width:74ch">${rendered || `<p class="muted">No text.</p>`}</div>
 ${claimsTableHtml(model, syn, folderLinks(base))}`;
 }
 
 /** "Revised from rated evidence · 6 Oct 2026 · the previous version ↗" */
 function revisionHtml(model, rev, addr) {
-  const prev = model.originalEdition && addr
-    ? ` · <a href="${attr(model.originalEdition.replace(/\/?$/, "/") + "overviews/" + encodeURIComponent(addr) + ".html")}"
+  // addr: the overview's address; "" for the home page's summary, which links to that edition's home page.
+  const prev = model.originalEdition && addr != null
+    ? ` · <a href="${attr(model.originalEdition.replace(/\/?$/, "/") + (addr ? "overviews/" + encodeURIComponent(addr) + ".html" : ""))}"
   target="_blank" rel="noopener">the previous version, in the original edition ↗</a>` : "";
   return `<p class="revised sans small"><strong>${esc(rev.label)}</strong>${rev.date ? ` · ${esc(DATE_FMT(rev.date))}` : ""}${prev}${
     rev.note ? `<br><span class="muted">${esc(rev.note)}</span>` : ""}</p>`;
+}
+
+
+// --- findings: the fragments both shapes render on the server -------------------
+
+/** "●●●○ Some support", the IPCC term on hover. */
+function supportBadgeHtml(key, ipcc) {
+  const k = SUPPORT_WORDS[key] ? key : "weak";
+  return `<span class="sup-b s-${k}"${ipcc ? ` title="${attr(`On the IPCC scale: ${ipcc}`)}"` : ""}><span class="dots" aria-hidden="true">${
+    SUPPORT_DOTS[k]}</span>${esc(SUPPORT_WORDS[k])}</span>`;
+}
+/** "3 studies agree", counting lead authors, never papers by one author twice. */
+function studiesText(f) {
+  if (f.relayed_only) return "only relayed from other work";
+  if (!f.studies) return "no supporting study";
+  const n = f.studies === 1 ? "1 study" : `${f.studies} studies agree`;
+  return f.papers > f.studies ? `${n} (${f.papers} papers)` : n;
+}
+/** Who backs a statement, by name: the papers whose passages support it. */
+function backersOf(model, f) {
+  const names = [];
+  for (const v of f.passages) {
+    if (v.verdict !== "supports" && v.verdict !== "partly") continue;
+    const p = model.passageById.get(v.id);
+    if (p && !names.includes(p.cite)) names.push(p.cite);
+  }
+  return names;
+}
+const SUPPORT_RANK = { well: 0, some: 1, limited: 2, weak: 3 };
+const byStrength = (a, b) => SUPPORT_RANK[a.support] - SUPPORT_RANK[b.support] || b.studies - a.studies || a.ord - b.ord;
+const findingsWord = (model, key, dflt) => ((model.findingsSettings || {}).words || {})[key] || dflt;
+
+function findingLiHtml(model, f) {
+  const who = backersOf(model, f);
+  const flags = (f.same_lead ? ` <span class="flag" title="Every supporting paper has the same lead author">one lead author</span>` : "");
+  return `<li>${supportBadgeHtml(f.support, f.ipcc)} <span class="ftext">${esc(f.text)}</span>${flags}
+<span class="small muted"> — ${esc(studiesText(f))}${who.length ? `: ${esc(who.join(", "))}` : ""}${
+    f.countries.length ? ` · ${esc(f.countries.join(", "))}` : ""}</span></li>`;
+}
+
+/** The box above an overview's prose: what it says that is best supported, what
+ *  rests on one study (a lead), and what it only relays. Nothing is hidden: the
+ *  prose and the full support table follow as before. */
+export function keyFindingsHtml(model, syn, links) {
+  const fs = model.findings.filter((f) => f.syn === syn).sort(byStrength);
+  if (!fs.length) return "";
+  const strong = fs.filter((f) => f.support === "well" || f.support === "some");
+  const one = fs.filter((f) => !f.relayed_only && f.studies <= 1 && !strong.includes(f));
+  const relayed = fs.filter((f) => f.relayed_only);
+  const count = SUPPORT_KEYS.map((k) => [k, fs.filter((f) => f.support === k).length]).filter(([, n]) => n)
+    .map(([k, n]) => `${n} ${SUPPORT_WORDS[k].toLowerCase()}`).join(" · ");
+  const theme = syn._group && syn._code ? `${syn._group.slug}:${syn._code}` : syn._addr;
+  const all = links.findings ? `<a href="${attr(links.findings({ theme }))}">All ${fs.length} with their passages and how each was checked, in Findings →</a>` : "";
+  const list = (xs, max) => `<ol>${xs.slice(0, max).map((f) => findingLiHtml(model, f)).join("")}</ol>${
+    xs.length > max ? `<p class="small muted">and ${xs.length - max} more.</p>` : ""}`;
+  return `<section class="card kf"><h2>Key findings</h2>
+<p class="small muted">${plural(fs.length, "statement", "statements")} in this review: ${esc(count)}. How well each is supported comes
+from a check of the passages it cites (advisory, made by a model)${links.view ? `: <a href="${attr(links.view("methods"))}">how</a>` : ""}.</p>
+${strong.length ? list(strong, 8)
+  : `<p>No statement in this review has more than limited support. Most rest on a single study: read them as leads to test, not as settled findings.</p>`}
+${one.length ? `<h3>${esc(findingsWord(model, "one_study", "Rests on one study: a lead worth testing"))} (${one.length})</h3>${list(one, strong.length ? 5 : 8)}` : ""}
+${relayed.length ? `<h3>Only relayed from other work (${relayed.length})</h3>${list(relayed, 4)}` : ""}
+${all ? `<p class="small" style="margin-bottom:0">${all}</p>` : ""}
+</section>`;
+}
+
+/** Home: the starting points, then how strong the evidence is overall. */
+function findingsHomeHtml(model, links) {
+  const fs = model.findings;
+  if (!fs.length) return "";
+  const st = model.findingsSettings || {};
+  const n = (k) => fs.filter((f) => f.support === k).length;
+  const lim = fs.filter((f) => f.support === "limited");
+  const themes = new Map();
+  for (const f of fs) {
+    const t = themes.get(f.syn) || { syn: f.syn, n: 0, good: 0 };
+    t.n++; if (f.support === "well" || f.support === "some") t.good++;
+    themes.set(f.syn, t);
+  }
+  const thin = [...themes.values()].filter((t) => !t.good);
+  const starts = (st.starts || []).map((x) => ({ ...x, n: fs.filter((f) => matchStart(f, x.match)).length })).filter((x) => x.n);
+  return `${starts.length ? `<h2>Start from what you are working on</h2>
+<div class="grid cards starts">${starts.map((x) => `<a class="card tile" href="${attr(links.findings({ start: x.id }))}"><strong>${esc(x.label)}</strong>${
+    x.task ? ` <span class="small muted">${esc(x.task)}</span>` : ""}<br><span class="small muted">${esc(String(x.note || "").split(/(?<=\.)\s/)[0])}</span><br>
+<span class="small">${plural(x.n, "statement", "statements")} →</span></a>`).join("\n")}</div>` : ""}
+<h2>How strong is the evidence?</h2>
+<div class="card">${strengthStripHtml(SUPPORT_KEYS.map((k) => [k, n(k)]))}
+<p class="small" style="margin:.6rem 0 0">Of ${fs.length} statements in the ${plural(themes.size, "review", "reviews")}, ${n("well")} are well supported and
+${n("some")} have some support. Of the ${lim.length} limited ones, ${lim.filter((f) => !f.relayed_only && f.studies <= 1).length} rest on a single study and
+${lim.filter((f) => f.relayed_only).length} only relay other work.${thin.length ? ` ${plural(thin.length, "review has", "reviews have")} nothing above limited support.` : ""}
+<a href="${attr(links.view("evidence"))}">See the evidence map →</a> · <a href="${attr(links.view("findings"))}">all findings →</a></p></div>`;
+}
+
+function strengthStripHtml(pairs) {
+  const tot = pairs.reduce((a, [, v]) => a + v, 0) || 1;
+  return `<div class="strip" role="img" aria-label="${attr(pairs.map(([k, v]) => `${v} ${SUPPORT_WORDS[k].toLowerCase()}`).join(", "))}">${
+    pairs.map(([k, v]) => v ? `<i class="s-${k}" style="width:${(100 * v / tot).toFixed(2)}%" title="${attr(`${v} ${SUPPORT_WORDS[k].toLowerCase()}`)}"></i>` : "").join("")}</div>
+<div class="legend">${pairs.map(([k, v]) => `<span class="s-${k}">${esc(SUPPORT_WORDS[k])} ${v}</span>`).join("")}</div>`;
+}
+
+/** A paper's page: what it contributes to the reviews, before its ratings. */
+function contributesHtml(model, s, links) {
+  const mine = new Set(s.passages.map((p) => p.id));
+  const fs = model.findings.filter((f) => f.passages.some((v) => mine.has(v.id) && (v.verdict === "supports" || v.verdict === "partly")))
+    .sort(byStrength);
+  const cited = model.syntheses.filter((o) => (o.claims || []).some((c) => (c.evidence_ids || []).some((id) => mine.has(id))));
+  if (!fs.length && !cited.length) return "";
+  const src = model.sources.indexOf(s);
+  return `<section class="card kf"><h2 style="margin-top:0">What this paper contributes</h2>
+${fs.length ? `<p class="small muted">It backs ${plural(fs.length, "statement", "statements")} in the reviews${
+    links.findings ? ` (<a href="${attr(links.findings({ src }))}">all of them in Findings →</a>)` : ""}.</p>
+<ol>${fs.slice(0, 6).map((f) => findingLiHtml(model, f).replace(/<\/li>$/, ` <span class="small">in <a href="${attr(links.overview(f.syn))}">${esc(f.syn.title || "")}</a></span></li>`)).join("")}</ol>` : ""}
+${cited.length ? `<p class="small" style="margin-bottom:0">Cited in ${plural(cited.length, "review", "reviews")}: ${cited.map((o) =>
+    `<a href="${attr(links.overview(o))}">${esc(o.title || o.synthesis_id)}</a>`).join(", ")}.</p>` : ""}
+</section>`;
+}
+
+/** What the Findings and Evidence map pages read, for either shape. */
+function findingsPayload(model, srcIndex, links) {
+  const ovs = [], ovAt = new Map();
+  for (const f of model.findings) {
+    if (ovAt.has(f.syn)) continue;
+    const papers = new Set();
+    for (const g of model.findings) if (g.syn === f.syn) for (const v of g.passages) { const p = model.passageById.get(v.id); if (p) papers.add(p.source_id); }
+    ovAt.set(f.syn, ovs.length);
+    ovs.push({ a: f.syn._addr, t: f.syn.title || f.syn._addr, g: f.group, k: f.theme, h: links.overview(f.syn), np: papers.size });
+  }
+  const groups = [...new Set(ovs.map((o) => o.g))].map((slug) => {
+    const cb = model.codebooks.find((c) => c.slug === slug);
+    return { slug, title: cb ? cb.title : (slug || "Other") };
+  });
+  const placeCb = model.codebooks.find((c) => c.slug === "place");
+  const places = {};
+  const used = new Set(model.findings.flatMap((f) => f.places));
+  const order = (placeCb ? (placeCb.codes || []).map((c) => c.code) : Object.keys(PLACE_WORDS)).concat([...used]);
+  for (const k of order) {
+    if (!used.has(k) || k in places) continue;
+    const c = placeCb && (placeCb.codes || []).find((x) => x.code === k);
+    places[k] = c ? c.label : (PLACE_WORDS[k] || k);
+  }
+  const st = model.findingsSettings || {};
+  return {
+    ov: ovs, groups, places, kinds: KIND_WORDS, words: SUPPORT_WORDS, dots: SUPPORT_DOTS,
+    starts: st.starts || [], notes: st.words || {}, mapPlace: st.mapPlace || "",
+    f: model.findings.map((f) => ({
+      o: ovAt.get(f.syn), c: f.claim_id, r: f.ord, t: f.text, s: f.support, i: f.ipcc, n: f.studies, np: f.papers,
+      ...(f.same_lead ? { sl: 1 } : {}), ...(f.relayed_only ? { ro: 1 } : {}), k: f.kind, pl: f.places, co: f.countries, de: f.designs,
+      ps: f.passages.map((v) => { const p = model.passageById.get(v.id); return [v.id, v.verdict, v.gap, p && srcIndex.has(p.source_id) ? srcIndex.get(p.source_id) : -1]; }),
+    })),
+  };
 }
 
 /** The claims table, and — when a support matrix names this overview — its
@@ -1913,16 +2528,19 @@ export function claimsTableHtml(model, syn, links) {
       return `${p ? `<a href="${attr(links.passage(p))}">${esc(p.cite)}</a>` : esc(v.extraction_id)}: ${esc(v.verdict || "?")}${
         v.gap && v.gap !== "none" ? ` (${esc(v.gap)})` : ""}`;
     }).join("<br>");
-    return `<td class="sup"><strong>${esc(x.ipcc || m.confidence || "")}</strong>${
-      x.evidence ? `<br><span class="small muted">${esc(x.evidence)} evidence, ${esc(x.agreement)} agreement</span>` : ""}</td>` +
-      `<td class="sup num">${x.independent == null ? "" : x.independent}</td><td class="sup small">${verdicts}${
-      m.notes ? `<br><span class="muted">${esc(m.notes)}</span>` : ""}</td>`;
+    const studies = x.studies != null ? x.studies : x.independent;
+    return `<td class="sup">${supportBadgeHtml(supportOf(x), x.ipcc || m.confidence || "")}${
+      x.same_lead ? ` <span class="flag" title="Every supporting paper has the same lead author">one lead author</span>` : ""}${
+      x.relayed_only ? ` <span class="flag">relayed only</span>` : ""}</td>` +
+      `<td class="sup num">${studies == null ? "" : studies}${x.papers > studies ? `<br><span class="small muted">${x.papers} papers</span>` : ""}</td>` +
+      `<td class="sup small">${verdicts}${m.notes ? `<br><span class="muted">${esc(m.notes)}</span>` : ""}</td>`;
   };
   return `<h2>What this says, and what backs it</h2>
 ${sup ? `<p class="sans small"><label><input type="checkbox" data-support> Show support for each statement</label>
-<span class="muted"> — how many independent papers back it, and what a check of each passage found (advisory).</span></p>` : ""}
+<span class="muted"> — how well its passages back it, how many independent studies agree (papers by one lead author count once),
+and what a check of each passage found (advisory).</span></p>` : ""}
 <div class="wrap"><table${sup ? ' class="claims"' : ""}><thead><tr><th>Claim</th><th>Passages</th>${sup
-    ? `<th class="sup">Confidence</th><th class="sup num">Independent papers</th><th class="sup">The check, passage by passage</th>` : ""}</tr></thead><tbody>
+    ? `<th class="sup">Support</th><th class="sup num">Studies agreeing</th><th class="sup">The check, passage by passage</th>` : ""}</tr></thead><tbody>
 ${claims.map((c) => `<tr><td>${esc(c.text)}</td><td>${(c.evidence_ids || []).map((id) => {
     const p = model.passageById.get(id);
     return p ? `<a href="${attr(links.passage(p))}">${esc(p.cite)}</a>` : esc(id);
@@ -1957,6 +2575,30 @@ function overviewPage(model, syn, root) {
     body: `<h1>Overviews</h1>${OVERVIEW_LEDE(model)}
 <div class="split">${overviewSide(model, syn._addr)}
 <section class="pane">${overviewBodyHtml(model, syn, root)}</section></div>`,
+  });
+}
+
+const FINDINGS_LEDE = (model) => `<p class="lede">Every statement of the ${plural(new Set(model.findings.map((f) => f.syn)).size, "review", "reviews")},
+with how well the passages it cites support it. Pick a starting point, or filter. The ratings are advisory and made by a model${
+  model.about ? `: <a href="methods.html">how</a>` : ""}.</p>`;
+
+function findingsPage(model) {
+  return page({
+    title: `Findings — ${model.title}`, rel: "findings.html", model, active: "findings", data: "findings",
+    body: `<h1>Findings</h1>${FINDINGS_LEDE(model)}
+<div data-findings></div>
+<noscript><p class="banner">This page builds its list as you filter, so it needs JavaScript. Each review's
+Key findings, on its own page under <a href="overviews/">Overviews</a>, work without it.</p></noscript>`,
+  });
+}
+
+function evidencePage(model) {
+  return page({
+    title: `Evidence map — ${model.title}`, rel: "evidence.html", model, active: "evidence", data: "findings",
+    body: `<h1>Evidence map</h1>
+<p class="lede">How much each review's statements rest on, at a glance. A review is marked <span class="flag">thin</span>
+when none of its statements has more than limited support. Click a review to read it, or its count to see its statements.</p>
+<div data-evidence></div>`,
   });
 }
 
@@ -2005,7 +2647,7 @@ export function writeSite(root, opts = {}) {
   fs.mkdirSync(outDir, { recursive: true });
   w("assets/site.css", CSS);
   // The browse engine first, then the page script that mounts it.
-  w("assets/site.js", BROWSE_JS + "\n" + JS);
+  w("assets/site.js", BROWSE_JS + "\n" + FINDINGS_JS + "\n" + JS);
 
   // The same compact records the single file carries, as a plain script the
   // browsing pages load with <script src> — no fetch, so `file://` still works.
@@ -2017,6 +2659,12 @@ export function writeSite(root, opts = {}) {
       badges: BADGE_TEXT,
       files: opts.bundle ? "files" : null,
     })};\n`);
+  }
+  // Findings (1.15.0): the statements of the rated reviews, for findings.html and evidence.html.
+  if (model.findings.length) {
+    const { srcIndex } = browsePayload(model);
+    const fl = folderLinks("");
+    w("data/findings.js", `window.__UPCF_DATA=${j(findingsPayload(model, srcIndex, fl))};\n`);
   }
   // "In context": the sentences around each passage, one file per paper, loaded
   // the first time a reader opens one of its passages on any page.
@@ -2068,6 +2716,10 @@ export function writeSite(root, opts = {}) {
     for (const syn of model.syntheses) w(`overviews/${syn._addr}.html`, overviewPage(model, syn, loaded.root));
   }
   if (model.about) w("methods.html", methodsPage(model));
+  if (model.findings.length) {
+    w("findings.html", findingsPage(model));
+    w("evidence.html", evidencePage(model));
+  }
   if (model.matrix) {
     const m = matrixPage(model);
     if (m) w("matrix.html", m);
@@ -2151,6 +2803,14 @@ const CLIENT_ONE = String.raw`
     hrefCode:function(slug,code){ return "#/code/"+encodeURIComponent(slug)+"/"+encodeURIComponent(code); }
   });
   var badge=UPCB.badge, chip=UPCB.chip, passageCard=UPCB.card;
+  if(D.findings&&window.UPCF) UPCF.init({F:D.findings, passages:D.passages, sources:D.sources,
+    label:UPCB.label, card:function(p){ return passageCard(p,{context:false}); },
+    placeCount:function(want){
+      var n=0; D.sources.forEach(function(s){ if(s.g.some(function(g){return g[0]==="place"&&want.indexOf(g[1])>=0;})) n++; });
+      return [n,D.sources.length];
+    },
+    hrefFindings:function(q){ return "#/findings"+(q?"?"+q:""); },
+    setQuery:function(q){ try{ history.replaceState(null,"","#/findings"+(q?"?"+q:"")); }catch(e){} }});
   // "In context": a passage's sentences, joined from the text this file carries,
   // or carried as they are when the file has no texts.
   UPCB.cx=function(id){
@@ -2185,7 +2845,8 @@ const CLIENT_ONE = String.raw`
     return "<h1>"+E(D.title)+"</h1>"+
       '<p class="lede">A searchable library of what this literature actually says. Every quotation was compared '+
       "with the source text character by character when this file was built"+(D.failures?"":" — all of them matched")+".</p>"+
-      (D.home?'<section class="card homesum"><h2>'+E(D.home.t)+"</h2>"+(D.home.r||"")+D.home.h+"</section>":"")+
+      (D.fh||"")+
+      (D.home?(D.fh?"<h2>What the literature says</h2>":"")+'<section class="card homesum"><h2>'+E(D.home.t)+"</h2>"+(D.home.r||"")+D.home.h+"</section>":"")+
       (D.overviews.length?'<p class="lede">'+(D.home?"<strong>Go deeper:</strong> read the":"<strong>New here?</strong> Start with the")+' <a href="#/overviews">'+
         PL(D.overviews.length,"overview","overviews")+"</a> — a short review per theme, written from the coded "+
         'passages, with every quotation linked back to the paper it came from. Then browse by <a href="#/codes">theme</a>, '+
@@ -2264,6 +2925,17 @@ const CLIENT_ONE = String.raw`
           '<td class="muted">'+E(s.c||"")+'</td><td class="num">'+((passagesOf[s.i]||[]).length||"")+"</td></tr>";
       }).join("")+"</tbody></table></div>";
   };
+  // One chip per code; a second coder who gave the same code is named in its tooltip (evChipsHtml).
+  function mergeEv(list){
+    var seen={}, out=[];
+    list.forEach(function(g){
+      var k=g[0]+":"+g[1], kind=D.ck[g[2]];
+      if(seen[k]){ seen[k][5]=(seen[k][5]?seen[k][5]+"\n":"")+"Also coded so by "+g[2]+
+        (kind?" ("+({rule:"a rule",ensemble:"a vote of model runs"}[kind]||kind)+")":""); return; }
+      seen[k]=g.slice(); out.push(seen[k]);
+    });
+    return out;
+  }
   V.source=function(a,q){
     var s=D.sources[+a[0]]; if(!s) return "<h1>Unknown source</h1>";
     var mine=passagesOf[s.i]||[];
@@ -2306,10 +2978,11 @@ const CLIENT_ONE = String.raw`
       '<p class="lede">'+E(bits)+(s.d?' · <a href="https://doi.org/'+encodeURIComponent(s.d)+'">doi:'+E(s.d)+"</a>":"")+
         ((D.files&&s.p)?' · <a href="'+E(D.files+"/"+encodeURIComponent(s.p))+'" target="_blank" rel="noopener">open the PDF ↗</a>':"")+"</p>"+
       ((s.g.length||mine.some(function(p){return p.g.length;}))?'<p class="small muted">'+E(UPCB.codeNote())+"</p>":"")+
+      (s.cb||"")+
       (sTop.length?'<div class="card"><div class="small muted">Judgements about this paper as a whole</div>'+
         '<div class="meta" style="margin-top:.4rem">'+sTop.map(function(g){return chip(g);}).join(" ")+"</div></div>":"")+
       (sEv.length?'<div class="card evcard"><div class="small muted">'+E(D.evTitle)+"</div>"+
-        '<div class="meta" style="margin-top:.4rem">'+sEv.map(function(g){return chip(g);}).join(" ")+"</div></div>":"")+
+        '<div class="meta" style="margin-top:.4rem">'+mergeEv(sEv).map(function(g){return chip(g);}).join(" ")+"</div></div>":"")+
       (s.cd||[]).map(function(c){ return '<details class="card evcard"><summary><strong>'+E(c[0])+"</strong></summary>"+c[1]+"</details>"; }).join("")+
       "<h2>Passages ("+mine.length+")</h2>"+
       (mine.length?'<div class="evshow">'+mine.map(function(p){return passageCard(p,{showSource:false,context:false});}).join("")+"</div>":'<p class="muted">No passages from this paper yet.</p>')+
@@ -2345,7 +3018,7 @@ const CLIENT_ONE = String.raw`
       "citation to the paper. A review is written by a model from coded passages: the quotations in it "+
       "were checked character by character, the sentences around them were not.</p></div>";
     var html=o.h||"";   // rendered at build time by renderOverviewMarkdown
-    return "<h1 style=\"margin-top:0\">"+E(o.t)+"</h1>"+(o.rv||"")+
+    return "<h1 style=\"margin-top:0\">"+E(o.t)+"</h1>"+(o.rv||"")+(o.kf?o.kf+"<h2>The review</h2>":"")+
       '<div class="card" style="max-width:74ch">'+html+"</div>"+
       // A support matrix's columns come prerendered (claimsTableHtml, as the folder's pages).
       (o.ct?o.ct:o.cl.length?"<h2>What this says, and what backs it</h2><div class=\"wrap\"><table><thead><tr><th>Claim</th>"+
@@ -2354,6 +3027,18 @@ const CLIENT_ONE = String.raw`
             return p?'<a href="#/source/'+p.s+"?ex="+encodeURIComponent(id2)+'">'+E((D.sources[p.s]||{}).k||"")+"</a>":E(id2);
           }).join("; ")+"</td></tr>";}).join("")+"</tbody></table></div>":"");
   }
+  V.findings=function(){
+    if(!D.findings) return "<h1>No findings</h1>";
+    return "<h1>Findings</h1>"+D.fl+'<div id="fhost"></div>';
+  };
+  V.findings.mount=function(a,qs){ var h=document.getElementById("fhost"); if(h) UPCF.findings(h,qs); };
+  V.evidence=function(){
+    if(!D.findings) return "<h1>No evidence map</h1>";
+    return "<h1>Evidence map</h1><p class=\"lede\">How much each review\u2019s statements rest on, at a glance. A review is marked "+
+      '<span class="flag">thin</span> when none of its statements has more than limited support. Click a review to read it, or its count to see its statements.</p>'+
+      '<div id="ehost"></div>';
+  };
+  V.evidence.mount=function(){ var h=document.getElementById("ehost"); if(h) UPCF.map(h); };
   V.methods=function(){
     if(!D.about) return "<h1>No methods page</h1>";
     return "<h1>"+E(D.about.t)+"</h1><div class=\"card\" style=\"max-width:74ch\">"+D.about.h+"</div>";
@@ -2472,9 +3157,17 @@ const CLIENT_ONE = String.raw`
     });
   }
 
-  var NAV=[["#/","Home","home"],["#/codes","Codes","codes"],["#/sources","Sources","sources"],
-           ["#/passages","Passages","passages"]];
-  if(D.overviews.length) NAV.push(["#/overviews","Overviews","overviews"]);
+  var LIB=[["#/codes","Codes","codes"],["#/sources","Sources","sources"],["#/passages","Passages","passages"]];
+  var NAV=[["#/","Home","home"]];
+  // A rated library (1.15.0) leads with what the literature says, then how it was built.
+  if(D.findings){
+    NAV.push(["#/findings","Findings","findings"],["#/evidence","Evidence map","evidence"]);
+    if(D.overviews.length) NAV.push(["#/overviews","Overviews","overviews"]);
+    NAV=NAV.concat(LIB);
+  } else {
+    NAV=NAV.concat(LIB);
+    if(D.overviews.length) NAV.push(["#/overviews","Overviews","overviews"]);
+  }
   if(D.matrix) NAV.push(["#/matrix","Matrix","matrix"]);
   if(D.about) NAV.push(["#/methods","Methods","methods"]);
 
@@ -2605,10 +3298,13 @@ export function writeSingleFile(root, opts = {}) {
     overview: (syn) => `#/overviews/${encodeURIComponent(syn._addr || syn.synthesis_id)}`,
     code: (slug, code) => `#/code/${encodeURIComponent(slug)}/${encodeURIComponent(code)}`,
     view: (name) => `#/${name}`,
+    findings: (q) => "#/findings" + findingsQuery(q, "?"),
   };
   // A paper's cards (a rating, say), rendered here by the folder's renderer.
   model.sources.forEach((s, i) => {
     if (s.cards && s.cards.length) sources[i].cd = s.cards.map((c) => [c.card, renderOverviewMarkdown(c.md, model, oneLinks)]);
+    // What the paper contributes to the reviews (1.15.0), first on its page.
+    if (model.findings.length) { const cb = contributesHtml(model, s, oneLinks); if (cb) sources[i].cb = cb; }
   });
 
   const texts = [];
@@ -2670,6 +3366,7 @@ export function writeSingleFile(root, opts = {}) {
       grp: syn._group ? syn._group.slug : "",
       ...(syn._revision ? { rv: revisionHtml(model, syn._revision, syn._addr) } : {}),
       ...(syn._support ? { ct: claimsTableHtml(model, syn, oneLinks) } : {}),
+      ...(syn._support && model.findings.length ? { kf: keyFindingsHtml(model, syn, oneLinks) } : {}),
       // Rendered here, by the same function as the folder's pages.
       h: renderOverviewMarkdown(body.replace(/^\s*#\s+.*\n+/, ""), model, oneLinks),
       cl: (syn.claims || []).map((c) => [c.text, c.evidence_ids || []]),
@@ -2689,6 +3386,8 @@ export function writeSingleFile(root, opts = {}) {
     sources, passages, codebooks, overviews, ck, home,
     ...(codebooks.some((cb) => cb.ev) ? { evTitle: EVIDENCE_TITLE, evNote: EVIDENCE_NOTE } : {}),
     ...(model.about ? { about: aboutPayload(model, oneLinks) } : {}),
+    ...(model.findings.length ? { findings: findingsPayload(model, srcIndex, oneLinks), fh: findingsHomeHtml(model, oneLinks),
+                                  fl: FINDINGS_LEDE(model).replace(/href="methods\.html"/, 'href="#/methods"') } : {}),
   };
 
   // Each reading copy gets its own island, parsed only when its paper is opened.
@@ -2726,6 +3425,7 @@ nav a{cursor:pointer}
   }</script>
 ${textIslands}
 <script>${BROWSE_JS}</script>
+<script>${FINDINGS_JS}</script>
 <script>${CLIENT_ONE}</script>
 </body></html>
 `;

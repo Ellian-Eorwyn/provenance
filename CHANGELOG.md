@@ -43,7 +43,18 @@ corpus and is rendered exactly as before: a 179-paper library rebuilt with
   - statement support: an `evidence_matrix` derived from an overview joins its
     claims table as columns behind "Show support for each statement" (off by
     default);
-  - `--about <md>`: a Methods page and a nav item.
+  - `--about <md>`: a Methods page and a nav item;
+  - **findings** (spec/09 req. 15): a Findings page with filters and the
+    corpus's starting points (`--findings <json>`: `starting_points` with a
+    `match` on groups, themes, kinds, places or support; `words`; `map_place`),
+    an Evidence map, a Key findings box above each rated overview, and "What
+    this paper contributes" first on a paper's page. Support in four plain
+    words, the IPCC term on hover; the support table's columns are now
+    "Support" and "Studies agreeing". `[view:findings]`, `[view:evidence]` and
+    `[view:methods]` link to them. With findings, the nav leads with Findings,
+    Evidence map and Overviews.
+  - a paper's evidence chips: two coders giving the same code make one chip
+    whose tooltip names both (different codes still get a chip each).
   Both shapes (folder and single file) and the light file render all of these.
   Evidence chips are drawn as outlines, so a rating never looks like a theme.
 - **Overview markdown** gains `**strong**` and `[text](https://…)` links (rating cards and

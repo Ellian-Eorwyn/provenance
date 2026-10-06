@@ -2244,13 +2244,15 @@ async function main() {
         // read a flag's argument as the corpus directory.
         const VALUE_FLAGS = new Set(["--format", "-o", "--into", "--profile", "--strip",
           "--frontmatter", "--filenames", "--image-names", "--domain", "--matrix", "--files",
-          "--about", "--original-edition"]);
+          "--about", "--original-edition", "--findings"]);
         const dir = rest.find((a, i) => !a.startsWith("-") && !(i > 0 && VALUE_FLAGS.has(rest[i - 1])));
         const format = arg(rest, "--format");
         const out = arg(rest, "-o");
-        if (!dir || !format) { process.stderr.write("usage: upc export <dir> --format bibtex|ris|csl-json|jsonl|markdown|ro-crate|prov|obsidian|site|site-one [-o <dir|file>] [--copy] [--bundle] [--single-file] [--no-text] [--matrix <a>:<b>] [--about <md>] [--original-edition <url>]\n"); process.exit(2); }
+        if (!dir || !format) { process.stderr.write("usage: upc export <dir> --format bibtex|ris|csl-json|jsonl|markdown|ro-crate|prov|obsidian|site|site-one [-o <dir|file>] [--copy] [--bundle] [--single-file] [--no-text] [--matrix <a>:<b>] [--about <md>] [--original-edition <url>] [--findings <json>]\n"); process.exit(2); }
         // 1.15.0: a Methods page from a Markdown file, and where a revised overview's previous version lives.
-        const siteExtras = { about: arg(rest, "--about") || null, originalEdition: arg(rest, "--original-edition") || null };
+        // --findings: a rated library's starting points and wording for its Findings pages.
+        const siteExtras = { about: arg(rest, "--about") || null, originalEdition: arg(rest, "--original-edition") || null,
+                             findings: arg(rest, "--findings") || null };
         if (format === "site-one" || (format === "site" && rest.includes("--single-file"))) {
           const mx = arg(rest, "--matrix");
           const filesArg = arg(rest, "--files");

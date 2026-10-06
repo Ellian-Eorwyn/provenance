@@ -331,6 +331,21 @@ Normative requirements, in addition to everything the browser must already do:
 14. **A Methods page (1.15.0).** `--about <file.md>` adds a page, linked from the
     navigation, rendered with the overviews' grammar so its theme links resolve
     and its quotations are checked.
+15. **Findings (1.15.0).** When support matrices exist, the site adds a Findings
+    page (every statement of the current overviews, filtered by support, kind of
+    statement, place and overview), an Evidence map (each overview's statements
+    by support, at a glance), a Key findings box above each such overview, and a
+    "What this paper contributes" card first on a paper's page. Support is said
+    in four plain words — Well supported, Some support, Limited, Weak or unclear —
+    read from a matrix claim's `ext["upc-corpus"].support`, or from its IPCC term
+    (very high and high are both "Well supported"); the IPCC term stays in a
+    tooltip. A claim MAY also carry `studies` (independent studies), `papers`,
+    `same_lead`, `relayed_only`, `kind`, `places`, `countries` and `designs`;
+    the site shows them as given and judges nothing itself. A corpus names its
+    readers' starting points and wording in a settings file (`--findings
+    <json>`); the renderer holds no corpus's vocabulary. These pages are
+    judgements and say so, and a passage opened from them is the same card,
+    with the same check, as everywhere else.
 
 ### The Obsidian vault export
 

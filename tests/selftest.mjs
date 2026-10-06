@@ -1823,6 +1823,81 @@ ok("filename rejects reserved", !checkFilename("sources/con/x.md").ok);
   ok("1.15 one: Methods travels with it", P.about && P.about.t === "How this library was made" && /#\/overviews\//.test(P.about.h));
   ok("1.15 one: the evidence section's wording travels too", P.evTitle === "Evidence ratings (advisory)");
   ok("1.15 markdown: **strong** renders", /<strong>Grade: Low\.<\/strong>/.test(P.sources[0].cd[0][1]));
+
+  // Findings (1.15.0): the matrix's statements in plain words, a Findings page, the
+  // evidence map, Key findings on the overview, starting points on the home page,
+  // and what a paper contributes on its page.
+  const place = mkCb("place", "Where it was studied", [{ code: "us", label: "United States" }, { code: "europe", label: "Europe" }], EV);
+  clearRepCache();
+  codeCmd(dir, "cds-place", [{ codebook_ref: place.codebook_id, code: "us", target: { kind: "source", id: sid }, coder: "place-rule" }],
+          { tool: "selftest", coderKind: "rule" });
+  clearRepCache();
+  codeCmd(dir, "cds-blind", [{ codebook_ref: grade.codebook_id, code: "low", target: { kind: "source", id: sid }, coder: "claude-blind" }],
+          { tool: "selftest", coderKind: "model" });
+  clearRepCache();
+  const sm3 = addSynthesisCmd(dir, { type: "evidence_matrix", title: "Support: Heat pumps",
+    claims: [{ claim_id: "cl-0001", text: "Heat pumps cut bills.", evidence_ids: [e1],
+      ext: { "upc-corpus": { ipcc: "low confidence", evidence: "limited", agreement: "low", independent: 1,
+        support: "limited", support_label: "Limited", studies: 1, papers: 1, same_lead: false, relayed_only: false,
+        kind: "finding", places: ["us"], countries: ["US"], designs: ["case study"],
+        passages: [{ extraction_id: e1, verdict: "partly", gap: "broader" }] } } }],
+    provenance: { produced_by: { tool: "selftest", method: "model" }, derived_from: { synthesis_ids: [s2.synthesis_id] } } },
+    { output: mx, tool: "selftest", supersedes: sm.synthesis_id });
+  eq("1.15 findings: plain fields are an update in place", sm3.synthesis_id, sm.synthesis_id);
+  const settings = path.join(stage, "findings.json");
+  fs.writeFileSync(settings, JSON.stringify({
+    starting_points: [{ id: "cases", label: "Case evidence", task: "Step 2", note: "Findings from data or cases. More words.",
+                        match: { themes: ["theme/heat-pumps"], kinds: ["finding"] } },
+                      { id: "none", label: "Nothing here", match: { kinds: ["recommendation"] } }],
+    words: { one_study: "Rests on one study: worth testing here" }, map_place: "us" }));
+  const about2 = path.join(stage, "methods2.md");
+  fs.writeFileSync(about2, "# How\n\nSee [view:findings] and [view:evidence].\n");
+  clearRepCache();
+  const out2 = fs.mkdtempSync(path.join(os.tmpdir(), "upc-115f-"));
+  writeSite(dir, { out: out2, about: about2, originalEdition: "https://example.org/2.1/", findings: settings });
+  const r2 = (rel) => fs.readFileSync(path.join(out2, rel), "utf8");
+  const home2 = r2("index.html");
+  ok("1.15 findings: the two pages and their data are written", fs.existsSync(path.join(out2, "findings.html")) &&
+     fs.existsSync(path.join(out2, "evidence.html")) && fs.existsSync(path.join(out2, "data", "findings.js")));
+  ok("1.15 findings: the nav leads with them", home2.indexOf('href="findings.html"') < home2.indexOf('href="overviews/"') &&
+     home2.indexOf('href="overviews/"') < home2.indexOf('href="codes/"'));
+  ok("1.15 findings: the Findings page loads the passages and the statements", /data\/browse\.js/.test(r2("findings.html")) &&
+     /data\/findings\.js/.test(r2("findings.html")) && /data-findings/.test(r2("findings.html")));
+  const F2 = JSON.parse(r2("data/findings.js").replace(/^window\.__UPCF_DATA=/, "").replace(/;\s*$/, ""));
+  ok("1.15 findings: one statement, in plain words", F2.f.length === 1 && F2.f[0].s === "limited" && F2.f[0].n === 1 &&
+     F2.f[0].k === "finding" && F2.f[0].pl[0] === "us" && F2.f[0].ps[0][0] === e1 && F2.f[0].ps[0][3] === 0);
+  ok("1.15 findings: places take the scheme's labels, themes their key", F2.places.us === "United States" &&
+     F2.ov[0].k === "theme:heat-pumps" && F2.ov[0].a === s1.synthesis_id && F2.mapPlace === "us");
+  ok("1.15 findings: a starting point's theme may be written as in a marker", F2.starts[0].match.themes[0] === "theme:heat-pumps");
+  ok("1.15 findings: home offers the starting points that match something", /Start from what you are working on/.test(home2) &&
+     /href="findings\.html#start=cases"/.test(home2) && /1 statement →/.test(home2) && !/Nothing here/.test(home2));
+  ok("1.15 findings: home shows how strong the evidence is", /class="strip"/.test(home2) && /How strong is the evidence\?/.test(home2));
+  const ov3 = r2(`overviews/${s1.synthesis_id}.html`);
+  ok("1.15 findings: Key findings above the review", /<section class="card kf"><h2>Key findings<\/h2>/.test(ov3) &&
+     ov3.indexOf("Key findings") < ov3.indexOf("One study (Low) finds"));
+  ok("1.15 findings: a single-study statement is a lead, in the corpus's own words", /Rests on one study: worth testing here \(1\)/.test(ov3) &&
+     /No statement in this review has more than limited support/.test(ov3));
+  ok("1.15 findings: it links to its statements in Findings", ov3.includes('href="../findings.html#theme=theme%3Aheat-pumps"'));
+  ok("1.15 findings: the support table says it in plain words, IPCC on hover", /<span class="sup-b s-limited" title="On the IPCC scale: low confidence">/.test(ov3) &&
+     /<th class="sup">Support<\/th><th class="sup num">Studies agreeing<\/th>/.test(ov3));
+  const src2 = r2("sources/hp.html");
+  ok("1.15 findings: a paper's page leads with what it contributes", /What this paper contributes/.test(src2) &&
+     src2.indexOf("What this paper contributes") < src2.indexOf("Evidence ratings (advisory)") && src2.includes('href="../findings.html#src=0"'));
+  ok("1.15 findings: two coders giving one code make one chip naming both",
+     (src2.match(/>Low<\/a><\/span>/g) || []).length === 1 && /Also coded so by claude-blind/.test(src2));
+  ok("1.15 findings: [view:findings] and [view:evidence] link", /<a href="findings\.html">the findings<\/a>/.test(r2("methods.html")) &&
+     /<a href="evidence\.html">the evidence map<\/a>/.test(r2("methods.html")));
+  ok("1.15 findings: the page script carries the engine", /window\.UPCF=API/.test(r2("assets/site.js")));
+  clearRepCache();
+  const file2 = path.join(out2, "one.html");
+  writeSingleFile(dir, { out: file2, about: about2, findings: settings });
+  const html2 = fs.readFileSync(file2, "utf8");
+  const P2 = JSON.parse(html2.match(/<script type="application\/json" id="upc-data">([\s\S]*?)<\/script>/)[1]);
+  ok("1.15 findings one: the statements travel", P2.findings && P2.findings.f.length === 1 && P2.findings.ov[0].h === `#/overviews/${s1.synthesis_id}`);
+  ok("1.15 findings one: home, overview and paper fragments", /#\/findings\?start=cases/.test(P2.fh) && /Key findings/.test(P2.overviews[0].kf) &&
+     /#\/findings\?theme=theme%3Aheat-pumps/.test(P2.overviews[0].kf) && /What this paper contributes/.test(P2.sources[0].cb));
+  ok("1.15 findings one: the engine is in the file", /window\.UPCF=API/.test(html2) && /V\.findings=/.test(html2));
+  fs.rmSync(out2, { recursive: true, force: true });
   fs.rmSync(out, { recursive: true, force: true });
   fs.rmSync(dir, { recursive: true, force: true });
   fs.rmSync(stage, { recursive: true, force: true });
