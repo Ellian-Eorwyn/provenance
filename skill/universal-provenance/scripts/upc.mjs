@@ -1790,6 +1790,10 @@ function addSynthesisCmd(root, obj, opts = {}) {
   syn.output = { path: "", media_type: obj.media_type || "text/markdown",
                  sha256: "sha256:" + U.sha256Hex(Buffer.from(text, "utf8")) };
   syn.synthesis_id = U.mintSynId(syn);
+  // Only fields outside the id recipe changed (spec/06; e.g. a claim's ext, such as a support
+  // matrix's verdict labels): it is the same synthesis, rewritten in place. A synthesis can't
+  // revise itself, so the link is left out rather than written as an error.
+  if (syn.supersedes === syn.synthesis_id) delete syn.supersedes;
   // One directory per synthesis, holding synthesis.json + synthesis.md — the
   // layout loadCorpus scans for (a flat <id>.json is invisible to it).
   const dirRel = path.posix.join(base.replace(/\/$/, ""), syn.synthesis_id);

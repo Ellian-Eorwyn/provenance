@@ -1746,6 +1746,19 @@ ok("filename rejects reserved", !checkFilename("sources/con/x.md").ok);
     provenance: { produced_by: { tool: "selftest", method: "model" }, derived_from: { synthesis_ids: [s2.synthesis_id] } } },
     { output: mx, tool: "selftest" });
   eq("1.15 support: the matrix is written", sm.status, "ok");
+  // Storing it again with only a verdict label changed mints the same id: an update in place,
+  // never a synthesis that supersedes itself (found on a real library, 2026-10-05).
+  clearRepCache();
+  const sm2 = addSynthesisCmd(dir, { type: "evidence_matrix", title: "Support: Heat pumps",
+    claims: [{ claim_id: "cl-0001", text: "Heat pumps cut bills.", evidence_ids: [e1],
+      ext: { "upc-corpus": { ipcc: "low confidence", evidence: "limited", agreement: "low", independent: 1,
+        passages: [{ extraction_id: e1, verdict: "partly", gap: "broader" }] } } }],
+    provenance: { produced_by: { tool: "selftest", method: "model" }, derived_from: { synthesis_ids: [s2.synthesis_id] } } },
+    { output: mx, tool: "selftest", supersedes: sm.synthesis_id });
+  eq("1.15 support: a label-only change keeps the id", sm2.synthesis_id, sm.synthesis_id);
+  const smObj = JSON.parse(fs.readFileSync(path.join(dir, "syntheses", sm.synthesis_id, "synthesis.json"), "utf8"));
+  ok("1.15 support: it doesn't supersede itself", !smObj.supersedes && !smObj.superseded_by);
+  eq("1.15 support: the new label is stored", smObj.claims[0].ext["upc-corpus"].agreement, "low");
   clearRepCache();
   {
     const v = validateCorpus(dir);

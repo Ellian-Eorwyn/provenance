@@ -21,7 +21,10 @@ corpus and is rendered exactly as before: a 179-paper library rebuilt with
   <syn-id>` refuses an unknown id, records `supersedes`, and writes
   `superseded_by` into the old synthesis. Neither field is in the id recipe. The
   validator reports a link that resolves to nothing, or to itself, as
-  `dangling_synthesis`.
+  `dangling_synthesis`. When only fields outside the id recipe changed (a claim's
+  `ext`, such as a support matrix's verdict labels), the new synthesis has the old
+  one's id: it is rewritten in place and `supersedes` is left out, rather than
+  written as a synthesis that supersedes itself.
 - **Hidden extraction sets** (spec/09 req. 10): `upc anchor --set <id> --hidden`
   marks the set's manifest `ext["upc-site"].hidden`; its quotations are checked
   like any other but never listed as passages. A set already holding listed
