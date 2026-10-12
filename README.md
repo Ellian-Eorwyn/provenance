@@ -1,7 +1,144 @@
 # Universal Provenance Corpus (UPC)
 
-**A tool-independent standard for storing research materials with explicit,
-portable provenance and byte-exact quotation gates.** Version **1.15.0**.
+**Turn hundreds of research articles into a coded, evidence-rated library you
+can browse and share, in which every quotation is checked against the paper it
+came from.**
+
+![The home page of a 179-paper library: starting points for the team's tasks, a bar showing how strong the evidence is, and a summary of what the literature says](docs/images/site-home.jpg)
+
+## For researchers: what this lets you do
+
+You have a large body of literature and a handful of research questions. Reading
+everything closely isn't possible, and an AI summary you can't check isn't
+worth much. UPC lets language models running on your own computer do the
+first pass of reading, coding and rating. You set the questions and codes and
+approve each step, and every claim the result makes can be followed back to the
+exact sentence in the paper.
+
+1. **Bring in the literature.** Use a folder of PDFs with a spreadsheet that
+   lists them, Markdown exports from a literature-review tool, web pages and
+   data records you have fetched, or spreadsheets of your own data. Hundreds of
+   papers at a time is the normal case. UPC doesn't search databases for you;
+   you bring the articles.
+2. **Find what's relevant to your questions.** Each paper is screened against
+   your research question for how relevant it is and what kind of study it is.
+   Then you can ask a question in plain words and get the passages that answer
+   it, from every paper at once, found by meaning as well as by keyword.
+3. **Code passages.** You write codebooks from your research questions, such as
+   theories, actors, technologies or outcomes. A model reads every paper and
+   pulls out the passages that fit each code. You spot-check samples, and
+   agreement between you and the model is reported. A person's codings and a
+   model's sit side by side, each under its coder's name.
+4. **Rate the strength of the evidence** at three levels:
+   - **Papers** get a grade from a checklist suited to their design. A
+     survey, a case study, an engineering model, a grey-literature report and a
+     theory paper are each judged by their own field's standards. The checklist
+     covers the evidence base, whether the design can support the claims, how
+     carefully the study was done, sample and precision, corroboration, and
+     transparency.
+   - **Passages** are labelled for what they rest on: data, a case, a cited
+     study, argument only, or nothing shown. Each is also labelled for whose
+     claim it is: the authors' own finding, or one relayed from other work.
+   - **Statements** in the written overviews are each checked against the
+     passages they cite. Each is shown as *Well supported*, *Some support*,
+     *Limited* or *Weak or unclear*, with how many independent studies agree
+     and where those studies did their research.
+
+   Citation impact is shown beside a paper's grade and never mixed into it.
+5. **See what the corpus holds.** There is a short overview for every code.
+   Claims made by several independent studies are grouped together. An
+   evidence map shows which themes rest on solid ground and which are thin. A
+   home summary gives the lay of the land.
+6. **Browse and share it.** All of this becomes a website: a page for every
+   paper, code and overview, a searchable index of every passage, a matrix that
+   crosses two codebooks, and a Findings page you can filter by support, kind of
+   statement and place. It is a single HTML file you can email, and it opens
+   with no software. A folder version is available for hosting, and an Obsidian
+   vault if you prefer to read in your own notes.
+
+### What the browsable library looks like
+
+These screenshots come from a real 179-paper library on socio-technical energy
+transitions.
+
+**Findings:** every statement from the overviews with its support. Filter it,
+or pick a starting point written for one of the team's tasks.
+
+![The Findings page: statements marked "Well supported" with how many studies agree and where, and filters by support, kind of statement and place](docs/images/site-findings.jpg)
+
+**Evidence map:** which themes the literature agrees on, and where it's thin.
+
+![The evidence map: one row per theme with the number of papers and statements, a bar of support levels, and how many statements come from data or cases](docs/images/site-evidence-map.jpg)
+
+**An overview with its Key findings:** what's well supported comes first, then
+what rests on a single study, kept separate from what is only relayed from
+other work.
+
+![An overview of "Diffusion of innovations" with its Key findings box, statements grouped by support, with lead authors and countries](docs/images/site-key-findings.jpg)
+
+**A paper's page:** what the paper contributes to the overviews, how it was
+judged as a whole, and its evidence ratings.
+
+![A paper's page: the statements it backs, judgements about the paper as a whole, and its advisory evidence ratings](docs/images/site-paper.jpg)
+
+**Every passage** with its codes and evidence labels. A tick means the passage
+was found word for word in the paper. Each one opens in context, at its place
+in the paper or the original PDF.
+
+![Coded passages from one paper, each marked "Checked against the extracted text", with code and evidence-label chips and links to see it in context](docs/images/site-passages.jpg)
+
+### Why you can trust what it shows
+
+- **No invented quotations.** The model proposes a quotation, and the software
+  checks it character by character against the paper. A quotation that doesn't
+  match is reported and never stored. This is what makes a small local model
+  safe to use.
+- **Every judgement is named.** Each code, screening decision and rating
+  records who made it: which model, which rule or which person. Disagreements
+  are shown, not hidden.
+- **Ratings are advisory, and they say so.** Each rating is run three times and
+  settled by majority vote. A "yes" must quote the paper or it becomes "can't
+  tell". Agreement between runs and with a blind second coder is reported, and
+  a Methods page discloses how AI was used. The rater never sees the venue or
+  the citation count.
+- **You make the decisions.** You own the codebooks, the rating rubric, and the
+  choice of when to run a full pass or publish. The models run on your own
+  machines, and nothing goes online until you say so.
+
+### What it took in practice
+
+For the 179-paper library above (4,500 pages, nine codebooks), on two machines
+each running a 27B model for reading and a 9B model for quick tasks:
+
+| Step | Time and result |
+|---|---|
+| Bring in the papers | 24 seconds |
+| Screen and code every paper | about 2.5 hours. 3,239 verified passages, 94% of proposed quotations found in the paper |
+| Rate every paper, three runs each | 4.5 hours, overnight |
+| Rewrite 50 overviews from the rated evidence and check their 741 statements | about 40 minutes |
+| Build the site | 12 seconds. 294 pages, every quotation verified |
+
+### What you need
+
+- **The articles**, gathered by you or your search tool.
+- **A computer that can run language models locally.** The library above used
+  a 27-billion-parameter model for reading and coding, a 9-billion one for
+  quick tasks, and an embeddings model for search.
+- **Someone comfortable at the command line, or an AI coding assistant.** The
+  [runbook](skill/upc-corpus/SKILL.md) is written so that an assistant such as
+  Claude Code can follow it step by step, stopping for your decisions.
+
+Start with the toolkit's [overview](skill/upc-corpus/README.md) and
+[runbook](skill/upc-corpus/SKILL.md). The rating method and its sources are in
+[the rubric](skill/upc-corpus/references/appraisal/rubric.md).
+
+---
+
+## For developers and tool builders: the standard
+
+Underneath the toolkit is **a tool-independent standard for storing research
+materials with explicit, portable provenance and byte-exact quotation gates.**
+Version **1.15.1**.
 
 A UPC corpus is a folder in which both humans and software can always answer:
 *What is this object? Where did it come from? What transformations produced it?
