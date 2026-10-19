@@ -170,7 +170,8 @@ the page's audience, as an enum it cannot leave.
 `onepager.py build --slug S --out <dir> [--draft] [--no-pdf] [--no-docx] [--playwright-dir <dir>]`
 writes `index.html`, `<slug>.pdf`, `<slug>-figures.md` and `<slug>-figures.docx`, and a build
 record beside the folder (`<dir>.build.json`: the files' SHA-256s, the profiles' digests, the
-figures and codings it used). It refuses, in this order:
+figures and codings it used). `--out` must be empty or a folder an earlier build of the page
+wrote; a rebuild replaces only the files the last build made. It refuses, in this order:
 
 1. `upc validate` errors.
 2. Figures that changed since the page was written (add the page again).

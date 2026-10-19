@@ -465,6 +465,20 @@ class OnePager(unittest.TestCase):
         rec = O.build(self.corpus, "proc", out2, draft=True, pdf=False, docx=HAVE_PANDOC)
         self.assertEqual(rec["files"], self.draft["files"])
 
+    def test_a_build_touches_only_its_own_files(self):
+        other = self.root / "someone-elses"
+        other.mkdir()
+        (other / "index.html").write_text("Ellie's own page")
+        with self.assertRaises(SystemExit) as cm:
+            O.build(self.corpus, "proc", other, draft=True, pdf=False, docx=False)
+        self.assertIn("holds files no one-pager build made", str(cm.exception))
+        self.assertEqual((other / "index.html").read_text(), "Ellie's own page")
+        mine = self.root / "mine"
+        O.build(self.corpus, "proc", mine, draft=True, pdf=False, docx=HAVE_PANDOC)
+        (mine / "notes.txt").write_text("kept")
+        O.build(self.corpus, "proc", mine, draft=True, pdf=False, docx=False)
+        self.assertEqual(sorted(f.name for f in mine.iterdir()), ["index.html", "notes.txt", "proc-figures.md"])
+
     def test_the_layout_orders_the_blocks(self):
         tiles, how, status = (self.html.index('data-block="the numbers"'), self.html.index('data-block="how it works"'),
                               self.html.index('data-block="where it stands"'))

@@ -1801,6 +1801,11 @@ def banned_in(ctx: dict, html: str) -> list[str]:
 def build(corpus: Path, slug: str, out: Path, *, draft: bool = False, pdf: bool = True, docx: bool = True,
           pw: str | None = None) -> dict:
     corpus, out = Path(corpus).resolve(), Path(out).expanduser().resolve()
+    before = (C.load_json(D.manifest_path(out), {}) or {}).get("files") or {}
+    if out.exists() and any(out.iterdir()) and not before:
+        raise SystemExit(f"refusing to build into {out}: it holds files no one-pager build made; give an empty "
+                         "folder, or the one an earlier build of this page wrote")
+    out.mkdir(parents=True, exist_ok=True)
     ctx = prepare(corpus, slug, draft)
     html = page_html(ctx)
     md = figures_markdown(ctx)
@@ -1842,12 +1847,11 @@ def build(corpus: Path, slug: str, out: Path, *, draft: bool = False, pdf: bool 
             if probs:
                 raise SystemExit("refusing to build:\n  " + "\n  ".join(probs))
             files[f"{slug}.pdf"] = steady_pdf((tmp / "page.pdf").read_bytes(), str(ctx["cfg"]["date"])[:10])
-    out.mkdir(parents=True, exist_ok=True)
     for name, data in files.items():
         (out / name).write_bytes(data)
-    for f in out.iterdir():  # anything an earlier build made that this one did not
-        if f.is_file() and f.name not in files:
-            f.unlink()
+    for name in before:  # what the last build made that this one did not; nothing else is touched
+        if name not in files and (out / name).is_file():
+            (out / name).unlink()
     warn = banned_in(ctx, html)
     record = {"built": now(), **TOOL, "corpus": str(corpus), "slug": slug, "revision": ctx["revision"],
               "synthesis_id": ctx["synthesis_id"], "draft": draft, "distribution": ctx["cfg"]["distribution"],
