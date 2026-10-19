@@ -61,7 +61,7 @@ import common as C  # noqa: E402
 from corpus_view import (check_extraction, esc, extractions, find_span, generations, latest_per_source,  # noqa: E402
                          meta_content, suppressed_in, thumbnail, validate)
 
-TOOL = {"tool": "upc-corpus/dossier", "tool_version": "1.0.0"}
+TOOL = {"tool": "upc-corpus/dossier", "tool_version": "1.1.0"}
 ENTRY, BRIEF = "x-dossier-entry", "x-dossier-brief"
 SCHEMAS = Path(__file__).resolve().parents[1] / "references" / "profiles"
 MAX_COPY = 25 * 1024 * 1024  # a static host's per-file limit (Cloudflare Pages)
@@ -265,6 +265,15 @@ def cmd_init(corpus: Path, a) -> int:
         cfg["order"] = [x.strip() for x in a.order.split(",") if x.strip()]
     if a.suppress:
         cfg["suppress"] = sorted(set(cfg.get("suppress", [])) | set(a.suppress))
+    for pair in getattr(a, "show_writer_as", None) or []:
+        real, sep, label = pair.partition("=")
+        if not sep or not real.strip():
+            raise SystemExit("--show-writer-as: WRITER=LABEL, e.g. 'Claude (Opus 5.5)=Hermes'")
+        labels = cfg.setdefault("writer_labels", {})
+        if label.strip():
+            labels[real.strip()] = label.strip()
+        else:
+            labels.pop(real.strip(), None)
     if a.sections:
         secs = C.load_json(a.sections, None)
         if not isinstance(secs, list) or not all(isinstance(s, dict) and s.get("slug") and s.get("title") for s in secs):
@@ -747,14 +756,14 @@ CSS = """
 --tape:rgba(246,236,196,.78);--shadow:0 1px 2px rgba(60,45,20,.08),0 6px 18px rgba(60,45,20,.08);
 --mono:"American Typewriter","Courier Prime","Courier New",ui-monospace,Menlo,monospace;
 --serif:"Iowan Old Style","Palatino Linotype",Palatino,Georgia,serif;
---sans:-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif}
+--sans:-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;color-scheme:light}
 @media (prefers-color-scheme:dark){:root:not([data-theme=light]){--desk:#15140f;--folder:#383021;--folder-2:#463c28;
 --folder-edge:#5e5034;--paper:#1e1c18;--ink:#ece5d8;--muted:#a99f8d;--rule:#36312a;--stamp:#e57f72;--link:#8fbde4;
 --postit:#4a4322;--postit-ink:#f5ecc3;--chip:#2a261e;--tape:rgba(120,110,80,.5);
---shadow:0 1px 2px rgba(0,0,0,.35),0 6px 18px rgba(0,0,0,.3)}}
+--shadow:0 1px 2px rgba(0,0,0,.35),0 6px 18px rgba(0,0,0,.3);color-scheme:dark}}
 :root[data-theme=dark]{--desk:#15140f;--folder:#383021;--folder-2:#463c28;--folder-edge:#5e5034;--paper:#1e1c18;
 --ink:#ece5d8;--muted:#a99f8d;--rule:#36312a;--stamp:#e57f72;--link:#8fbde4;--postit:#4a4322;--postit-ink:#f5ecc3;
---chip:#2a261e;--tape:rgba(120,110,80,.5)}
+--chip:#2a261e;--tape:rgba(120,110,80,.5);--shadow:0 1px 2px rgba(0,0,0,.35),0 6px 18px rgba(0,0,0,.3);color-scheme:dark}
 *{box-sizing:border-box}
 body{margin:0;background:var(--desk);color:var(--ink);font:16px/1.6 var(--sans);-webkit-text-size-adjust:100%;overflow-wrap:break-word}
 a{color:var(--link)}
@@ -768,6 +777,15 @@ nav.tabs a{flex:0 0 auto;background:var(--folder-2);color:var(--ink);text-decora
 letter-spacing:.07em;text-transform:uppercase;padding:11px 15px 10px;border:1px solid var(--folder-edge);border-bottom:none;
 border-radius:10px 10px 0 0}
 nav.tabs a.here{background:var(--folder);position:relative;top:1px}
+.topbar{display:flex;align-items:flex-end;gap:8px}
+.topbar nav.tabs{flex:1 1 auto;min-width:0}
+button.theme{flex:none;margin:0 0 7px;display:inline-flex;align-items:center;gap:6px;background:none;color:var(--muted);
+border:1px solid var(--folder-edge);border-radius:999px;padding:6px 11px;font:600 .68rem/1 var(--mono);letter-spacing:.07em;
+text-transform:uppercase;cursor:pointer}
+button.theme:hover,button.theme:focus-visible{color:var(--ink);background:var(--chip)}
+button.theme svg{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round}
+button.theme[hidden],button.theme[data-to=dark] .sun,button.theme[data-to=light] .moon{display:none}
+@media (max-width:560px){button.theme span{display:none}button.theme{padding:7px}}
 main.folder{background:var(--folder);border:1px solid var(--folder-edge);border-radius:0 12px 12px 12px;
 padding:clamp(16px,3vw,36px);box-shadow:var(--shadow)}
 .sheet{background:var(--paper);border:1px solid var(--rule);border-radius:3px;padding:clamp(16px,3vw,30px);
@@ -858,7 +876,9 @@ footer.site{margin:26px 0 0;color:var(--muted);font-size:.82rem;max-width:80ch}
 .hide{display:none!important}
 @media (max-width:820px){.cover-grid,.docgrid{grid-template-columns:minmax(0,1fr)}.side{order:-1}
 .side .shot{max-width:260px}}
-@media print{body{background:#fff}nav.tabs,.lensbar,button.copy,.btn{display:none}main.folder,.sheet,.doc-card,
+@media print{:root:is([data-theme],:not([data-theme])){--ink:#24201a;--muted:#6b6354;--rule:#ddd;--link:#22567f;
+--paper:#fff;--folder:#fff;--chip:#fff;--postit:#fff;--postit-ink:#3a3212;--stamp:#a3302a;color-scheme:light}
+body{background:#fff}nav.tabs,.lensbar,button.copy,button.theme,.btn{display:none}main.folder,.sheet,.doc-card,
 figure.exhibit{box-shadow:none;border-color:#ccc;background:#fff}.postit,.stamp,.side .shot{transform:none}
 .postit{border:1px solid #bbb}a{color:inherit}}
 """
@@ -872,7 +892,25 @@ document.addEventListener('click',function(e){var b=e.target.closest('button.cop
 function done(){b.textContent='Copied';setTimeout(function(){b.textContent='Copy'},1400)}
 if(navigator.clipboard){navigator.clipboard.writeText(t).then(done,function(){})}});
 window.addEventListener('beforeprint',function(){document.querySelectorAll('details').forEach(function(d){d.open=true})});
+(function(){var r=document.documentElement,b=document.querySelector('button.theme');if(!b)return;
+var mq=window.matchMedia?window.matchMedia('(prefers-color-scheme: dark)'):null;
+function cur(){return r.getAttribute('data-theme')||(mq&&mq.matches?'dark':'light')}
+function show(){var to=cur()==='dark'?'light':'dark';b.setAttribute('data-to',to);b.title='Switch to '+to+' mode';
+b.setAttribute('aria-label',b.title);b.querySelector('span').textContent=to==='dark'?'Dark':'Light'}
+b.hidden=false;show();
+b.addEventListener('click',function(){var t=cur()==='dark'?'light':'dark';r.setAttribute('data-theme',t);
+try{localStorage.setItem('upc-dossier-theme',t)}catch(e){}show()});
+if(mq&&mq.addEventListener)mq.addEventListener('change',show)})();
 """
+
+# Before the stylesheet, so a reader's choice of light or dark applies without a flash.
+THEME_HEAD = ("<script>try{var t=localStorage.getItem('upc-dossier-theme');"
+              "if(t==='light'||t==='dark')document.documentElement.setAttribute('data-theme',t)}catch(e){}</script>")
+
+THEME_BUTTON = ('<button class="theme" type="button" hidden><svg class="moon" viewBox="0 0 24 24" aria-hidden="true">'
+                '<path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z"/></svg><svg class="sun" viewBox="0 0 24 24" '
+                'aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4'
+                'M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg><span>Dark</span></button>')
 
 CLIP = ('<svg class="clip" viewBox="0 0 22 64" aria-hidden="true"><path d="M6 14v36a5 5 0 0 0 10 0V9a7.5 7.5 0 0 0-15 0v42" '
         'fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>')
@@ -940,8 +978,8 @@ def page_html(title: str, body: str, ctx: dict, here: str, depth: int = 0) -> st
             f'a match shows which words were read, not that they are right. <a href="{up}method.html">How this was made</a>.')
     return f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow">
-<meta name="build" content="{esc(ctx['build'])}"><title>{esc(title)}</title><style>{CSS}</style></head><body>
-<div class="wrap"><nav class="tabs" aria-label="Sections">{nav}</nav><main class="folder">{body}</main>
+<meta name="build" content="{esc(ctx['build'])}"><title>{esc(title)}</title>{THEME_HEAD}<style>{CSS}</style></head><body>
+<div class="wrap"><div class="topbar"><nav class="tabs" aria-label="Sections">{nav}</nav>{THEME_BUTTON}</div><main class="folder">{body}</main>
 <footer class="site">{foot}</footer></div><script>{JS}</script></body></html>
 """
 
@@ -1148,6 +1186,13 @@ def leads_html(ctx: dict) -> str:
             f'<tr><th>Work</th><th>Here?</th><th>Cited as</th><th>Cited in</th></tr>{body}</table></div></div>')
 
 
+def writers_line(ctx: dict) -> str:
+    """Who wrote the words: "The writer here: Hermes, using Claude (Opus 5.5)." when a label stands in for the writer."""
+    pairs = sorted({(w["writer"], w["_writer"]) for w in ctx["docs"] + ([ctx["brief"]] if ctx["brief"] else [])})
+    names = [shown if shown == real else f"{shown}, using {real}" for shown, real in pairs]
+    return f"The writer{'s' if len(names) > 1 else ''} here: {'; '.join(names)}." if names else ""
+
+
 def method_html(ctx: dict) -> str:
     cfg, aud, proj = ctx["cfg"], ctx["aud"], ctx["proj"]
     rows = "".join(
@@ -1155,7 +1200,6 @@ def method_html(ctx: dict) -> str:
         f'<td>{("<a href=" + chr(34) + esc(d["_src"]["url"]) + chr(34) + " target=_blank rel=noopener>original</a>") if d["_src"].get("url") else "—"}</td>'
         f'<td>{esc(fmt_day(d["_src"].get("fetched_at")))}</td><td><code>{esc((d["_src"].get("sha256") or "")[:16])}</code></td>'
         f'<td>{esc(d["writer"])}</td></tr>' for d in ctx["docs"])
-    writers = sorted({d["writer"] for d in ctx["docs"]} | ({ctx["brief"]["writer"]} if ctx["brief"] else set()))
     readers = "".join(f"<li>{esc(r['name'])} — {esc(r['role'])}</li>" for r in aud["readers"])
     lenses = "".join(f"<li><b>{esc(lens['title'])}</b>: {esc(lens['description'])}</li>" for lens in proj["lenses"])
     dropped = ctx["dropped"]
@@ -1163,8 +1207,8 @@ def method_html(ctx: dict) -> str:
 <div class="sheet"><h2>The method</h2><ul>
 <li>Each document was saved as it was served or received, with its exact bytes, its SHA-256 hash and when and where it came from.
 The saved copies are kept with the corpus{"; the PDFs are offered for download here" if any(d.get("_copy") for d in ctx["docs"]) else ""}.</li>
-<li>For each document, a writer ({esc(", ".join(writers))}) wrote a summary, notes and questions in their own words, labelled as such,
-and proposed the passages behind each key point, figure, date, position, term and cited work.</li>
+<li>For each document, a writer wrote a summary, notes and questions in their own words, labelled as such,
+and proposed the passages behind each key point, figure, date, position, term and cited work. {esc(writers_line(ctx))}</li>
 <li>A program then looked for every proposed quotation in the saved text, character for character. Only those it found are shown:
 {ctx["quotes"]} quotations here{f", and {dropped} proposed quotations that were not found were left out" if dropped else ""}.
 It looked again when this page was built.</li>
@@ -1276,9 +1320,9 @@ def docx_markdown(ctx: dict, out: Path) -> str:
     L += ["# Appendix: sources and method", "",
           md("Each document was saved with its exact bytes and their SHA-256 hash. Every quotation in this file was found "
              "again in the saved text, character for character, when the file was made. Summaries, notes and the memo are "
-             "their writers' own words. A page number is the page as a PDF viewer counts it, which can differ from the "
-             "number printed on the page. Fixity is not authenticity: a match shows which words were read, not that they "
-             "are right."), ""]
+             f"their writers' own words. {writers_line(ctx)} A page number is the page as a PDF viewer counts it, which can "
+             "differ from the number printed on the page. Fixity is not authenticity: a match shows which words were read, "
+             "not that they are right."), ""]
     for d in ctx["docs"]:
         bits = [x for x in (d["_src"].get("url"), f"saved {fmt_day(d['_src'].get('fetched_at'))}" if d["_src"].get("fetched_at") else None,
                             f"SHA-256 {d['_src']['sha256'][:16]}…" if d["_src"].get("sha256") else None) if x]
@@ -1502,6 +1546,11 @@ def build(corpus: Path, out: Path, *, copies: bool = False, docx: bool = True, x
     if problems:
         raise SystemExit("refusing to build: quotations not found again in their sources:\n  " + "\n  ".join(problems[:12]))
     br = br_obj["ext"]["upc_corpus"]["dossier_brief"] if br_obj else None
+    # The pages may show a writer under another name (config `writer_labels`); the records keep the real one,
+    # and the Method page and the Word file's method note name both.
+    shown = cfg.get("writer_labels") or {}
+    for w in es + ([br] if br else []):
+        w["_writer"], w["writer"] = w["writer"], shown.get(w["writer"], w["writer"])
     idx = source_index(corpus)
     docs = order_docs(es, cfg, idx)
     width = len(str(len(docs)))
@@ -1653,6 +1702,9 @@ def main() -> int:
               "file-name", "order", "request-source", "request-quote", "request-by", "request-date"):
         p.add_argument(f"--{f}")
     p.add_argument("--suppress", action="append", help="a phrase that must never be published (repeatable)")
+    p.add_argument("--show-writer-as", action="append", metavar="WRITER=LABEL",
+                   help="show a writer under another name on the pages (repeatable; WRITER= drops the label). "
+                        "The records keep the real writer; the Method page names both")
     p.add_argument("--sections", help="a JSON file: [{slug, title, description}], the groups documents are shown in")
     for name in ("add", "brief"):
         p = sub.add_parser(name, help=f"store {'an entry' if name == 'add' else 'the cover memo'} written elsewhere")

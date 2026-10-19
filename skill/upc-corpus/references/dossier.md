@@ -90,6 +90,11 @@ same shape from the configured model.
 - The writer is named with `--writer` ("Claude (Opus 5.5)", "Ellie Eorwyn"), and the model,
   if a model wrote it, with `--model`. The pages label every summary, note and question with
   the writer's name.
+- To show a writer under another name, `init --show-writer-as "Claude (Opus 5.5)=Hermes"`
+  (config `writer_labels`; `WRITER=` drops it). Every label, the spreadsheet included, then
+  says "Hermes". The records keep the real writer, and only the method notes name both, once:
+  "The writer here: Hermes, using Claude (Opus 5.5)." (the Method page and the Word file's
+  appendix).
 
 ## The memo
 
@@ -120,6 +125,7 @@ same shape from the configured model.
 | `docs/NN-<name>.html` | One per document: why it is in the file, the summary, "why it matters" notes, key points with their quotations, numbers, dates, who's who, terms, exhibits, questions, what it leans on, the first page, the facts and the saved copy |
 | `timeline.html`, `people.html`, `terms.html`, `leads.html` | Across all documents, each line beside its quotation |
 | `method.html` | How it was made, who wrote what, the readers, the lenses, and every document's origin, save date and hash |
+| (every page) | A light/dark switch beside the tabs. It follows the reader's system until they choose; the choice is kept in their browser (`upc-dossier-theme`) and applied before the page paints. Print is always light |
 | `<name>.docx` | The same content as a Word file (pandoc), with exhibits |
 | `<name>.xlsx` | Sheets for documents, key points, numbers, timeline, who's who, terms, leads, questions and lenses. Every row gives the document, page, quotation and passage id |
 | `img/`, `files/` | First pages and exhibits (pdftoppm), and with `--copies` each PDF up to 25 MiB |

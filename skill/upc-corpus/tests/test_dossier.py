@@ -17,6 +17,7 @@ import tempfile
 import unittest
 import zipfile
 from pathlib import Path
+from unittest import mock
 
 os.environ["UPC_CORPUS_CONFIG"] = str(Path(__file__).with_name("no-such-config.json"))  # never this machine's config
 HERE = Path(__file__).resolve().parents[1] / "scripts"
@@ -363,6 +364,45 @@ class Dossier(unittest.TestCase):
 
     def test_check_finds_every_quotation_again(self):
         self.assertEqual(D.cmd_check(self.corpus), 0)
+
+    # -- how it reads
+    def test_every_page_has_a_light_and_dark_switch(self):
+        for f in self.out.rglob("*.html"):
+            html = f.read_text()
+            self.assertIn('<button class="theme" type="button" hidden>', html, f.name)
+            self.assertLess(html.index("upc-dossier-theme"), html.index("<style>"), f.name)  # applied before paint
+        self.assertIn(":root[data-theme=dark]", self.index)
+
+    def test_a_writer_label_shows_on_the_pages_and_the_method_names_the_real_writer(self):
+        corpus, _ = self.fresh("label")
+        with mock.patch.object(sys, "argv", ["dossier.py", "init", "--corpus", str(corpus),
+                                             "--show-writer-as", "Claude (test)=Hermes"]):
+            self.assertEqual(D.main(), 0)
+        self.assertEqual(D.load_cfg(corpus)["writer_labels"], {"Claude (test)": "Hermes"})
+        out = self.root / "label-site"
+        D.build(corpus, out, docx=HAVE_PANDOC)
+        for f in out.rglob("*.html"):
+            html = f.read_text()
+            if f.name == "method.html":
+                self.assertEqual(html.count("Claude (test)"), 1)
+                self.assertIn("The writer here: Hermes, using Claude (test).", html)
+            else:
+                self.assertNotIn("Claude (test)", html, f.name)
+        self.assertIn("— Hermes", (out / "index.html").read_text())
+        from openpyxl import load_workbook
+        cells = [str(c) for ws in load_workbook(next(out.glob("*.xlsx"))) for row in ws.iter_rows(values_only=True)
+                 for c in row if c is not None]
+        self.assertIn("Hermes", cells)
+        self.assertFalse([c for c in cells if "Claude (test)" in c])
+        if HAVE_PANDOC:
+            words = " ".join(D.docx_text(next(out.glob("*.docx"))).split())
+            self.assertEqual(words.count("Claude (test)"), 1)
+            self.assertIn("Hermes, using Claude (test)", words)
+        self.assertEqual({e["writer"] for e in D.entries(corpus)}, {"Claude (test)"})  # the records keep the writer
+        with mock.patch.object(sys, "argv", ["dossier.py", "init", "--corpus", str(corpus),
+                                             "--show-writer-as", "Claude (test)="]):
+            D.main()
+        self.assertEqual(D.load_cfg(corpus)["writer_labels"], {})
 
 
 if __name__ == "__main__":

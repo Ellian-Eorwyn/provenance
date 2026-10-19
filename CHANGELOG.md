@@ -39,7 +39,12 @@ gains one option. The new objects use the `x-` extension point.
   reused across dossiers. A project's lenses are what relevance is judged against.
 - `requirements.txt`: `pyyaml` for profiles written as YAML. pandoc and pdftoppm are
   optional, for the Word file and pictures.
-- Tests: `tests/test_dossier.py` (18, no model server), and five selftests for `anchor --source`.
+  - Every page has a light/dark switch. It follows the system until the reader chooses, and
+    the choice carries across pages. Print is always light.
+  - `init --show-writer-as WRITER=LABEL` shows a writer under another name on the pages, the
+    Word file and the spreadsheet. The records keep the real writer, and the method notes name
+    both.
+- Tests: `tests/test_dossier.py` (20, no model server), and five selftests for `anchor --source`.
 
 ## 1.15.1 — 2026-10-06
 
