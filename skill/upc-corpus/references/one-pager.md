@@ -74,6 +74,9 @@ folder is moved or copied.
 - **The value must be in its quote** (`corpus_view.value_in`). A figure read off a chart is
   anchored in a readings table saved as its own source (spec/05's OCR pattern: values, the
   box, the calibration; the slide image as its parent). Two readers are two readings.
+- **`rep`** (optional, on a figure or a reading) names one of the source's text representations to
+  anchor in instead of its reading copy: for a chart, the readings of that one slide, whose parent
+  is the slide's picture, so the passage points at the picture it was read from.
 - **Each figure has its own passage.** Two figures on one span are refused: give each the
   span that states it.
 - **`display`** lists the forms a page may print ("5-log", "7+", "⅓ less"). A form whose

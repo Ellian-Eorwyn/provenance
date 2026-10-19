@@ -275,8 +275,25 @@ def _inputs(f: dict) -> dict:
     keep = {k: f.get(k) for k in FIG_KEYS + ("quote", "readings") if f.get(k) not in (None, "", [], {})}
     if f.get("source_id") or f.get("source"):
         keep["source"] = f.get("source_id") or f.get("source")
-    keep["readings"] = [{"quote": r.get("quote"), "value": r.get("value")} for r in keep.get("readings") or []]
+    keep["readings"] = [{"quote": r.get("quote"), "value": r.get("value"), **({"rep": r["rep"]} if r.get("rep") else {})}
+                        for r in keep.get("readings") or []]
+    if f.get("rep"):
+        keep["rep"] = f["rep"]
     return keep
+
+
+def text_copy(corpus: Path, info: dict, rep: str | None) -> dict | str:
+    """The source as anchor() needs it, reading `rep` (one of its text representations, e.g. the
+    readings of one slide, whose parent is the slide's picture) instead of its reading copy. -> the
+    info, or what is wrong."""
+    if not rep:
+        return info
+    r = next((x for x in (info.get("record") or {}).get("representations") or [] if x.get("representation_id") == rep), None)
+    if not r:
+        return f"source {info['source_id']} has no representation {rep}"
+    if not str(r.get("media_type", "")).startswith("text/") or not r.get("path"):
+        return f"representation {rep} is not text ({r.get('media_type')})"
+    return {**info, "text_rep": rep, "text_path": str(corpus / r["path"])}
 
 
 def cmd_figures_add(corpus: Path, items: list, *, by: str, replace: bool, plan: bool) -> int:
@@ -310,7 +327,13 @@ def cmd_figures_add(corpus: Path, items: list, *, by: str, replace: bool, plan: 
             if not value_in(f["value"], f.get("quote")):
                 problems.append(f"{where}: its value {f['value']!r} is not in its quote; a figure's passage must state it")
                 continue
+            tc = text_copy(corpus, idx[f["source"]], f.get("rep"))
+            if isinstance(tc, str):
+                problems.append(f"{where}: {tc}")
+                continue
         for j, r in enumerate(f.get("readings") or []):
+            if isinstance(r, dict) and idx.get(r.get("source")) and isinstance(text_copy(corpus, idx[r["source"]], r.get("rep")), str):
+                problems.append(f"{where}.readings[{j}]: {text_copy(corpus, idx[r['source']], r.get('rep'))}")
             if not isinstance(r, dict) or not idx.get(r.get("source")) or not value_in(r.get("value"), r.get("quote")):
                 problems.append(f"{where}.readings[{j}]: a reading needs a source in this corpus and a quote that holds its value")
         for d in f.get("display") or []:
@@ -325,15 +348,18 @@ def cmd_figures_add(corpus: Path, items: list, *, by: str, replace: bool, plan: 
         raise SystemExit("the figures file does not fit (references/one-pager.md, 'A figure'); nothing was stored:\n  "
                          + "\n  ".join(problems[:20]))
 
-    asks: dict[str, list] = {}
+    asks: dict[tuple, list] = {}
     for k, f in enumerate(todo):
         if f.get("quote"):
-            asks.setdefault(idx[f["source"]]["source_id"], []).append((k, None, f["quote"]))
+            asks.setdefault((idx[f["source"]]["source_id"], f.get("rep")), []).append((k, None, f["quote"]))
         for j, r in enumerate(f.get("readings") or []):
-            asks.setdefault(idx[r["source"]]["source_id"], []).append((k, j, r["quote"]))
+            asks.setdefault((idx[r["source"]]["source_id"], r.get("rep")), []).append((k, j, r["quote"]))
     found: dict[tuple, dict] = {}
-    for sid, lst in asks.items():
-        got = anchor(corpus, idx[sid], [q for *_, q in lst], typ="data_point", model=by, prompt="onepager-figure@1", dry=plan)
+    for (sid, rep), lst in asks.items():
+        info = text_copy(corpus, idx[sid], rep)
+        if isinstance(info, str):
+            raise SystemExit(f"figures add: {info}")
+        got = anchor(corpus, info, [q for *_, q in lst], typ="data_point", model=by, prompt="onepager-figure@1", dry=plan)
         for (k, j, _), g in zip(lst, got):
             found[(k, j)] = g
 
@@ -356,7 +382,8 @@ def cmd_figures_add(corpus: Path, items: list, *, by: str, replace: bool, plan: 
                 dropped.append((f["id"], "its quote", f"the same passage as figure {other}; give each figure its own span"))
                 ok = False
             else:
-                rec.update(source_id=idx[f["source"]]["source_id"], quote=g["quote"], extraction_id=eid)
+                rec.update(source_id=idx[f["source"]]["source_id"], quote=g["quote"], extraction_id=eid,
+                           **({"rep": f["rep"]} if f.get("rep") else {}))
         for j, r in enumerate(f.get("readings") or []):
             g = found[(k, j)]
             if not g.get("extraction_id") and not (plan and "status" not in g):
@@ -364,7 +391,7 @@ def cmd_figures_add(corpus: Path, items: list, *, by: str, replace: bool, plan: 
                 ok = False
                 continue
             rd = {"source_id": idx[r["source"]]["source_id"], "quote": g["quote"], "extraction_id": g.get("extraction_id"),
-                  "value": str(r["value"])}
+                  "value": str(r["value"]), **({"rep": r["rep"]} if r.get("rep") else {})}
             a, b = number_of(r["value"]), number_of(f["value"])
             if f.get("tolerance") is not None and a is not None and b is not None:
                 rd["agrees"] = abs(a - b) <= float(f["tolerance"]) + 1e-9

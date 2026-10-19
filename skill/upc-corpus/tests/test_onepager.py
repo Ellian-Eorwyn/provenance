@@ -205,6 +205,18 @@ class OnePager(unittest.TestCase):
         self.assertIn("not in its quote", str(cm.exception))
         self.assertNotIn("wrong", O.load_reg(self.corpus))
 
+    def test_a_figure_can_be_anchored_in_another_text_copy_of_its_source(self):
+        c = self.fresh("rep")
+        src = O.D.source_index(c)[T]
+        bad = [{"id": "kill-rep", "label": "Kill", "value": "5-log", "source": T, "rep": "rep-000000000000",
+                "quote": "The treatment achieved a 5-log reduction"}]
+        with self.assertRaises(SystemExit) as cm:
+            O.cmd_figures_add(c, bad, by="test", replace=False, plan=True)
+        self.assertIn("no representation", str(cm.exception))
+        ok = [{**bad[0], "rep": src["text_rep"]}]
+        self.assertEqual(O.cmd_figures_add(c, ok, by="test", replace=False, plan=False), 0)
+        self.assertEqual(O.load_reg(c)["kill-rep"]["rep"], src["text_rep"])
+
     def test_two_figures_cannot_share_one_passage(self):
         c = self.fresh("shared")
         twin = [{"id": "shelf-twin", "label": "Twin", "value": "7 days", "source": T,
