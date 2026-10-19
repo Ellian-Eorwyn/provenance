@@ -77,17 +77,31 @@ gains one option. The new objects use the `x-` extension point.
     exhibits), a Word file (pandoc) and a spreadsheet (openpyxl). It refuses a corpus that
     does not validate. It also refuses if a quotation is not found again or is missing from
     the Word file, if a never-publish phrase would appear, or if a local path would.
-- **Audience and project profiles** (`references/profiles/`): JSON Schemas, a made-up
-  example of each, and a small built-in checker. Profiles live with their owner and are
-  reused across dossiers. A project's lenses are what relevance is judged against.
-- `requirements.txt`: `pyyaml` for profiles written as YAML. pandoc and pdftoppm are
-  optional, for the Word file and pictures.
+  - Every page puts what matters at a glance and the detail one click away. The cover fits on
+    one laptop screen: the bottom line, the findings (each opening its passages in the memo),
+    the next steps, and the documents in reading order, each with its first page, one line
+    on what matters for the project, what to read, and a dot per lens, filterable by lens.
+    The memo has its own page. The timeline is a year spine of cards under a bar per year;
+    who's who, terms and leads are cards with spellings of one name joined, filters and a
+    search; a card opens its passage in one panel. Pages widen to 1600 px, the width going
+    to columns while lines of text stay near 75 characters.
+  - The cover's lines have word limits, which `add` and `brief` enforce: an entry's `for_us`
+    (45) and `read_this` (14); the memo's `bottom_line` (90), at most 6 themes (titles 14) and
+    6 next steps (each 22, the rest in `detail`), and each lens `headline` (24). A next step
+    can link to a page or a document (`see`).
   - Every page has a light/dark switch. It follows the system until the reader chooses, and
     the choice carries across pages. Print is always light.
   - `init --show-writer-as WRITER=LABEL` shows a writer under another name on the pages, the
     Word file and the spreadsheet. The records keep the real writer, and the method notes name
     both.
-- Tests: `tests/test_dossier.py` (20, no model server), and five selftests for `anchor --source`.
+  - The passage set's namespace is recorded in the config at first use, so a corpus that is
+    moved or copied keeps its set instead of starting a new one under its new folder name.
+- **Audience and project profiles** (`references/profiles/`): JSON Schemas, a made-up
+  example of each, and a small built-in checker. Profiles live with their owner and are
+  reused across dossiers. A project's lenses are what relevance is judged against.
+- `requirements.txt`: `pyyaml` for profiles written as YAML. pandoc and pdftoppm are
+  optional, for the Word file and pictures.
+- Tests: `tests/test_dossier.py` (26, no model server), and five selftests for `anchor --source`.
 
 ## 1.15.1 — 2026-10-06
 

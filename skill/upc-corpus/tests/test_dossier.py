@@ -8,6 +8,7 @@ server: `write` runs against a stub.
 
 import copy
 import hashlib
+import html
 import json
 import os
 import shutil
@@ -85,7 +86,7 @@ def init(corpus: Path, root: Path, note_sid: str, **extra):
     secs.write_text(json.dumps([{"slug": "research", "title": "The research case", "description": "Studies and reports."},
                                 {"slug": "advocates", "title": "What advocates say", "description": ""}]))
     a.sections = str(secs)
-    a.audience, a.project, a.title, a.prepared_by = str(aud), str(proj), "Gas transition readings", "Ellie Example"
+    a.audience, a.project, a.title, a.prepared_by = str(aud), str(proj), "Gas transition readings", "Sam Example"
     a.date, a.request_source, a.request_by = "2026-10-19", note_sid, "Robin Example (Agency)"
     a.request_quote = "Here are a couple of things you could look at."
     for k, v in extra.items():
@@ -96,6 +97,8 @@ def init(corpus: Path, root: Path, note_sid: str, **extra):
 ENTRY_A = {
     "section": "research", "kind": "report", "author_org": "E. Consultants", "date": "2020-04", "identifier": "REP-2020-01",
     "summary": "A study of what happens to gas rates as customers electrify.",
+    "for_us": "The cost argument behind targeted retirement, with a rate figure for 2050.",
+    "read_this": "the summary and the rate table",
     "why_it_matters": [{"lens": "policy", "text": "It is the cost argument behind targeted retirement."}],
     "relevance": {"policy": 3, "households": 2},
     "key_points": [{"text": "Rates rise as customers leave.", "lens": "policy",
@@ -121,6 +124,7 @@ ENTRY_B = {"section": "advocates", "kind": "comments", "author_org": "An advocat
                            "quote": "pilots must protect customers who cannot afford new equipment"}],
            "suggested_by": {"quote": "The comments include some of the concerns we've heard."}}
 BRIEF = {"title": "At a glance", "lede": "Two documents, one argument and its critics.",
+         "bottom_line": "Rates rise for those who stay on gas, and the advocate asks pilots to protect them.",
          "themes": [{"title": "The rate spiral", "text": "Costs fall on those who stay.",
                      "evidence": [{"source": "url:https://ex.org/report",
                                    "quote": "The study finds that gas rates could rise sharply as customers leave the system."},
@@ -129,7 +133,8 @@ BRIEF = {"title": "At a glance", "lede": "Two documents, one argument and its cr
          "tensions": [{"title": "Unsupported", "text": "A tension whose only quotation is not in its source.",
                        "evidence": [{"source": "url:https://ex.org/report", "quote": MISSING}]}],
          "for_project": [{"lens": "households", "text": "Who pays matters for the household lens."}],
-         "next_steps": ["Read the report first"],
+         "next_steps": [{"step": "Read the report first", "detail": "The detail of the first step.",
+                         "see": "url:https://ex.org/report"}, "Ask the advocate for its data"],
          "reading_order": [{"source": "url:https://ex.org/report", "why": "The argument"}]}
 
 
@@ -182,8 +187,8 @@ class Dossier(unittest.TestCase):
         self.assertEqual(b["type"], D.BRIEF)
         self.assertEqual(len(b["claims"]), 1)
 
-    def test_documents_are_grouped_by_section(self):
-        self.assertLess(self.index.index("The research case"), self.index.index("What advocates say"))
+    def test_documents_are_in_reading_order_then_by_section(self):
+        self.assertLess(self.index.index("Read first"), self.index.index("What advocates say"))
         self.assertLess(self.index.index("Retail gas in a low-carbon future"), self.index.index("Comments of a consumer advocate"))
         with self.assertRaises(SystemExit) as cm:
             D.add_entry(self.corpus, {**ENTRY_B, "source": "url:https://ex.org/filing", "section": "nowhere"}, writer="x", plan=True)
@@ -216,10 +221,10 @@ class Dossier(unittest.TestCase):
     def test_the_site_has_its_pages(self):
         names = sorted(f.relative_to(self.out).as_posix() for f in self.out.rglob("*.html"))
         self.assertEqual([n for n in names if not n.startswith("docs/")],
-                         ["index.html", "leads.html", "method.html", "people.html", "terms.html", "timeline.html"])
+                         ["index.html", "leads.html", "memo.html", "method.html", "people.html", "terms.html", "timeline.html"])
         self.assertEqual(len([n for n in names if n.startswith("docs/")]), 2)
         for want in ("Gas transition readings", "For Example Lab · PATH", "Routing slip", "Here are a couple of things",
-                     "Start here", "The rate spiral", "Memo · written by Claude (test)", 'data-lenses="policy households"'):
+                     "Read first", "The rate spiral", "Written by Claude (test)", 'data-g="policy households"'):
             self.assertIn(want, self.index)
         self.assertNotIn("Unsupported", self.index)
         self.assertIn("prefers-color-scheme:dark", self.index)
@@ -229,17 +234,75 @@ class Dossier(unittest.TestCase):
         page = next((self.out / "docs").glob("01-*.html")).read_text()
         self.assertIn("Retail gas in a low-carbon future", page)  # the order: the reading order isn't used, relevance is
         for want in ("Why it is in the file · Robin Example (Agency)", "The retail gas study lays out",
-                     "Why it matters for PATH", "Summary · by Claude (test)", "$5.60 per therm", "in this dossier",
-                     "Questions for the team"):
+                     "Why it matters for PATH", "Summary · by Claude (test)", "$5.60 per therm", "In this file",
+                     "Questions for the team", "What matters for PATH · Claude (test)", "Read: the summary and the rate table"):
             self.assertIn(want, page)
         self.assertNotIn(SECRET, page)
+
+    def test_the_cover_puts_the_point_first(self):
+        i = self.index
+        order = [i.index(w) for w in ("The bottom line", BRIEF["bottom_line"], "Next steps", "The documents")]
+        self.assertEqual(order, sorted(order))
+        for want in ("What matters for PATH", ENTRY_A["for_us"], "Read: " + ENTRY_A["read_this"], 'href="memo.html#theme-1"',
+                     'data-set="g" data-v="policy"', 'href="memo.html"', "Ask the advocate for its data"):
+            self.assertIn(want, i)
+        steps = i[i.index("Next steps"):i.index("</aside>", i.index("Next steps"))]
+        self.assertIn('href="docs/01-', steps)  # a step that names a document links to it
+        self.assertNotIn("The detail of the first step", i)  # the detail is in the memo
+
+    def test_the_memo_has_its_own_page(self):
+        memo = (self.out / "memo.html").read_text()
+        for want in ('id="theme-1"', 'id="next-steps"', 'id="households"', "In this memo", "Memo · written by Claude (test)",
+                     "The detail of the first step.", BRIEF["bottom_line"]):
+            self.assertIn(want, memo)
+
+    def test_lists_are_cards_that_open_a_detail_panel(self):
+        for name, want in (("timeline.html", 'class="card ev-card'), ("people.html", "Advocates"),
+                           ("terms.html", 'id="letter-S"'), ("leads.html", "In this file")):
+            page = (self.out / name).read_text()
+            self.assertIn(want, page, name)
+            self.assertIn('<details class="card', page, name)
+        for f in self.out.rglob("*.html"):
+            self.assertIn('<dialog class="drawer" id="drawer"', f.read_text(), f.name)
+        self.assertIn('href="#y2020"', (self.out / "timeline.html").read_text())  # the ribbon jumps to its year
+
+    def test_two_spellings_of_one_name_are_one_card(self):
+        items = [({"name": n}, {"_source_id": s}) for n, s in (
+            ("California Energy Commission (CEC)", "s1"), ("CEC", "s2"), ("California Energy Commission", "s3"),
+            ("Siva Gunda (Vice Chair, CEC)", "s1"), ("Siva Gunda, CEC Vice Chair", "s2"),
+            ("E3, Ava Community Energy and Gridworks", "s2"), ("Energy and Environmental Economics (E3)", "s3"))]
+        self.assertEqual(sorted(len(g) for g in D.merged(items, "name")), [1, 1, 2, 3])
+        terms = [({"term": t}, {}) for t in ("IEPR (Integrated Energy Policy Report)", "Integrated Energy Policy Report", "iepr")]
+        self.assertEqual(len(D.merged(terms, "term", long_paren=True)), 1)
+        self.assertEqual(D.role_group("community choice aggregator", "Ava"), "utilities")
+        self.assertEqual(D.role_group("ratepayer advocate", "TURN"), "advocates")
+        self.assertEqual(D.role_group("electricity provider", "X"), "utilities")
+        self.assertEqual((D.lens_code({"short": "2.1 Transitions", "title": "x"}),
+                          D.lens_code({"short": "Households & equity", "title": "x"})), ("2.1", "H&E"))
+
+    def test_the_cover_lines_have_word_limits(self):
+        long = " ".join(["word"] * 50)
+        with self.assertRaises(SystemExit) as cm:
+            D.add_entry(self.corpus, {**ENTRY_B, "source": "url:https://ex.org/filing", "for_us": long}, writer="x", plan=True)
+        self.assertIn("for_us: 50 words; at most 45", str(cm.exception))
+        for bad, want in (({**BRIEF, "themes": BRIEF["themes"] * 7}, "at most 6"),
+                          ({**BRIEF, "next_steps": [long]}, "next_steps[0]: 50 words"),
+                          ({**BRIEF, "next_steps": [{"step": "Look", "see": "nowhere"}]}, "'nowhere' is not a page"),
+                          ({**BRIEF, "bottom_line": long + " " + long}, "bottom_line: 100 words")):
+            with self.assertRaises(SystemExit) as cm:
+                D.add_brief(self.corpus, bad, writer="x", plan=True)
+            self.assertIn(want, str(cm.exception))
+
+    def test_the_passage_set_keeps_its_namespace_when_the_corpus_moves(self):
+        ns = D.load_cfg(self.corpus)["namespace"]
+        moved, _ = self.fresh("moved-elsewhere")
+        self.assertEqual(D.exs_id(moved), f"exs-{ns}-dossier")
 
     def test_every_quotation_is_in_the_site_the_word_file_and_the_spreadsheet(self):
         quotes = {q["quote"] for q in D.all_quotes({"docs": D.entries(self.corpus), "brief":
                                                     D.current_brief(self.corpus)["ext"]["upc_corpus"]["dossier_brief"]})}
         self.assertEqual(len(quotes), 9)
         site = "".join(f.read_text() for f in self.out.rglob("*.html"))
-        import html
         for q in quotes:
             self.assertIn(html.escape(q, quote=True), site, q)
         name = "gas-transition-readings"
