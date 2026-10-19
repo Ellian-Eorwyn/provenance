@@ -756,7 +756,7 @@ CSS = """
 --ink:#ece5d8;--muted:#a99f8d;--rule:#36312a;--stamp:#e57f72;--link:#8fbde4;--postit:#4a4322;--postit-ink:#f5ecc3;
 --chip:#2a261e;--tape:rgba(120,110,80,.5)}
 *{box-sizing:border-box}
-body{margin:0;background:var(--desk);color:var(--ink);font:16px/1.6 var(--sans);-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--desk);color:var(--ink);font:16px/1.6 var(--sans);-webkit-text-size-adjust:100%;overflow-wrap:break-word}
 a{color:var(--link)}
 h1,h2,h3{font-family:var(--serif);font-weight:600;line-height:1.2;margin:0 0 .5em}
 h1{font-size:clamp(1.8rem,4.2vw,2.8rem);letter-spacing:-.01em}
@@ -795,6 +795,8 @@ blockquote.q{margin:8px 0 4px;padding:3px 0 3px 14px;border-left:3px solid var(-
 font-size:1.02rem}
 ul.ev,ol.points,ul.plain{list-style:none;margin:0;padding:0}
 ul.ev li{margin:0 0 10px}
+details.ev{margin:4px 0 6px} details.ev>summary{cursor:pointer;width:max-content;max-width:100%;font:600 .72rem/1.3 var(--mono);
+letter-spacing:.08em;text-transform:uppercase;color:var(--muted);padding:4px 0} details.ev[open]>summary{margin-bottom:6px}
 .postit{background:var(--postit);color:var(--postit-ink);padding:14px 16px 16px;box-shadow:0 2px 7px rgba(60,45,20,.2);
 transform:rotate(-1deg);border-bottom-right-radius:22px 7px;margin:0 0 18px}
 .postit h3,.postit .label{color:var(--postit-ink)}
@@ -869,6 +871,7 @@ document.querySelectorAll('.group').forEach(function(g){g.classList.toggle('hide
 document.addEventListener('click',function(e){var b=e.target.closest('button.copy');if(!b)return;var t=b.getAttribute('data-cite');
 function done(){b.textContent='Copied';setTimeout(function(){b.textContent='Copy'},1400)}
 if(navigator.clipboard){navigator.clipboard.writeText(t).then(done,function(){})}});
+window.addEventListener('beforeprint',function(){document.querySelectorAll('details').forEach(function(d){d.open=true})});
 """
 
 CLIP = ('<svg class="clip" viewBox="0 0 22 64" aria-hidden="true"><path d="M6 14v36a5 5 0 0 0 10 0V9a7.5 7.5 0 0 0-15 0v42" '
@@ -958,9 +961,11 @@ def cover_html(ctx: dict) -> str:
     memo = ""
     if b:
         def ev_list(evs):
-            return '<ul class="ev">' + "".join(
+            # Folded, so the memo can be skimmed: each point first, its passages one click away.
+            n = len(evs)
+            return (f'<details class="ev"><summary>The passage{"" if n == 1 else "s"} ({n})</summary><ul class="ev">' + "".join(
                 f'<li>{quote_html(ev, by_sid[ev["source_id"]], "docs/" + by_sid[ev["source_id"]]["_file"]) if ev["source_id"] in by_sid else quote_html(ev, ctx["others"][ev["source_id"]])}</li>'
-                for ev in evs) + "</ul>"
+                for ev in evs) + "</ul></details>")
         parts = [f'<p>{esc(b.get("lede"))}</p>'] if b.get("lede") else []
         for sec, title in (("themes", "Themes"), ("tensions", "Where the documents pull apart")):
             if b.get(sec):
