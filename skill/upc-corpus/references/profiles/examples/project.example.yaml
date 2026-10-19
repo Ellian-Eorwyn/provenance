@@ -1,0 +1,38 @@
+# A made-up project, to show the shape. Real profiles live with their owner, never in this repository.
+id: heat-path
+kind: project
+name: HEAT-PATH
+full_name: Household Electrification and Transition Pathways
+funder: A state energy research program
+agreement: EX-00-000
+period: {start: "2026-01-01", end: "2028-12-31"}
+people:
+  - name: Dana Example
+    role: Principal investigator
+aims:
+  - Find the household niches where switching from gas to electric is easy, hard or stalled
+questions:
+  - Who in the supply chain speeds up or slows down the switch?
+lenses:
+  - slug: policy
+    title: The state policy landscape
+    short: Policy
+    description: Laws, regulatory proceedings and agency plans that shape the gas transition.
+    keywords: [rulemaking, legislation, pilot, decommissioning]
+  - slug: households
+    title: Households and equity
+    short: Households
+    description: Costs, burdens and choices for the households asked to switch.
+    keywords: [affordability, renters, energy burden]
+out_of_scope:
+  - Transmission pipelines and gas supply
+terms:
+  - term: IOU
+    definition: Investor-owned utility
+  - Pilot
+rules:
+  - Dates the funder has not approved are marked proposed.
+updated: "2026-10-01"
+basis:
+  lenses:
+    - ref: project/Scope of work.md

@@ -1,0 +1,32 @@
+# A made-up audience, to show the shape. Real profiles live with their owner, never in this repository.
+id: riverside-lab
+kind: audience
+name: Riverside Home Energy Lab
+organization: Department of Human Ecology, Riverside State University
+description: A social-science group studying how households and contractors take up new home energy technology.
+readers:
+  - name: Dana Example
+    role: Lab director; principal investigator
+  - name: Sam Placeholder
+    role: Postdoctoral researcher (interviews, surveys)
+knows:
+  - Socio-technical transitions theory and diffusion of innovations
+  - How state energy research grants are run
+wants:
+  - What each document claims, in plain words, with the passage that says it
+  - Where agencies and advocates disagree
+  - Dates and deadlines that affect the project
+style:
+  - Short sections; lists the reader can tick off
+  - Plain language, not overly academic
+  - Name who says what
+summary_words: 120
+never_publish:
+  - "Dana's medical leave"
+updated: "2026-10-01"
+basis:
+  readers:
+    - ref: notes/Lab people.md
+  style:
+    - ref: notes/Meeting 2026-09-12.md
+      quote: "keep it to one page if you can"

@@ -1,7 +1,7 @@
 ---
 name: upc-corpus
-description: Build, code, rate and publish UPC research corpora with local models — PDFs, Markdown bundles or spreadsheets in; quote-checked passages, codings, evidence ratings, overviews and a browsable site out. Use when turning a folder of papers into a corpus, coding or screening it, answering a question from it, rating how strong its evidence is, writing overviews from it, or publishing it for a team.
-version: 1.0.0
+description: Build, code, rate and publish UPC research corpora with local models — PDFs, Markdown bundles or spreadsheets in; quote-checked passages, codings, evidence ratings, overviews and a browsable site out, or a dossier for an audience and a project. Use when turning a folder of papers into a corpus, coding or screening it, answering a question from it, rating how strong its evidence is, writing overviews from it, or publishing it for a team.
+version: 1.1.0
 license: PolyForm-Noncommercial-1.0.0
 ---
 
@@ -51,6 +51,8 @@ the end.
 | The rubric, profiles, domain and Methods wording | The owner | Draft them; the owner approves before any full rating run |
 | Each paper's design and profile | The owner (skims the table) | `appraise.py table`; a person should confirm each profile |
 | Who codes the blind sheet | A person, or another model, before any model output exists | Never show the coder the model's ratings |
+| A dossier profile's contents and its never-publish phrases | The owner | Draft from their notes, with `basis`; the owner reads it before any build |
+| A dossier's words (entries, memo) | Their writer, named on every page | The owner reviews before it is shared |
 
 Everything else (preflight, reports, `--plan` runs, building into staging, comparing) you
 may run without asking.
@@ -547,6 +549,60 @@ Methods page. The renderer is generic; the corpus supplies its own words.
    Findings filters and the map, and the single files opened from disk.
 6. **Online, only on the owner's go**, each time.
 
+## Task 13: A dossier for an audience and a project
+
+A dossier tells one group what a set of documents says that matters to their project: one
+folder per document (why it is in the file, a summary, notes per lens, key points with their
+passages, numbers, dates, who's who, terms, exhibits), a cover memo across them, and the
+same as a Word file and a spreadsheet. The shapes and checks are in `references/dossier.md`.
+
+1. **Profiles**, once per group and project (reuse them after that). Copy
+   `references/profiles/examples/*.example.yaml`, fill them in from the owner's notes, and
+   record where each line came from under `basis`. Readers get work roles only. Put personal
+   matters in `never_publish` as whole phrases. Check both (expect no output):
+   ```
+   <python> -c "import sys; sys.path.insert(0, '<skill>/scripts'); import dossier as D; D.load_profile('<audience.yaml>', 'audience'); D.load_profile('<project.yaml>', 'project')"
+   ```
+   The owner reads both before they are used.
+2. **The documents in a corpus**, through Task 3 (PDFs) or `add_acquired.py` (fetched
+   material with its retrieval record). If a person sent the list, add their note too, as a
+   source: its lines become each document's "why it is in the file".
+3. **The config:**
+   ```
+   <python> <skill>/scripts/dossier.py init --corpus <corpus> --audience <audience.yaml> --project <project.yaml> --title "<title>" --subtitle "<one line>" --prepared-by "<name>" --request-source <note's source_id> --request-quote "<its opening sentence>" --request-by "<who suggested them>" --request-date <YYYY-MM-DD>
+   ```
+   Expect a `Dossier: config` table. `--order <id,id,…>` fixes the documents' order;
+   otherwise the most relevant come first.
+4. **One entry per document.** Either a writer drafts `entry.json` (shape in
+   `references/dossier.md`) after reading the whole document, then:
+   ```
+   <python> <skill>/scripts/dossier.py add --corpus <corpus> --from <entry.json> --writer "<name>" [--model <model>] --plan
+   ```
+   The plan lists every `NOT FOUND` quotation. Fix each from the document, then run it again
+   without `--plan`. Or the configured model drafts them all:
+   ```
+   <python> -u <skill>/scripts/dossier.py write --corpus <corpus> --plan
+   ```
+   Then run the same command without `--plan`. A model reads only the first `--max-chars`
+   characters (default 48,000), and the page says so.
+5. **Page numbers** for quotations from PDFs: `<python> <skill>/scripts/paginate.py --corpus <corpus>`.
+6. **The memo:** `brief.json` (the shape is in `references/dossier.md`), then
+   `dossier.py brief --corpus <corpus> --from <brief.json> --writer "<name>"`. A theme
+   whose quotation is not found is left out, and the command says so.
+7. **Check:** `<python> <skill>/scripts/dossier.py check --corpus <corpus>`. Expect
+   `corpus errors 0` and `quotations NOT found 0`.
+8. **Build into staging:**
+   ```
+   <python> <skill>/scripts/dossier.py build --corpus <corpus> --out <staging>/<name> --copies
+   ```
+   `--copies` offers each PDF up to 25 MiB for download: use it only where the documents
+   may be shared with these readers. The build needs `pandoc` for the Word file and
+   `pdftoppm` for pictures. `--no-docx` and `--no-images` skip them.
+9. **Look at it:** the cover, two document pages, the timeline, at desktop and phone width,
+   in light and dark. Open the Word file and the spreadsheet.
+10. **Online, only on the owner's go**, each time. Behind a password if it carries copies of
+    papers.
+
 ## Known failures
 
 | What you see | What it means | What to do |
@@ -558,6 +614,10 @@ Methods page. The renderer is generic; the corpus supplies its own words.
 | Anchoring rate under ~90% | A text problem, not a model problem: a running head spliced into a sentence at a page break, a soft-hyphen word break, the model adding a full stop | The first two are handled in `pdftext.py`; re-ingest with `--force-text`. Never loosen what counts as a match |
 | Quotes from converted web pages fail | The text occurs twice (flattened nested lists) | `code_pass.py` widens such a quote within its line until unique; what stays ambiguous is refused |
 | `Refusing to publish a corpus that does not validate` | `upc validate` has errors | Task 1; fix the errors first |
+| `dossier.py`: `NOT FOUND key_points[2] (not_found)` | That quotation is not in the document's saved text | Find the passage in the document and copy it exactly; never loosen the match |
+| `dossier.py`: `already exists from these inputs with a different output` | A rewritten entry uses the same passages as the stored one | Add `--replace` |
+| `dossier.py build`: `a never-publish phrase would appear` | A profile's phrase is in an entry, the memo or a source quotation | Reword the writer's text, or drop that item; never delete the phrase from the profile to get past it |
+| `dossier.py build`: `a local path would be published` | A writer's text or a caption names a file on this machine | Reword it |
 | `NOTE … passages have no page number` | `paginate.py` hasn't run | Run it (Task 3, step 10), then publish again |
 | A wrong PDF was replaced but nothing changed | `ingest.py` remembers each row in `<corpus>/.upc/upc-corpus/ingest.json` | Delete that row's entry and `<corpus>/.upc/upc-corpus/text/<id>.txt` and `.info.json`, then re-run ingest, `screen.py` and `code_pass.py` (each does only the new paper) |
 | Import errors | The Python lacks `requirements.txt` | Use the venv |

@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "upc-corpus/references/profiles/project.schema.json",
+  "title": "Dossier project profile",
+  "description": "The project a dossier serves: what it is, what it asks, and the lenses relevance is judged against. One per project, kept and reused across dossiers. dossier.py checks a profile against this file (type, required, properties, items, enum, pattern, minItems, minLength, $ref); keys it does not name are allowed.",
+  "type": "object",
+  "required": ["id", "kind", "name", "lenses"],
+  "properties": {
+    "id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$"},
+    "kind": {"enum": ["project"]},
+    "name": {"type": "string", "minLength": 1, "description": "The short name readers use."},
+    "full_name": {"type": "string"},
+    "funder": {"type": ["string", "object"], "description": "Who pays: a name, or {name, division, solicitation, program}."},
+    "agreement": {"type": "string"},
+    "period": {"type": ["string", "object"], "description": "The term, as text or {start, end}."},
+    "people": {"type": "array",
+               "items": {"type": "object", "required": ["name", "role"],
+                         "properties": {"name": {"type": "string"}, "role": {"type": "string"}}}},
+    "aims": {"type": ["array", "string"], "items": {"type": "string"}},
+    "questions": {"type": "array", "items": {"type": "string"}},
+    "lenses": {
+      "type": "array", "minItems": 1,
+      "description": "What relevance is judged against: usually the project's tasks, plus any cross-cutting concern.",
+      "items": {"type": "object", "required": ["slug", "title", "description"],
+                "properties": {"slug": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$"},
+                               "title": {"type": "string", "minLength": 1},
+                               "short": {"type": "string", "description": "A short label for chips and spreadsheet columns."},
+                               "description": {"type": "string", "minLength": 1},
+                               "keywords": {"type": "array", "items": {"type": "string"}}}}
+    },
+    "out_of_scope": {"type": "array", "items": {"type": "string"}},
+    "terms": {"type": "array", "items": {"type": ["string", "object"]},
+              "description": "Glossary seeds: a term, or {term, definition}."},
+    "rules": {"type": "array", "items": {"type": "string"}, "description": "Rules any writing for this project follows."},
+    "never_publish": {"type": "array", "items": {"type": "string", "minLength": 6}},
+    "updated": {"type": "string"},
+    "basis": {
+      "type": "object",
+      "additionalProperties": {"type": "array", "items": {"$ref": "#/$defs/basis"}}
+    }
+  },
+  "$defs": {
+    "basis": {"type": "object", "required": ["ref"],
+              "properties": {"ref": {"type": "string", "minLength": 1}, "quote": {"type": "string"}}}
+  }
+}

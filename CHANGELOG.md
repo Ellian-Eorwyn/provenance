@@ -3,6 +3,33 @@
 All notable changes to the Universal Provenance Corpus (UPC) standard.
 Versioning is semantic (§00 Versioning policy).
 
+## Unreleased — toolkit 1.1.0: dossiers
+
+**No schema or specification change.** Corpora, the CLI and the site are as in 1.15.1;
+the new objects use the `x-` extension point.
+
+### Added
+
+- **Dossiers** (`skill/upc-corpus/scripts/dossier.py`, `references/dossier.md`, the
+  SKILL's Task 13): what a set of documents says that matters to one project, written for
+  one audience. Each document gets an `x-dossier-entry` generation: the writer's summary,
+  notes per lens and questions, labelled with the writer's name, plus key points, figures,
+  dates, people and positions, terms and cited works, each resting on a quotation that
+  `upc anchor` found in the saved source. A quotation it cannot find is dropped and
+  reported. The cover memo is an `x-dossier-brief` synthesis, gated by hop C.
+  - One command: `init`, `add` (an entry written by a person or any model), `write` (the
+    configured local model), `brief`, `build` and `check`.
+  - `build` writes a site styled as a dossier (folders, tabs, a paper-clipped memo, notes,
+    exhibits), a Word file (pandoc) and a spreadsheet (openpyxl). It refuses a corpus that
+    does not validate. It also refuses if a quotation is not found again or is missing from
+    the Word file, if a never-publish phrase would appear, or if a local path would.
+- **Audience and project profiles** (`references/profiles/`): JSON Schemas, a made-up
+  example of each, and a small built-in checker. Profiles live with their owner and are
+  reused across dossiers. A project's lenses are what relevance is judged against.
+- `requirements.txt`: `pyyaml` for profiles written as YAML. pandoc and pdftoppm are
+  optional, for the Word file and pictures.
+- Tests: `tests/test_dossier.py` (16, no model server).
+
 ## 1.15.1 — 2026-10-06
 
 **Patch release: the upc-corpus toolkit joins the repository.** No schema or

@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "upc-corpus/references/profiles/audience.schema.json",
+  "title": "Dossier audience profile",
+  "description": "Who a dossier is written for: the readers, what they already know, what they look for and how they like to read. One per group, kept and reused across dossiers. dossier.py checks a profile against this file (type, required, properties, items, enum, pattern, minItems, minLength, $ref); keys it does not name are allowed.",
+  "type": "object",
+  "required": ["id", "kind", "name", "readers", "wants"],
+  "properties": {
+    "id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$", "description": "A short stable name, used in file names and the dossier's config."},
+    "kind": {"enum": ["audience"]},
+    "name": {"type": "string", "minLength": 1, "description": "The group's name as readers know it."},
+    "organization": {"type": "string", "description": "Where the group sits (department, institute, university)."},
+    "description": {"type": "string", "description": "One or two sentences on what the group does."},
+    "readers": {
+      "type": "array", "minItems": 1,
+      "description": "The people who will read it, the first reader first. Work roles only.",
+      "items": {"type": "object", "required": ["name", "role"],
+                "properties": {"name": {"type": "string", "minLength": 1}, "role": {"type": "string", "minLength": 1},
+                               "note": {"type": "string"}}}
+    },
+    "knows": {"type": "array", "items": {"type": "string"}, "description": "What not to explain: the group's own fields and methods."},
+    "wants": {"type": "array", "minItems": 1, "items": {"type": "string"}, "description": "What they look for in a document."},
+    "style": {"type": ["array", "object"], "items": {"type": "string"}, "additionalProperties": {"type": "string"},
+              "description": "How they like to read: a list of rules, or named facets ({length, language, structure, tone})."},
+    "summary_words": {"type": "integer", "minimum": 20, "description": "About how long a document's summary should be."},
+    "never_publish": {
+      "type": "array", "items": {"type": "string", "minLength": 6},
+      "description": "Exact phrases that must never appear in anything built for this audience. Matched case- and spacing-insensitively as substrings, so use whole distinctive phrases, never short fragments."
+    },
+    "updated": {"type": "string"},
+    "basis": {
+      "type": "object",
+      "description": "Where each field came from: field name -> list of notes or files (with an optional exact quote). Kept private; never published.",
+      "additionalProperties": {"type": "array", "items": {"$ref": "#/$defs/basis"}}
+    }
+  },
+  "$defs": {
+    "basis": {"type": "object", "required": ["ref"],
+              "properties": {"ref": {"type": "string", "minLength": 1}, "quote": {"type": "string"}}}
+  }
+}

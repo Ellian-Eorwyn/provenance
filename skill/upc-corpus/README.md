@@ -25,6 +25,7 @@ is the overview.
 | Write overviews | `synthesize.py`, `claim_groups.py`, `place_summary.mjs` |
 | Rate the evidence | `appraise.py`, `ctx_windows.mjs`, `citations.py`, `methods.py` |
 | Publish and check | `paginate.py`, `publish.py`, `compare_site.py`, `digest.py` |
+| A dossier for an audience and a project (site, Word, spreadsheet) | `dossier.py`, with profiles in `references/profiles/` |
 | Shared | `common.py`, `llm_pool.py`, `pdftext.py`, `corpus_view.py` |
 
 Every script prints its counts first, takes `--plan` (report, write nothing) where it would
