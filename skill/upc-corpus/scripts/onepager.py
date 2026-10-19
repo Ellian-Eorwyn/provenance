@@ -11,6 +11,7 @@ the page is a figure whose passage is stored in the corpus and checked again at 
     python3 onepager.py code    --corpus <dir> --slug S [--figure ID ...] [--redo] [--plan]
     python3 onepager.py review  --corpus <dir> --slug S --out <sheet.csv|.xlsx|.md>
     python3 onepager.py review  --corpus <dir> --slug S --apply <sheet.csv|.xlsx> --coder <handle>
+    python3 onepager.py reply   --corpus <dir> --from <reply.md|.txt> --by <handle> [--title T] [--date D] [--plan]
     python3 onepager.py signoff --corpus <dir> --figure ID [--figure ID ...] --by <handle>
                                 (--check confirmed|corrected|query | --clearance cleared|internal-only|withheld)
                                 [--ref <source>] [--note "<text>"]
@@ -885,6 +886,42 @@ def cmd_review_apply(corpus: Path, slug: str, sheet: Path, coder: str) -> int:
     C.counts_header("Review: applied", [("coder", coder), ("answers in the sheet", len(recs)),
                                         ("new or changed", tally.get("coded", 0)), ("unchanged", tally.get("unchanged", 0))])
     return 0
+
+
+def cmd_reply(corpus: Path, src: Path, by: str, title: str | None, date: str | None, plan: bool) -> str | None:
+    """A reviewer's reply (an email or a note, saved as Markdown or text) as a source, so a check or
+    a clearance can cite it (`signoff --ref`). -> its source_id."""
+    if not SLUG.match(by or ""):
+        raise SystemExit("--by: the reviewer's handle (lower-case letters, digits, dashes)")
+    src = Path(src).expanduser().resolve()
+    if src.suffix.lower() not in (".md", ".txt") or not src.is_file():
+        raise SystemExit(f"--from: a .md or .txt file (save the email's text first): {src}")
+    if not src.read_text(encoding="utf-8").strip():
+        raise SystemExit(f"--from: {src.name} is empty")
+    day = date or dt.date.today().isoformat()
+    md = src.suffix.lower() == ".md"
+    rec = {"slug": f"reply-{by}-{day}-{hashlib.sha256(src.read_bytes()).hexdigest()[:6]}",
+           "title": title or f"Reply from {by}, {day}", "source_kind": "document",
+           "retrieval": {"fetch_status": "success", "fetch_method": "manual",
+                         "content_type": "text/markdown" if md else "text/plain", "fetched_at": now(),
+                         "sha256": "sha256:" + hashlib.sha256(src.read_bytes()).hexdigest()},
+           "discovery": {"query": f"A reviewer's reply about one-pager figures ({by}, {day})"},
+           "tags": ["one-pager", "reviewer-reply"],
+           "files": [{"path": str(src), "role": "markdown" if md else "text",
+                      "media_type": "text/markdown" if md else "text/plain", "produced_by": "import"}],
+           "provenance": {"produced_by": {**TOOL, "method": "import"}, "created_at": now()},
+           "ext": {"upc_corpus": {"one_pager": {"reply_by": by, "date": day}}}}
+    res = C.upc("add", "source", "--corpus", str(corpus), "--tool", TOOL["tool"], *(["--dry-run"] if plan else []),
+                check=False, stdin=json.dumps(rec))
+    r = ((res or {}).get("results") or [{}])[0] if isinstance(res, dict) else {}
+    if r.get("status") not in ("added", "planned", "exists"):
+        raise SystemExit(f"the reply was not saved: {r.get('detail') or r.get('error') or res}")
+    if not plan:
+        C.upc("regen", str(corpus), check=False)
+    C.counts_header("Reply" + (" (plan)" if plan else ""), [("from", by), ("date", day), ("status", r["status"]),
+                                                          ("source", r.get("source_id"))],
+                    [f"Cite it: signoff --figure <id> --by {by} --check confirmed --ref {r.get('source_id')}"])
+    return r.get("source_id")
 
 
 def cmd_signoff(corpus: Path, figures: list[str], by: str, check: str | None, clearance: str | None,
@@ -1937,6 +1974,13 @@ def main() -> int:
     g.add_argument("--out")
     g.add_argument("--apply")
     p.add_argument("--coder")
+    p = sub.add_parser("reply", help="save a reviewer's reply as a source, for signoff --ref")
+    p.add_argument("--corpus", required=True)
+    p.add_argument("--from", dest="src", required=True)
+    p.add_argument("--by", required=True)
+    p.add_argument("--title")
+    p.add_argument("--date")
+    p.add_argument("--plan", action="store_true")
     p = sub.add_parser("signoff", help="record a reviewer's check, or a release")
     p.add_argument("--corpus", required=True)
     p.add_argument("--figure", action="append", required=True)
@@ -1993,6 +2037,9 @@ def main() -> int:
             if not a.coder:
                 raise SystemExit("review --apply needs --coder (whose answers these are)")
             rc, nxt = cmd_review_apply(corpus, a.slug, Path(a.apply), a.coder), "signoff, then write or add"
+    elif a.cmd == "reply":
+        sid = cmd_reply(corpus, Path(a.src), a.by, a.title, a.date, a.plan)
+        rc, nxt = 0, f"signoff --figure <id> --by {a.by} --check confirmed --ref {sid}"
     elif a.cmd == "signoff":
         rc, nxt = cmd_signoff(corpus, a.figure, a.by, a.check, a.clearance, a.ref, a.note), "build"
     elif a.cmd == "write":

@@ -98,7 +98,7 @@ Four kinds of answer, each a closed, single-label codebook made on first use:
 |---|---|---|
 | `onepager-rel-<audience id>`, one per audience | `lead` (headline-worthy for this reader), `support`, `background` (true, but not for their page), `avoid` (accurate but wrong for this reader: the wrong units or scale, or an objection the page can't answer) | the model (`code`), then the owner (`review --apply`) |
 | `onepager-figure-class` | `measured`, `modelled`, `literature`, `derived` | the model proposes; the owner sets |
-| `onepager-figure-check` | `confirmed`, `corrected`, `query` | a reviewer (`signoff --check`), citing their reply as a source |
+| `onepager-figure-check` | `confirmed`, `corrected`, `query` | a reviewer (`signoff --check`), citing their reply, saved as a source with `reply` |
 | `onepager-figure-clearance` | `cleared`, `internal-only`, `withheld` | whoever may release the result (`signoff --clearance`) |
 
 - **One codebook per audience** keeps coding one audience from superseding another's answers.

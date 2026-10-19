@@ -305,6 +305,19 @@ class OnePager(unittest.TestCase):
         self.assertEqual(ans[0]["code"], "support")
         self.assertIn("Angle: days on the shelf", ans[0]["rationale"])
 
+    def test_a_reviewers_reply_is_saved_as_a_source_and_cited(self):
+        c = self.fresh("reply")
+        note = self.root / "reply-note.md"
+        note.write_text("The 5-log figure is right, and so is the shelf life. " * 4)
+        sid = O.cmd_reply(c, note, "lab-lead", "Reply from the lab lead about two figures", "2026-10-19", False)
+        self.assertTrue(sid.startswith("src-"))
+        O.cmd_signoff(c, ["log-kill"], "lab-lead", "confirmed", None, sid, None)
+        J = O.judgements(c, O.load_reg(c))
+        self.assertIn(sid, J[("log-kill", O.BOOKS["check"][0])][0]["rationale"])
+        self.assertEqual(O.validate(c).get("errors") or [], [])
+        with self.assertRaises(SystemExit):
+            O.cmd_reply(c, self.root / "reply-note.pdf", "lab-lead", None, None, True)
+
     # -- the page
     def test_the_page_is_a_one_pager_synthesis_that_validates(self):
         self.assertEqual(self.page["status"], "ok")

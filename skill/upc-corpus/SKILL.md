@@ -644,8 +644,10 @@ owner's go.
    <python> <skill>/scripts/onepager.py review --corpus <corpus> --slug <slug> --apply <sheet.xlsx> --coder <owner's handle>
    ```
    The owner edits only the class and relevance columns.
-5. **Checks and clearances**, as replies arrive. Save each reply as a source first, then:
+5. **Checks and clearances**, as replies arrive. Save each reply's text as a `.md` file and add
+   it as a source (it prints the `source_id` to cite), then record what it says:
    ```
+   <python> <skill>/scripts/onepager.py reply --corpus <corpus> --from <reply.md> --by <reviewer's handle> --title "<who, about what>" --date <YYYY-MM-DD>
    <python> <skill>/scripts/onepager.py signoff --corpus <corpus> --figure <id> --figure <id> --by <reviewer's handle> --check confirmed --ref <reply's source_id>
    <python> <skill>/scripts/onepager.py signoff --corpus <corpus> --figure <id> --by <handle> --clearance cleared --note "<what it covers>"
    ```
