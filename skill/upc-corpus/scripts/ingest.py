@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import hashlib
 import json
 import re
 import subprocess
@@ -40,6 +41,7 @@ import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
+import add_acquired as AQ   # noqa: E402
 import common as C          # noqa: E402
 import pdftext              # noqa: E402
 
@@ -86,8 +88,21 @@ def parse_authors(raw: str) -> list[dict]:
     return out
 
 
+def acquisition(pdf: Path) -> tuple[tuple[dict, dict] | None, str]:
+    """The pdf-harvest sidecar beside a PDF (`<file>.acq.json`) as UPC `retrieval` plus the
+    extras UPC has no field for, or (None, why not). A sidecar that describes other bytes is
+    not attached: the record would be false."""
+    side = Path(str(pdf) + ".acq.json")
+    rec = C.load_json(side) if side.exists() else None
+    if not rec:
+        return None, ""
+    if str(rec.get("sha256", "")).removeprefix("sha256:") != hashlib.sha256(pdf.read_bytes()).hexdigest():
+        return None, f"{side.name} describes other bytes than the PDF; not attached"
+    return AQ.retrieval_of(rec), ""
+
+
 def build_record(row: dict, cols: dict, cfg: dict, pdf: Path, txt: Path, info: dict,
-                 doi_in_text: str | None) -> dict:
+                 doi_in_text: str | None, acq: tuple[dict, dict] | None = None) -> dict:
     get = lambda key, default="": str(row.get(cols.get(key, key), default) or "").strip()  # noqa: E731
     rid, title, doi = get("id"), get("title"), get("doi")
     year_raw = get("year")
@@ -145,6 +160,10 @@ def build_record(row: dict, cols: dict, cfg: dict, pdf: Path, txt: Path, info: d
     note = get("note")
     if note:
         rec["ext"] = {cfg.get("namespace", "corpus"): {"manifest_note": note}}
+    if acq:  # where the bytes came from; a source with a URL is addressed by it (spec/06)
+        rec["retrieval"] = acq[0]
+        if acq[1]:
+            rec.setdefault("ext", {}).setdefault(cfg.get("namespace", "corpus"), {})["acquisition"] = acq[1]
     return rec
 
 
@@ -224,7 +243,11 @@ def main() -> int:
     txt_dir = C.state_dir(corpus, "text")
 
     # --- convert and describe ---
-    records, converted, doi_mismatch, t0 = [], 0, [], time.time()
+    # A row already in the corpus keeps the retrieval it was added with, so it keeps its id
+    # (a source with a URL is addressed by it): re-adding it is then "exists", never a twin.
+    prior = {d.get("source_id"): d.get("retrieval") for d in
+             (C.load_json(f, {}) or {} for f in corpus.glob("sources/*/source.json"))} if done else {}
+    records, converted, doi_mismatch, fetched, t0 = [], 0, [], 0, time.time()
     for rid, row, pdf in todo:
         txt = txt_dir / f"{rid}.txt"
         try:
@@ -246,7 +269,15 @@ def main() -> int:
             continue
         m = DOI_RE.search(body[:6000])
         doi_found = m.group(0) if m else None
-        rec = build_record(row, cols, cfg, pdf, txt, info, doi_found)
+        if rid in done:
+            ret, why = prior.get(done[rid].get("source_id")), ""
+            acq = (ret, {}) if ret else None
+        else:
+            acq, why = acquisition(pdf)
+            fetched += bool(acq)
+        if why:
+            print(f"  NOTE {rid}: {why}")
+        rec = build_record(row, cols, cfg, pdf, txt, info, doi_found, acq)
         declared = (rec.get("bibliographic") or {}).get("doi")
         if declared and doi_found and not doi_found.lower().startswith(declared.lower()):
             doi_mismatch.append((rid, declared, doi_found))
@@ -279,6 +310,7 @@ def main() -> int:
         ("already present", tally.get("exists", 0)),
         ("failed", tally.get("error", 0)),
         ("PDFs converted to text", converted),
+        ("with a fetch record (<pdf>.acq.json)", fetched),
         ("corpus level", f"{rep.get('status')} {rep.get('level')}"),
         ("validation errors", len(rep.get("errors", []))),
         ("DOI cross-check disagreements", len(doi_mismatch)),
