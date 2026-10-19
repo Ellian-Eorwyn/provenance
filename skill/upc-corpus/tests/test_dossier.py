@@ -85,7 +85,7 @@ def init(corpus: Path, root: Path, note_sid: str, **extra):
                                 {"slug": "advocates", "title": "What advocates say", "description": ""}]))
     a.sections = str(secs)
     a.audience, a.project, a.title, a.prepared_by = str(aud), str(proj), "Gas transition readings", "Ellie Example"
-    a.date, a.request_source, a.request_by = "2026-10-19", note_sid, "Mithra Example (Agency)"
+    a.date, a.request_source, a.request_by = "2026-10-19", note_sid, "Robin Example (Agency)"
     a.request_quote = "Here are a couple of things you could look at."
     for k, v in extra.items():
         setattr(a, k, v)
@@ -227,7 +227,7 @@ class Dossier(unittest.TestCase):
     def test_a_document_page_shows_notes_quotes_and_its_suggester(self):
         page = next((self.out / "docs").glob("01-*.html")).read_text()
         self.assertIn("Retail gas in a low-carbon future", page)  # the order: the reading order isn't used, relevance is
-        for want in ("Why it is in the file · Mithra Example (Agency)", "The retail gas study lays out",
+        for want in ("Why it is in the file · Robin Example (Agency)", "The retail gas study lays out",
                      "Why it matters for PATH", "Summary · by Claude (test)", "$5.60 per therm", "in this dossier",
                      "Questions for the team"):
             self.assertIn(want, page)
