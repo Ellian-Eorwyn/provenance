@@ -1992,6 +1992,7 @@ function codeCmd(root, setId, records, opts = {}) {
   const byId = new Map(prior.map((o) => [o.coding_id, o]));
   const results = [];
   const fresh = [];
+  const revivedIds = [];
   const coders = new Set();
 
   for (let i = 0; i < records.length; i++) {
@@ -2039,11 +2040,30 @@ function codeCmd(root, setId, records, opts = {}) {
       // mutable fields in place rather than writing a second record. This is what
       // makes re-running an unchanged coding pass idempotent.
       const existingRec = byId.get(cod.coding_id);
+      const revived = (existingRec.status || "active") !== "active";
       const keepProv = existingRec.provenance;
+      const keepSupersedes = existingRec.supersedes;
       Object.assign(existingRec, cod);
       existingRec.provenance = keepProv;
+      if (keepSupersedes) existingRec.supersedes = keepSupersedes;
       existingRec.status = "active";
-      results.push({ i, status: "unchanged", coding_id: cod.coding_id });
+      if (!revived) { results.push({ i, status: "unchanged", coding_id: cod.coding_id }); continue; }
+      // A coder going back to an answer they gave before: the earlier judgement is the
+      // same content id, so it is revived, and the answer it replaces goes superseded,
+      // exactly as a new answer would. Without this both stay active.
+      delete existingRec.superseded_by;
+      let replaced;
+      for (const o of prior.concat(fresh)) {
+        if (o === existingRec || (o.status || "active") !== "active") continue;
+        if (o.codebook_ref !== cod.codebook_ref || o.coder !== cod.coder) continue;
+        if (!o.target || o.target.id !== t.id || o.target.kind !== t.kind) continue;
+        if (cbk.multi_label === true) continue;
+        o.status = "superseded";
+        o.superseded_by = cod.coding_id;
+        replaced = o.coding_id;
+      }
+      revivedIds.push(cod.coding_id);
+      results.push({ i, status: "coded", coding_id: cod.coding_id, revived: true, ...(replaced ? { supersedes: replaced } : {}) });
       continue;
     }
     // A DIFFERENT answer from the same rater about the same target supersedes the old
@@ -2090,18 +2110,18 @@ function codeCmd(root, setId, records, opts = {}) {
     man.coders = [...declared.values()];
     U.atomicWriteFile(manAbs, JSON.stringify(man, null, 2) + "\n");
     U.atomicWriteFile(itemsAbs, prior.concat(fresh).map((o) => JSON.stringify(o)).join("\n") + "\n");
-    if (fresh.length) {
+    if (fresh.length || revivedIds.length) {
       appendEvent(loaded, {
         activity_type: "generate", tool: opts.tool || "upc", started_at: nowStamp(), status: "success",
-        outputs: { coding_ids: fresh.map((c) => c.coding_id) },
-        notes: `coded ${fresh.length} judgement(s) into ${setId}`,
+        outputs: { coding_ids: fresh.map((c) => c.coding_id).concat(revivedIds) },
+        notes: `coded ${fresh.length + revivedIds.length} judgement(s) into ${setId}` + (revivedIds.length ? ` (${revivedIds.length} an earlier answer given again)` : ""),
       });
     }
   }
 
   const tally = {};
   for (const r of results) tally[r.status] = (tally[r.status] || 0) + 1;
-  return { status: "ok", set: setId, wrote: opts.dryRun ? 0 : fresh.length, tally, results };
+  return { status: "ok", set: setId, wrote: opts.dryRun ? 0 : fresh.length + revivedIds.length, tally, results };
 }
 
 /** upc codebook — read-only inspection of the coding schemes in a corpus. */

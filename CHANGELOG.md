@@ -3,6 +3,20 @@
 All notable changes to the Universal Provenance Corpus (UPC) standard.
 Versioning is semantic (§00 Versioning policy).
 
+## Unreleased — toolkit 1.2.0: one-pagers
+
+**No schema or specification change.** Corpora and the site are as in 1.15.1. The new objects
+use the `x-` extension point.
+
+### Fixed
+
+- **`upc code` going back to an earlier answer.** A coding's id is its content (codebook,
+  target, coder, code), so a coder who answers lead, then avoid, then lead again gives the
+  first coding's id a second time. `code` revived it as active but left the avoid answer
+  active too, so a closed, single-label codebook held two live answers from one coder. The
+  revived coding now supersedes the answer it replaces (the result says `revived: true` and
+  names it), and the run is logged like any other change.
+
 ## Unreleased — toolkit 1.1.0: dossiers
 
 **No schema or specification change.** Corpora and the site are as in 1.15.1; the CLI

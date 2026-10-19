@@ -1134,6 +1134,26 @@ ok("filename rejects reserved", !checkFilename("sources/con/x.md").ok);
     ok("code: codebook_refs are indexed", man.codebook_refs.includes(cbk.codebook_id));
   }
 
+  const c4 = codeCmd(dir, "cds-1", [{ codebook_ref: cbk.codebook_id, code: "utility", target: T, coder: "model-a" }], { tool: "selftest" });
+  eq("code: going back to an earlier answer counts as a change", c4.results[0].status, "coded");
+  ok("code: and revives the earlier judgement", c4.results[0].revived === true && c4.results[0].coding_id === c1.results[0].coding_id);
+  eq("code: the answer it replaces is named", c4.results[0].supersedes, c3.results[0].coding_id);
+  {
+    const items = fs.readFileSync(path.join(dir, "codings", "cds-1", "items.jsonl"), "utf8").trim().split("\n").map((l) => JSON.parse(l));
+    const active = items.filter((o) => o.coder === "model-a" && o.codebook_ref === cbk.codebook_id && (o.status || "active") === "active");
+    eq("code: one active answer per coder after going back", active.map((o) => o.code).join(","), "utility");
+    const back = items.find((o) => o.coding_id === c1.results[0].coding_id);
+    ok("code: the revived judgement no longer points forward", !back.superseded_by);
+    eq("code: the replaced answer points to it", items.find((o) => o.coding_id === c3.results[0].coding_id).superseded_by, back.coding_id);
+  }
+  // ...and forward again, which the checks below expect (the two coders agreeing).
+  const c5 = codeCmd(dir, "cds-1", [{ codebook_ref: cbk.codebook_id, code: "operator", target: T, coder: "model-a" }], { tool: "selftest" });
+  ok("code: changing back again revives the later answer", c5.results[0].revived === true && c5.results[0].supersedes === c1.results[0].coding_id);
+  {
+    const items = fs.readFileSync(path.join(dir, "codings", "cds-1", "items.jsonl"), "utf8").trim().split("\n").map((l) => JSON.parse(l));
+    eq("code: still one active answer per coder", items.filter((o) => o.coder === "model-a" && o.codebook_ref === cbk.codebook_id && (o.status || "active") === "active").map((o) => o.code).join(","), "operator");
+  }
+
   clearRepCache();
   const rep1 = validateCorpus(dir);
   eq("validate: a coded corpus passes", rep1.status, "passed");
