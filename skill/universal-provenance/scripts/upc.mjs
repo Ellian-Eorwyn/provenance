@@ -631,7 +631,8 @@ export function validateCorpus(root, opts = {}) {
           if (!grp) continue;
           for (const [k, arr] of Object.entries(grp)) {
             for (const rid of arr || []) {
-              const known = model.sourceById.has(rid) || model.repById.has(rid) || model.extById.has(rid) || model.genById.has(rid) || model.synById.has(rid);
+              const known = model.sourceById.has(rid) || model.repById.has(rid) || model.extById.has(rid) || model.genById.has(rid) || model.synById.has(rid)
+                || model.codById.has(rid) || model.cbkById.has(rid);  // `upc code` records its coding ids
               if (!known) warn("event_dangling_ref", ev.event_id, `${k} ${rid}`);
             }
           }

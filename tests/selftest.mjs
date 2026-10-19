@@ -1785,6 +1785,8 @@ ok("filename rejects reserved", !checkFilename("sources/con/x.md").ok);
     const v = validateCorpus(dir);
     eq("1.15: the whole fixture validates", v.status, "passed");
     eq("1.15: at L2", v.level, "L2");
+    // `upc code` journals the codings it wrote; the journal check must know them.
+    eq("1.15: coded ids in the journal are not dangling", (v.warnings || []).filter((w) => w.code === "event_dangling_ref").map((w) => w.detail).join("; "), "");
   }
   // A dangling link is an error, not a silent gap.
   const oldPath = path.join(dir, "syntheses", s1.synthesis_id, "synthesis.json");

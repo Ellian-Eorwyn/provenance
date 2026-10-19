@@ -16,6 +16,10 @@ use the `x-` extension point.
   active too, so a closed, single-label codebook held two live answers from one coder. The
   revived coding now supersedes the answer it replaces (the result says `revived: true` and
   names it), and the run is logged like any other change.
+- **`upc validate` and coded corpora.** `upc code` records the ids of the codings it writes
+  in its journal event, but the journal check knew only sources, representations,
+  extractions, generations and syntheses, so every coding run left an `event_dangling_ref`
+  warning per coding (66 for one page's figures). It now knows codings and codebooks too.
 
 ### Added
 
