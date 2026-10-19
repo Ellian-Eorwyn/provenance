@@ -572,7 +572,8 @@ same as a Word file and a spreadsheet. The shapes and checks are in `references/
    <python> <skill>/scripts/dossier.py init --corpus <corpus> --audience <audience.yaml> --project <project.yaml> --title "<title>" --subtitle "<one line>" --prepared-by "<name>" --request-source <note's source_id> --request-quote "<its opening sentence>" --request-by "<who suggested them>" --request-date <YYYY-MM-DD>
    ```
    Expect a `Dossier: config` table. `--order <id,id,…>` fixes the documents' order;
-   otherwise the most relevant come first.
+   otherwise the most relevant come first. `--sections <sections.json>` (a JSON list of
+   `{slug, title, description}`) groups the documents; each entry then names its `section`.
 4. **One entry per document.** Either a writer drafts `entry.json` (shape in
    `references/dossier.md`) after reading the whole document, then:
    ```

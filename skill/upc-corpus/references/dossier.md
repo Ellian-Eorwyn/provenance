@@ -40,7 +40,7 @@ YAML or JSON, and are checked against `profiles/audience.schema.json` and
 |---|---|---|
 | An entry, one per document | generation, type `x-dossier-entry` | The writer's summary, notes and questions, and the document's key points, figures, dates, people and positions, terms and cited works, each with a quotation found in the document |
 | The cover memo | synthesis, type `x-dossier-brief` | Themes and tensions across documents, each resting on quotations; what it means for each lens; next steps; the reading order |
-| The config | `<corpus>/.upc/upc-corpus/dossier/dossier.json` (tool state) | Title, who it is for and by, the date, the profiles' paths, the request it answers, the document order, extra never-publish phrases |
+| The config | `<corpus>/.upc/upc-corpus/dossier/dossier.json` (tool state) | Title, who it is for and by, the date, the profiles' paths, the request it answers, the sections, the document order, extra never-publish phrases |
 
 A rewritten entry or memo is a new object. An entry made from the same passages replaces the
 old one (`--replace`); a memo supersedes the one before it. `upc validate` gates both through
@@ -54,6 +54,7 @@ same shape from the configured model.
 ```json
 {
   "source": "<source_id or alias>",
+  "section": "optional; one of the config's section slugs",
   "title": "optional; else the source's title",
   "short_title": "optional; how citations name it, e.g. 'E3 2020'",
   "kind": "report | paper | white-paper | filing | comments | decision | web-page | slides | blog | docket | other",
@@ -77,6 +78,9 @@ same shape from the configured model.
   text. A quote that differs only in case, curly marks, dashes or spacing is replaced by the
   document's own characters, and one that occurs twice is widened to the shortest unique
   span. An item whose quotation is not found is **dropped and reported**.
+- **`section`** puts the document in one of the groups set with `init --sections` (a JSON
+  list of `{slug, title, description}`). Documents are shown section by section, in the
+  config's order; a slug the config does not have refuses the entry.
 - **`relevance`** runs from 0 (none) through 1 (background) and 2 (useful) to 3 (central).
   Documents at 2 or more show under that lens's filter.
 - **`suggested_by.quote`** is looked for in the request source (`init --request-source`).

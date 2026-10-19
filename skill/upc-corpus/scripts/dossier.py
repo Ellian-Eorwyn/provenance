@@ -262,6 +262,11 @@ def cmd_init(corpus: Path, a) -> int:
         cfg["order"] = [x.strip() for x in a.order.split(",") if x.strip()]
     if a.suppress:
         cfg["suppress"] = sorted(set(cfg.get("suppress", [])) | set(a.suppress))
+    if a.sections:
+        secs = C.load_json(a.sections, None)
+        if not isinstance(secs, list) or not all(isinstance(s, dict) and s.get("slug") and s.get("title") for s in secs):
+            raise SystemExit("--sections: a JSON list of {slug, title, description}")
+        cfg["sections"] = secs
     for need in ("title", "audience", "project"):
         if not cfg.get(need):
             raise SystemExit(f"init needs --{need} the first time")
@@ -327,9 +332,12 @@ def entry_markdown(e: dict, project: dict) -> str:
     return "\n".join(md)
 
 
-def _check_entry_shape(entry: dict, project: dict) -> list[str]:
+def _check_entry_shape(entry: dict, project: dict, sections: list[dict] | None = None) -> list[str]:
     lenses = {lens["slug"] for lens in project["lenses"]}
     errs = []
+    if entry.get("section") and entry["section"] not in {s["slug"] for s in sections or []}:
+        errs.append(f"section: {entry['section']!r} is not one of the config's sections "
+                    f"({', '.join(s['slug'] for s in sections or []) or 'none set: init --sections'})")
     if not str(entry.get("summary") or "").strip():
         errs.append("summary: missing")
     for i, w in enumerate(entry.get("why_it_matters") or []):
@@ -358,7 +366,7 @@ def add_entry(corpus: Path, entry: dict, *, writer: str, model: str | None = Non
     if not info:
         raise SystemExit(f"no source {entry.get('source')!r} with a reading copy in this corpus "
                          "(give its source_id or alias; `upc validate` lists them)")
-    errs = _check_entry_shape(entry, project)
+    errs = _check_entry_shape(entry, project, cfg.get("sections"))
     if errs:
         raise SystemExit("the entry does not fit (references/dossier.md, 'An entry'):\n  " + "\n  ".join(errs))
     model_label = model or writer
@@ -401,7 +409,7 @@ def add_entry(corpus: Path, entry: dict, *, writer: str, model: str | None = Non
         else:
             exhibits.append({"page": pg, "caption": str(ex.get("caption") or "").strip()})
 
-    keep = ("title", "short_title", "kind", "authors", "author_org", "date", "identifier", "license", "summary",
+    keep = ("title", "short_title", "section", "kind", "authors", "author_org", "date", "identifier", "license", "summary",
             "why_it_matters", "relevance", "questions", "read_chars", "total_chars")
     e = {**{k: entry[k] for k in keep if entry.get(k) not in (None, "", [], {})}, "writer": writer,
          "title": entry.get("title") or info["title"], "pages": pages or entry.get("pages"),
@@ -798,6 +806,7 @@ transform:rotate(-1deg);border-bottom-right-radius:22px 7px;margin:0 0 18px}
 padding:5px 11px;border-radius:999px;cursor:pointer}
 .lensbar button[aria-pressed=true]{background:var(--ink);color:var(--paper);border-color:var(--ink)}
 .cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:30px 20px;padding-top:14px}
+.group{margin:0 0 30px} .group-title{font-size:1.15rem;margin:18px 0 2px;padding-top:14px;border-top:2px solid var(--folder-edge)}
 .doc-card{position:relative;background:var(--paper);border:1px solid var(--rule);border-radius:3px 3px 6px 6px;
 box-shadow:var(--shadow);display:flex;flex-direction:column}
 .doc-card .tab{position:absolute;top:-17px;left:14px;background:var(--folder-2);border:1px solid var(--folder-edge);
@@ -852,7 +861,8 @@ figure.exhibit{box-shadow:none;border-color:#ccc;background:#fff}.postit,.stamp,
 JS = """
 document.querySelectorAll('.lensbar button').forEach(function(b){b.addEventListener('click',function(){
 var k=b.dataset.lens;document.querySelectorAll('.lensbar button').forEach(function(x){x.setAttribute('aria-pressed',x===b)});
-document.querySelectorAll('[data-lenses]').forEach(function(c){c.classList.toggle('hide',k!=='all'&&(' '+c.dataset.lenses+' ').indexOf(' '+k+' ')<0)});});});
+document.querySelectorAll('[data-lenses]').forEach(function(c){c.classList.toggle('hide',k!=='all'&&(' '+c.dataset.lenses+' ').indexOf(' '+k+' ')<0)});
+document.querySelectorAll('.group').forEach(function(g){g.classList.toggle('hide',!g.querySelector('[data-lenses]:not(.hide)'))});});});
 document.addEventListener('click',function(e){var b=e.target.closest('button.copy');if(!b)return;var t=b.getAttribute('data-cite');
 function done(){b.textContent='Copied';setTimeout(function(){b.textContent='Copy'},1400)}
 if(navigator.clipboard){navigator.clipboard.writeText(t).then(done,function(){})}});
@@ -981,10 +991,13 @@ def cover_html(ctx: dict) -> str:
     chips = ('<div class="lensbar" role="group" aria-label="Show documents by lens"><button data-lens="all" aria-pressed="true">All</button>'
              + "".join(f'<button data-lens="{esc(k)}" aria-pressed="false">{esc(v)}</button>' for k, v in ctx["lt"].items()
                        if any(k in lenses_of(d).split() for d in docs)) + "</div>")
-    cards = "".join(card_html(d, ctx) for d in docs)
+    cards = "".join(
+        (f'<div class="group" id="{esc(s["slug"])}"><h3 class="group-title">{esc(s["title"])}</h3>'
+         + (f'<p class="note">{esc(s.get("description"))}</p>' if s.get("description") else "") if s else '<div class="group">')
+        + f'<div class="cards">{"".join(card_html(d, ctx) for d in ds)}</div></div>' for s, ds in doc_groups(ctx))
     return (head + grid + f'<section id="documents" style="margin-top:18px"><h2>The documents</h2>'
             f'<p class="note">Lenses show how much each document bears on {esc(proj["name"])}: ●●● central, ●●○ useful, ●○○ background.</p>'
-            f'{chips}<div class="cards">{cards}</div></section>')
+            f'{chips}{cards}</section>')
 
 
 def card_html(d: dict, ctx: dict) -> str:
@@ -1004,7 +1017,9 @@ def card_html(d: dict, ctx: dict) -> str:
 def doc_html(d: dict, ctx: dict, prev: dict | None, nxt: dict | None) -> str:
     proj, lt = ctx["proj"], ctx["lt"]
     by = " · ".join(esc(x) for x in (d.get("authors"), d.get("author_org"), d.get("date"), d.get("identifier")) if x)
-    out = [f'<p class="crumbs"><a href="../index.html#documents">← All documents</a> · File {esc(d["_no"])} of {len(ctx["docs"])}</p>',
+    sec = next((s for s in ctx["cfg"].get("sections") or [] if s["slug"] == d.get("section")), None)
+    out = [f'<p class="crumbs"><a href="../index.html#{esc(sec["slug"]) if sec else "documents"}">← All documents</a> · '
+           f'File {esc(d["_no"])} of {len(ctx["docs"])}{" · " + esc(sec["title"]) if sec else ""}</p>',
            f'<header><span class="kind">{esc(KIND_LABEL.get(d.get("kind"), d.get("kind") or "Document"))}</span>'
            f'<h1>{esc(d["title"])}</h1><p class="byline">{by}</p></header>']
     sug = d.get("suggested_by")
@@ -1145,6 +1160,7 @@ and proposed the passages behind each key point, figure, date, position, term an
 <li>A program then looked for every proposed quotation in the saved text, character for character. Only those it found are shown:
 {ctx["quotes"]} quotations here{f", and {dropped} proposed quotations that were not found were left out" if dropped else ""}.
 It looked again when this page was built.</li>
+<li>A page number is the page as a PDF viewer counts it, which can differ from the number printed on the page.</li>
 <li>The memo's themes each rest on quotations checked the same way. Relevance (●) is the writer's judgement against the project's lenses.</li>
 <li>Fixity is not authenticity: a matching hash shows which bytes were read, not that what they say is right.
 Provenance is not truth.</li></ul></div>
@@ -1210,7 +1226,13 @@ def docx_markdown(ctx: dict, out: Path) -> str:
             L += ["## Where to start", ""] + [f"{i}. {md(short_title(by_sid[r['source_id']]))}" + (f" — {md(r['why'])}" if r.get("why") else "")
                                              for i, r in enumerate(b["reading_order"], 1) if r["source_id"] in by_sid] + [""]
     L += ["# The documents", ""]
+    seen_sec = None
     for d in ctx["docs"]:
+        if d.get("section") != seen_sec:
+            seen_sec = d.get("section")
+            s = next((s for s in ctx["cfg"].get("sections") or [] if s["slug"] == seen_sec), None)
+            if s:
+                L += [f"*{md(s['title'])}*" + (f" — {md(s['description'])}" if s.get("description") else ""), ""]
         L += [f"## {md(d['_no'])} · {md(d['title'])}", ""]
         facts = " · ".join(str(x) for x in (KIND_LABEL.get(d.get("kind"), d.get("kind")), d.get("author_org"), d.get("date"),
                                             d.get("identifier"), f"{d['pages']} pages" if d.get("pages") else None) if x)
@@ -1246,7 +1268,9 @@ def docx_markdown(ctx: dict, out: Path) -> str:
     L += ["# Appendix: sources and method", "",
           md("Each document was saved with its exact bytes and their SHA-256 hash. Every quotation in this file was found "
              "again in the saved text, character for character, when the file was made. Summaries, notes and the memo are "
-             "their writers' own words. Fixity is not authenticity: a match shows which words were read, not that they are right."), ""]
+             "their writers' own words. A page number is the page as a PDF viewer counts it, which can differ from the "
+             "number printed on the page. Fixity is not authenticity: a match shows which words were read, not that they "
+             "are right."), ""]
     for d in ctx["docs"]:
         bits = [x for x in (d["_src"].get("url"), f"saved {fmt_day(d['_src'].get('fetched_at'))}" if d["_src"].get("fetched_at") else None,
                             f"SHA-256 {d['_src']['sha256'][:16]}…" if d["_src"].get("sha256") else None) if x]
@@ -1395,10 +1419,11 @@ def make_xlsx(ctx: dict, dest: Path) -> tuple[dict[str, int], str]:
         return [short_title(d), it.get("page"), it["quote"], it.get("extraction_id")]
 
     docs = ctx["docs"]
-    sheet("Documents", ["No.", "Title", "Kind", "By", "Date", "Identifier", "Pages", "Original URL", "Saved", "SHA-256",
+    secs = {s["slug"]: s["title"] for s in ctx["cfg"].get("sections") or []}
+    sheet("Documents", ["No.", "Section", "Title", "Kind", "By", "Date", "Identifier", "Pages", "Original URL", "Saved", "SHA-256",
                         "Suggested by", "Their words", "Entry written by", *[f"{v} (0-3)" for v in lt.values()]],
-          [6, 50, 16, 24, 12, 18, 7, 40, 12, 20, 18, 50, 22] + [12] * len(lt),
-          [[d["_no"], d["title"], KIND_LABEL.get(d.get("kind"), d.get("kind")), d.get("author_org"), d.get("date"),
+          [6, 22, 50, 16, 24, 12, 18, 7, 40, 12, 20, 18, 50, 22] + [12] * len(lt),
+          [[d["_no"], secs.get(d.get("section"), ""), d["title"], KIND_LABEL.get(d.get("kind"), d.get("kind")), d.get("author_org"), d.get("date"),
             d.get("identifier"), d.get("pages"), d["_src"].get("url"), fmt_day(d["_src"].get("fetched_at")),
             d["_src"].get("sha256"), (d.get("suggested_by") or {}).get("by"), (d.get("suggested_by") or {}).get("quote"),
             d["writer"], *[(d.get("relevance") or {}).get(k, 0) for k in lt]] for d in docs])
@@ -1434,10 +1459,22 @@ def local_paths_in(texts: dict[str, str], corpus: Path) -> list[tuple[str, str]]
 
 
 def order_docs(es: list[dict], cfg: dict, idx: dict) -> list[dict]:
+    """By section (the config's order), then the config's document order, then relevance."""
     want = [idx[x]["source_id"] for x in cfg.get("order") or [] if x in idx]
     rank = {sid: i for i, sid in enumerate(want)}
-    return sorted(es, key=lambda e: (rank.get(e["_source_id"], len(rank)), -sum((e.get("relevance") or {}).values()),
-                                     e["title"].lower()))
+    sec = {s["slug"]: i for i, s in enumerate(cfg.get("sections") or [])}
+    return sorted(es, key=lambda e: (sec.get(e.get("section"), len(sec)), rank.get(e["_source_id"], len(rank)),
+                                     -sum((e.get("relevance") or {}).values()), e["title"].lower()))
+
+
+def doc_groups(ctx: dict) -> list[tuple[dict | None, list[dict]]]:
+    """The documents by section, in order; one untitled group when the config has none."""
+    secs = ctx["cfg"].get("sections") or []
+    groups = [(s, [d for d in ctx["docs"] if d.get("section") == s["slug"]]) for s in secs]
+    rest = [d for d in ctx["docs"] if d.get("section") not in {s["slug"] for s in secs}]
+    if rest:
+        groups.append(({"slug": "other", "title": "Other documents", "description": ""} if secs else None, rest))
+    return [(s, ds) for s, ds in groups if ds]
 
 
 def build(corpus: Path, out: Path, *, copies: bool = False, docx: bool = True, xlsx: bool = True,
@@ -1608,6 +1645,7 @@ def main() -> int:
               "file-name", "order", "request-source", "request-quote", "request-by", "request-date"):
         p.add_argument(f"--{f}")
     p.add_argument("--suppress", action="append", help="a phrase that must never be published (repeatable)")
+    p.add_argument("--sections", help="a JSON file: [{slug, title, description}], the groups documents are shown in")
     for name in ("add", "brief"):
         p = sub.add_parser(name, help=f"store {'an entry' if name == 'add' else 'the cover memo'} written elsewhere")
         p.add_argument("--corpus", required=True)

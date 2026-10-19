@@ -80,6 +80,10 @@ def init(corpus: Path, root: Path, note_sid: str, **extra):
     proj.write_text(json.dumps(PROJECT))
     a = type("A", (), {k: None for k in ("subtitle", "prepared_for", "date", "stamp", "file_no", "file_name", "order",
                                           "request_date", "suppress")})()
+    secs = root / "sections.json"
+    secs.write_text(json.dumps([{"slug": "research", "title": "The research case", "description": "Studies and reports."},
+                                {"slug": "advocates", "title": "What advocates say", "description": ""}]))
+    a.sections = str(secs)
     a.audience, a.project, a.title, a.prepared_by = str(aud), str(proj), "Gas transition readings", "Ellie Example"
     a.date, a.request_source, a.request_by = "2026-10-19", note_sid, "Mithra Example (Agency)"
     a.request_quote = "Here are a couple of things you could look at."
@@ -89,7 +93,7 @@ def init(corpus: Path, root: Path, note_sid: str, **extra):
 
 
 ENTRY_A = {
-    "kind": "report", "author_org": "E. Consultants", "date": "2020-04", "identifier": "REP-2020-01",
+    "section": "research", "kind": "report", "author_org": "E. Consultants", "date": "2020-04", "identifier": "REP-2020-01",
     "summary": "A study of what happens to gas rates as customers electrify.",
     "why_it_matters": [{"lens": "policy", "text": "It is the cost argument behind targeted retirement."}],
     "relevance": {"policy": 3, "households": 2},
@@ -110,7 +114,7 @@ ENTRY_A = {
     "exhibits": [{"page": 1, "caption": "Not a PDF, so this is refused"}],
     "suggested_by": {"quote": "The retail gas study lays out the normal argument we hear now."},
 }
-ENTRY_B = {"kind": "comments", "author_org": "An advocate", "date": "2025",
+ENTRY_B = {"section": "advocates", "kind": "comments", "author_org": "An advocate", "date": "2025",
            "summary": "Comments asking that pilots protect customers.", "relevance": {"households": 3},
            "key_points": [{"text": "Protect those who cannot pay.", "lens": "households",
                            "quote": "pilots must protect customers who cannot afford new equipment"}],
@@ -176,6 +180,13 @@ class Dossier(unittest.TestCase):
         b = D.current_brief(self.corpus)
         self.assertEqual(b["type"], D.BRIEF)
         self.assertEqual(len(b["claims"]), 1)
+
+    def test_documents_are_grouped_by_section(self):
+        self.assertLess(self.index.index("The research case"), self.index.index("What advocates say"))
+        self.assertLess(self.index.index("Retail gas in a low-carbon future"), self.index.index("Comments of a consumer advocate"))
+        with self.assertRaises(SystemExit) as cm:
+            D.add_entry(self.corpus, {**ENTRY_B, "source": "url:https://ex.org/filing", "section": "nowhere"}, writer="x", plan=True)
+        self.assertIn("nowhere", str(cm.exception))
 
     def test_an_unknown_lens_refuses_the_entry(self):
         with self.assertRaises(SystemExit) as cm:
