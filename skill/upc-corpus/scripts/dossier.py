@@ -30,9 +30,10 @@ The objects are UPC's own, so a dossier is a projection (spec/09):
 the configured local model write it. Both go through the same gate.
 
 `build` refuses a corpus that does not validate and finds every quotation again
-in the stored source. It then writes the site (a cover with the memo, one folder
-per document, a timeline, who's who, terms, leads and method), a Word file and a
-spreadsheet. It reads the Word file back and refuses if a quotation is missing
+in the stored source. It then writes the site (a cover that fits the point on one
+screen, the memo, one folder per document, a timeline, who's who, terms, leads and
+method), a Word file and a spreadsheet. Every page puts what matters at a glance and
+the detail one click away. It reads the Word file back and refuses if a quotation is missing
 from it. It also refuses if a never-publish phrase (from either profile or the
 config) or a local path would appear in anything it writes. The build record is
 kept beside the output folder, never in it.
@@ -194,8 +195,14 @@ def source_index(corpus: Path) -> dict[str, dict]:
 
 
 def exs_id(corpus: Path) -> str:
-    ns = C.corpus_settings(corpus).get("namespace") or re.sub(r"[^a-z0-9]+", "-", corpus.name.lower()).strip("-")
-    return f"exs-{ns or 'dossier'}-dossier"
+    """The dossier's passage set. Its namespace is recorded in the config the first time, so a corpus that is
+    moved or copied keeps the same set instead of starting a new one under its new folder name."""
+    cfg = C.load_json(cfg_path(corpus), None) or {}
+    ns = cfg.get("namespace") or C.corpus_settings(corpus).get("namespace") \
+        or re.sub(r"[^a-z0-9]+", "-", corpus.name.lower()).strip("-") or "dossier"
+    if cfg and not cfg.get("namespace"):
+        C.save_json(cfg_path(corpus), {**cfg, "namespace": ns})
+    return f"exs-{ns}-dossier"
 
 
 def anchor_quotes(corpus: Path, info: dict, quotes: list[str | None], *, model: str, prompt: str,
@@ -309,6 +316,26 @@ def cmd_init(corpus: Path, a) -> int:
 
 
 # ------------------------------------------------------------------ add (an entry)
+# The cover has to fit on one screen, so the lines it shows have word limits; `add` and `brief` refuse
+# anything longer and say by how much. The memo and the document pages hold the rest.
+LIMITS = {"for_us": 45, "read_this": 14, "bottom_line": 90, "theme title": 14, "next step": 22, "headline": 24}
+MAX_THEMES, MAX_STEPS = 6, 6
+# Where a next step can point: a page of the site, or a document (its source id or alias).
+PAGE_OF = {"leads": "leads.html", "timeline": "timeline.html", "people": "people.html", "terms": "terms.html",
+           "memo": "memo.html", "method": "method.html"}
+SEE_LABEL = {"leads": "leads", "timeline": "timeline", "people": "who's who", "terms": "terms", "memo": "memo",
+             "method": "method"}
+
+
+def nwords(s) -> int:
+    return len(str(s or "").split())
+
+
+def over(field: str, text, where: str | None = None) -> str | None:
+    n = nwords(text)
+    return f"{where or field}: {n} words; at most {LIMITS[field]}" if n > LIMITS[field] else None
+
+
 def _prose(s: str) -> str:
     """The writer's words in the generation's Markdown: a straight double quotation
     mark there would read as an unchecked quotation, so it becomes a single one."""
@@ -326,6 +353,10 @@ def marker(quote: str, eid: str) -> str:
 def entry_markdown(e: dict, project: dict) -> str:
     lt = lens_titles(project)
     md = [f"# {_prose(e['title'])}", "", f"Written by {_prose(e['writer'])}.", "", _prose(e["summary"]), ""]
+    if e.get("for_us"):
+        md += [f"What matters for {_prose(project['name'])}: {_prose(e['for_us'])}", ""]
+    if e.get("read_this"):
+        md += [f"Read: {_prose(e['read_this'])}", ""]
     if e.get("why_it_matters"):
         md += [f"## Why it matters for {_prose(project['name'])}", ""]
         md += [f"- {lt.get(w.get('lens'), 'General')}: {_prose(w.get('text'))}" for w in e["why_it_matters"]] + [""]
@@ -352,6 +383,11 @@ def _check_entry_shape(entry: dict, project: dict, sections: list[dict] | None =
                     f"({', '.join(s['slug'] for s in sections or []) or 'none set: init --sections'})")
     if not str(entry.get("summary") or "").strip():
         errs.append("summary: missing")
+    for f in ("for_us", "read_this"):
+        if entry.get(f) and not isinstance(entry[f], str):
+            errs.append(f"{f}: should be a sentence of text")
+        elif (msg := over(f, entry.get(f))):
+            errs.append(msg + (" (the document's line on the cover)" if f == "for_us" else ""))
     for i, w in enumerate(entry.get("why_it_matters") or []):
         if w.get("lens") not in lenses:
             errs.append(f"why_it_matters[{i}].lens: {w.get('lens')!r} is not a lens of {project['name']}")
@@ -422,7 +458,7 @@ def add_entry(corpus: Path, entry: dict, *, writer: str, model: str | None = Non
             exhibits.append({"page": pg, "caption": str(ex.get("caption") or "").strip()})
 
     keep = ("title", "short_title", "section", "kind", "authors", "author_org", "date", "identifier", "license", "summary",
-            "why_it_matters", "relevance", "questions", "read_chars", "total_chars")
+            "for_us", "read_this", "why_it_matters", "relevance", "questions", "read_chars", "total_chars")
     e = {**{k: entry[k] for k in keep if entry.get(k) not in (None, "", [], {})}, "writer": writer,
          "title": entry.get("title") or info["title"], "pages": pages or entry.get("pages"),
          **kept, "suggested_by": sug, "exhibits": exhibits, "refused": refused}
@@ -463,7 +499,7 @@ def entry_schema(project: dict) -> dict:
     s, q = {"type": "string"}, {"type": "string"}
     obj = lambda **p: {"type": "object", "properties": p, "required": list(p)}  # noqa: E731
     arr = lambda item: {"type": "array", "items": item}  # noqa: E731
-    return obj(kind={"type": "string", "enum": list(KIND_LABEL)}, author_org=s, date=s, summary=s,
+    return obj(kind={"type": "string", "enum": list(KIND_LABEL)}, author_org=s, date=s, summary=s, for_us=s, read_this=s,
                why_it_matters=arr(obj(lens={"type": "string", "enum": lenses}, text=s)),
                relevance={"type": "object", "properties": {k: {"type": "integer", "minimum": 0, "maximum": 3} for k in lenses}},
                key_points=arr(obj(text=s, lens={"type": "string", "enum": lenses}, quote=q)),
@@ -496,6 +532,10 @@ Output JSON only:
 - kind, author_org (who wrote or issued it), date (as the document gives it).
 - summary: about {aud.get('summary_words', 120)} words in your own words: what the document is, what it argues or
   finds, and whose view it represents. Only what the document says; no quotation marks; nothing from your own knowledge.
+- for_us: at most {LIMITS['for_us'] - 5} words, plain: what in this document matters most for {proj['name']}. It is the
+  document's one line on the dossier's cover, so make it specific (a finding, a case, a number, a gap), not a description.
+- read_this: at most {LIMITS['read_this'] - 2} words: which part to read (say, "the executive summary and Figure 2"),
+  or "the whole document" when it is short.
 - why_it_matters: for each lens it really bears on, one or two sentences on why, for this project.
 - relevance: 0-3 for every lens (0 none, 1 background, 2 useful, 3 central).
 - key_points (3-8), figures, dates, actors (people or organizations and the position the document gives them),
@@ -562,6 +602,9 @@ def add_brief(corpus: Path, brief: dict, *, writer: str, model: str | None = Non
     idx = source_index(corpus)
     exts = extractions(corpus)
     refused, model_label = [], model or writer
+    problems = brief_shape(brief, proj, idx)
+    if problems:
+        raise SystemExit("the brief does not fit (references/dossier.md, 'The cover memo'):\n  " + "\n  ".join(problems))
 
     # Anchor each quotation in its own source, one CLI call per source.
     asks: dict[str, list] = {}
@@ -585,8 +628,14 @@ def add_brief(corpus: Path, brief: dict, *, writer: str, model: str | None = Non
     if not plan:
         exts = extractions(corpus)
 
+    steps = []
+    for st in steps_of(brief):
+        see = st.get("see")
+        if see and see not in PAGE_OF:
+            see = idx[see]["source_id"]
+        steps.append({k: v for k, v in {"step": st["step"], "detail": st.get("detail"), "see": see}.items() if v})
     out: dict = {"writer": writer, "title": brief.get("title") or "Cover memo", "lede": brief.get("lede", ""),
-                 "next_steps": brief.get("next_steps") or [], "reading_order": []}
+                 "bottom_line": brief.get("bottom_line", ""), "next_steps": steps, "reading_order": []}
     used: set[str] = set()
     for sec, _ in BRIEF_SECTIONS:
         out[sec] = []
@@ -629,14 +678,15 @@ def add_brief(corpus: Path, brief: dict, *, writer: str, model: str | None = Non
         raise SystemExit("the brief has no theme with a quotation found in its source; nothing was written")
 
     titles = {sid: idx[sid]["title"] for sid in used}
-    md = [f"# {_prose(out['title'])}", "", f"Written by {_prose(writer)}.", "", _prose(out["lede"]), ""]
+    md = [f"# {_prose(out['title'])}", "", f"Written by {_prose(writer)}.", ""]
+    md += [_prose(x) for x in (out["bottom_line"], out["lede"]) if x] + [""]
     claims, n = [], 0
     for sec, head in BRIEF_SECTIONS:
         if not out[sec]:
             continue
         md += [f"## {head or 'For ' + _prose(proj['name'])}", ""]
         for item in out[sec]:
-            title = item.get("title") or lt.get(item.get("lens"), "")
+            title = item.get("title") or item.get("headline") or lt.get(item.get("lens"), "")
             md += [f"### {_prose(title)}", "", _prose(item.get("text")), ""]
             for ev in item["evidence"]:
                 md += [marker(ev["quote"], ev["extraction_id"]), f"({_prose(titles[ev['source_id']])} · {ev['source_id']})", ""]
@@ -646,7 +696,8 @@ def add_brief(corpus: Path, brief: dict, *, writer: str, model: str | None = Non
                                "evidence_ids": [ev["extraction_id"] for ev in item["evidence"]],
                                "source_ids": sorted({ev["source_id"] for ev in item["evidence"]}), "confidence": "medium"})
     if out["next_steps"]:
-        md += ["## Next steps", ""] + [f"- [ ] {_prose(s)}" for s in out["next_steps"]] + [""]
+        md += ["## Next steps", ""] + [f"- [ ] {_prose(s['step'])}" + (f" ({_prose(s['detail'])})" if s.get("detail") else "")
+                                       for s in out["next_steps"]] + [""]
     md += ["## Sources", ""] + [f"- {sid}: {_prose(titles[sid])}" for sid in sorted(used)] + [""]
     md_path = C.state_dir(corpus, "dossier") / "brief.md"
     md_path.write_text("\n".join(md), encoding="utf-8")
@@ -663,6 +714,38 @@ def add_brief(corpus: Path, brief: dict, *, writer: str, model: str | None = Non
                          + "\n  ".join(f"{f.get('marker')}: {f.get('reason')}" for f in fails[:8]))
     report.update(status="ok", synthesis_id=res["synthesis_id"])
     return report
+
+
+def brief_shape(brief: dict, proj: dict, idx: dict) -> list[str]:
+    """What keeps the cover on one screen: a bottom line, a few findings and next steps, each short."""
+    errs = []
+    if not str(brief.get("bottom_line") or brief.get("lede") or "").strip():
+        errs.append("bottom_line: missing (one paragraph: the point of the whole file)")
+    if (msg := over("bottom_line", brief.get("bottom_line"))):
+        errs.append(msg)
+    themes = brief.get("themes") or []
+    if len(themes) > MAX_THEMES:
+        errs.append(f"themes: {len(themes)}; at most {MAX_THEMES} (the cover lists each; move the rest into tensions or the text)")
+    for i, t in enumerate(themes):
+        if (msg := over("theme title", t.get("title"), f"themes[{i}].title")):
+            errs.append(msg + " (a finding the cover lists, so a short statement)")
+    for i, t in enumerate(brief.get("for_project") or []):
+        if (msg := over("headline", t.get("headline"), f"for_project[{i}].headline")):
+            errs.append(msg)
+    raw = brief.get("next_steps") or []
+    if len(raw) > MAX_STEPS:
+        errs.append(f"next_steps: {len(raw)}; at most {MAX_STEPS}")
+    for i, st in enumerate(raw):
+        if not isinstance(st, (str, dict)) or (isinstance(st, dict) and not str(st.get("step") or "").strip()):
+            errs.append(f"next_steps[{i}]: a string, or {{step, detail, see}} with a step")
+            continue
+        text = st if isinstance(st, str) else st["step"]
+        if (msg := over("next step", text, f"next_steps[{i}]" + ("" if isinstance(st, str) else ".step"))):
+            errs.append(msg + " (put the rest in detail)")
+        see = st.get("see") if isinstance(st, dict) else None
+        if see and see not in PAGE_OF and see not in idx:
+            errs.append(f"next_steps[{i}].see: {see!r} is not a page ({', '.join(PAGE_OF)}) or a source of this corpus")
+    return errs
 
 
 # ------------------------------------------------------------------ reading the dossier back
@@ -750,32 +833,39 @@ def cmd_check(corpus: Path) -> int:
 
 
 # ------------------------------------------------------------------ the site
-CSS = """
-:root{--desk:#ebe6db;--folder:#f2e2b6;--folder-2:#e8d39d;--folder-edge:#cdb47a;--paper:#fffdf8;--ink:#24201a;
---muted:#6b6354;--rule:#e3dac8;--stamp:#a3302a;--link:#22567f;--postit:#fff0a0;--postit-ink:#3a3212;--chip:#f7efd9;
---tape:rgba(246,236,196,.78);--shadow:0 1px 2px rgba(60,45,20,.08),0 6px 18px rgba(60,45,20,.08);
---mono:"American Typewriter","Courier Prime","Courier New",ui-monospace,Menlo,monospace;
---serif:"Iowan Old Style","Palatino Linotype",Palatino,Georgia,serif;
---sans:-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;color-scheme:light}
-@media (prefers-color-scheme:dark){:root:not([data-theme=light]){--desk:#15140f;--folder:#383021;--folder-2:#463c28;
---folder-edge:#5e5034;--paper:#1e1c18;--ink:#ece5d8;--muted:#a99f8d;--rule:#36312a;--stamp:#e57f72;--link:#8fbde4;
---postit:#4a4322;--postit-ink:#f5ecc3;--chip:#2a261e;--tape:rgba(120,110,80,.5);
---shadow:0 1px 2px rgba(0,0,0,.35),0 6px 18px rgba(0,0,0,.3);color-scheme:dark}}
-:root[data-theme=dark]{--desk:#15140f;--folder:#383021;--folder-2:#463c28;--folder-edge:#5e5034;--paper:#1e1c18;
---ink:#ece5d8;--muted:#a99f8d;--rule:#36312a;--stamp:#e57f72;--link:#8fbde4;--postit:#4a4322;--postit-ink:#f5ecc3;
---chip:#2a261e;--tape:rgba(120,110,80,.5);--shadow:0 1px 2px rgba(0,0,0,.35),0 6px 18px rgba(0,0,0,.3);color-scheme:dark}
+# Every page follows one rule: what matters at a glance, the detail one click away. Lists become cards
+# (a face to scan, the passage behind it in a panel), filters and a search narrow them, and nothing a
+# reader needs is hidden without a visible way in. Without JavaScript the cards open in place.
+
+# One quiet palette, light and dark. --k1..--k6 tell groups apart (timeline threads, kinds of actor).
+LIGHT = ("--desk:#efece6;--folder:#f7f3ea;--folder-2:#ebe4d5;--folder-edge:#d9cfbb;--paper:#fffdf9;--ink:#2a2723;"
+         "--muted:#6f685d;--rule:#e8e1d4;--stamp:#a0533f;--link:#2f5f80;--postit:#fbf4d6;--postit-ink:#4a4128;"
+         "--chip:#f3eee4;--tape:rgba(226,214,186,.75);--shadow:0 1px 2px rgba(50,40,25,.06),0 4px 14px rgba(50,40,25,.06);"
+         "--k1:#6b8f71;--k2:#5c7a99;--k3:#b08a3e;--k4:#8b6589;--k5:#4f8a8b;--k6:#b0705a;color-scheme:light")
+DARK = ("--desk:#161513;--folder:#201e1a;--folder-2:#2a2722;--folder-edge:#3d382f;--paper:#1c1a17;--ink:#ece7de;"
+        "--muted:#a69e91;--rule:#322e28;--stamp:#d99a86;--link:#93bedf;--postit:#36321f;--postit-ink:#efe6c6;"
+        "--chip:#26231e;--tape:rgba(110,100,75,.45);--shadow:0 1px 2px rgba(0,0,0,.3),0 4px 14px rgba(0,0,0,.25);"
+        "--k1:#93b598;--k2:#8ba7c4;--k3:#d2ae66;--k4:#b893b6;--k5:#7db5b6;--k6:#d69a85;color-scheme:dark")
+FONTS = ('--mono:"American Typewriter","Courier Prime","Courier New",ui-monospace,Menlo,monospace;'
+         '--serif:"Iowan Old Style","Palatino Linotype",Palatino,Georgia,serif;'
+         '--sans:-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif')
+
+CSS = (":root{" + LIGHT + ";" + FONTS + "}\n@media (prefers-color-scheme:dark){:root:not([data-theme=light]){" + DARK + "}}\n"
+       ":root[data-theme=dark]{" + DARK + "}\n" + """
 *{box-sizing:border-box}
+html{scroll-padding-top:12px}
 body{margin:0;background:var(--desk);color:var(--ink);font:16px/1.6 var(--sans);-webkit-text-size-adjust:100%;overflow-wrap:break-word}
-a{color:var(--link)}
-h1,h2,h3{font-family:var(--serif);font-weight:600;line-height:1.2;margin:0 0 .5em}
-h1{font-size:clamp(1.8rem,4.2vw,2.8rem);letter-spacing:-.01em}
-h2{font-size:1.45rem} h3{font-size:1.12rem}
+a{color:var(--link);text-underline-offset:2px}
+h1,h2,h3{font-family:var(--serif);font-weight:600;line-height:1.22;margin:0 0 .5em}
+h1{font-size:clamp(1.5rem,2.5vw,2.15rem);letter-spacing:-.01em}
+h2{font-size:1.28rem} h3{font-size:1.06rem}
 p{margin:0 0 .8em}
-.wrap{max-width:1140px;margin:0 auto;padding:0 16px 40px}
-nav.tabs{display:flex;gap:4px;overflow-x:auto;padding:22px 0 0;scrollbar-width:thin}
-nav.tabs a{flex:0 0 auto;background:var(--folder-2);color:var(--ink);text-decoration:none;font:600 .74rem/1 var(--mono);
+.wrap{max-width:1600px;margin:0 auto;padding:0 clamp(12px,2.4vw,32px) 40px}
+nav.tabs{display:flex;gap:4px;overflow-x:auto;padding:20px 0 0;scrollbar-width:thin}
+nav.tabs a{flex:0 0 auto;background:var(--folder-2);color:var(--ink);text-decoration:none;font:600 .72rem/1 var(--mono);
 letter-spacing:.07em;text-transform:uppercase;padding:11px 15px 10px;border:1px solid var(--folder-edge);border-bottom:none;
-border-radius:10px 10px 0 0}
+border-radius:9px 9px 0 0}
+nav.tabs a:hover{background:var(--folder)}
 nav.tabs a.here{background:var(--folder);position:relative;top:1px}
 .topbar{display:flex;align-items:flex-end;gap:8px}
 .topbar nav.tabs{flex:1 1 auto;min-width:0}
@@ -787,111 +877,296 @@ button.theme svg{width:14px;height:14px;fill:none;stroke:currentColor;stroke-wid
 button.theme[hidden],button.theme[data-to=dark] .sun,button.theme[data-to=light] .moon{display:none}
 @media (max-width:560px){button.theme span{display:none}button.theme{padding:7px}}
 main.folder{background:var(--folder);border:1px solid var(--folder-edge);border-radius:0 12px 12px 12px;
-padding:clamp(16px,3vw,36px);box-shadow:var(--shadow)}
-.sheet{background:var(--paper);border:1px solid var(--rule);border-radius:3px;padding:clamp(16px,3vw,30px);
-box-shadow:var(--shadow);position:relative;margin:0 0 22px}
-.label{font:600 .72rem/1.3 var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+padding:clamp(14px,2.2vw,30px);box-shadow:var(--shadow)}
+.sheet{background:var(--paper);border:1px solid var(--rule);border-radius:4px;padding:clamp(14px,2vw,26px);
+box-shadow:var(--shadow);position:relative;margin:0 0 20px}
+.prose{max-width:74ch}
+.label{font:600 .7rem/1.3 var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
 .byline,.src{font-size:.84rem;color:var(--muted)}
-.lede{font-size:1.06rem;color:var(--muted);max-width:68ch}
-.stamp{display:inline-block;font:700 .8rem/1 var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--stamp);
-border:2.5px solid var(--stamp);border-radius:6px;padding:8px 11px;transform:rotate(-3deg);opacity:.88}
-.cover-top{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:14px}
-dl.meta{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px 22px;margin:18px 0}
-dl.meta dt{font:600 .7rem/1.2 var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
-dl.meta dd{margin:2px 0 0}
+.lede{font-size:1.03rem;color:var(--muted);max-width:76ch;margin:0}
+.note{font-size:.84rem;color:var(--muted)}
+.stamp{display:inline-block;font:700 .72rem/1 var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--stamp);
+border:2px solid var(--stamp);border-radius:5px;padding:6px 9px;transform:rotate(-2deg);opacity:.8;white-space:nowrap}
 .btn{display:inline-flex;align-items:center;gap:6px;background:var(--paper);border:1px solid var(--folder-edge);
-color:var(--ink);text-decoration:none;font-size:.9rem;padding:8px 13px;border-radius:8px;margin:0 8px 8px 0}
+color:var(--ink);text-decoration:none;font-size:.86rem;padding:6px 12px;border-radius:8px;white-space:nowrap}
 .btn:hover{border-color:var(--ink)}
-.cover-grid{display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:26px;align-items:start;margin-top:26px}
-.memo{padding-top:34px}
-.clip{position:absolute;top:-24px;left:26px;width:22px;height:64px;color:var(--muted);transform:rotate(7deg)}
-.memo-head{display:grid;grid-template-columns:auto 1fr;gap:3px 14px;font:.86rem/1.45 var(--mono);
-border-bottom:2px solid var(--rule);padding-bottom:12px;margin-bottom:16px}
-.memo-head b{letter-spacing:.06em}
-.theme{border-top:1px solid var(--rule);padding-top:14px;margin-top:16px}
-blockquote.q{margin:8px 0 4px;padding:3px 0 3px 14px;border-left:3px solid var(--folder-edge);font-family:var(--serif);
-font-size:1.02rem}
+.crumbs{font-size:.86rem;margin:0 0 10px}
+.page-head{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:flex-end;gap:12px 28px;margin:0 0 16px}
+.page-head h1{margin:0 0 .2em}
+.stats{display:flex;flex-wrap:wrap;gap:8px}
+.stat{background:var(--paper);border:1px solid var(--rule);border-radius:4px;padding:7px 14px 8px;min-width:96px}
+.stat b{display:block;font:600 1.45rem/1.15 var(--serif)}
+.stat span{font-size:.76rem;color:var(--muted)}
+.toolbar{display:flex;flex-wrap:wrap;align-items:center;gap:8px 14px;margin:0 0 14px}
+.chips{display:flex;gap:6px;align-items:center;overflow-x:auto;padding-bottom:3px;max-width:100%;scrollbar-width:thin}
+.chips>.label{flex:none;margin-right:2px}
+button.chip{flex:none;font:inherit;font-size:.84rem;border:1px solid var(--folder-edge);background:var(--chip);color:var(--ink);
+padding:4px 11px;border-radius:999px;cursor:pointer;white-space:nowrap;display:inline-flex;align-items:center;gap:6px}
+button.chip:hover{border-color:var(--ink)}
+button.chip[aria-pressed=true]{background:var(--ink);color:var(--paper);border-color:var(--ink)}
+button.chip b{font:700 .72rem var(--mono);color:var(--stamp)} button.chip[aria-pressed=true] b{color:inherit}
+button.chip i{font-style:normal;font-size:.72rem;opacity:.7}
+input.find{font:inherit;font-size:.9rem;padding:6px 13px;border:1px solid var(--folder-edge);border-radius:999px;
+background:var(--paper);color:var(--ink);width:min(260px,100%)}
+.shown{font-size:.8rem;color:var(--muted)}
+.k1{--k:var(--k1)}.k2{--k:var(--k2)}.k3{--k:var(--k3)}.k4{--k:var(--k4)}.k5{--k:var(--k5)}.k6{--k:var(--k6)}
+.sw{display:inline-block;width:10px;height:10px;border-radius:50%;flex:none;background:var(--k,var(--muted))}
+.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:12px}
+details.card{background:var(--paper);border:1px solid var(--rule);border-top:3px solid var(--k,var(--folder-edge));
+border-radius:4px;box-shadow:var(--shadow);min-width:0}
+details.card>summary{list-style:none;cursor:pointer;padding:10px 13px 12px;display:flex;flex-direction:column;gap:4px;height:100%}
+details.card>summary::-webkit-details-marker{display:none}
+details.card:hover{border-color:var(--folder-edge);border-top-color:var(--k,var(--stamp))}
+details.card>summary:focus-visible{outline:2px solid var(--link);outline-offset:2px}
+details.card[open]>summary{height:auto}
+details.card .more{padding:6px 13px 13px;border-top:1px dashed var(--rule)}
+.clamp2,.clamp3{display:-webkit-box;-webkit-box-orient:vertical;overflow:hidden}
+.clamp2{-webkit-line-clamp:2}.clamp3{-webkit-line-clamp:3}
+.meta{font:600 .66rem/1.35 var(--mono);letter-spacing:.07em;text-transform:uppercase;color:var(--muted)}
+.t{font-weight:600;line-height:1.35}
+.from{display:flex;align-items:center;gap:6px;margin-top:auto;padding-top:4px;font-size:.78rem;color:var(--muted)}
+dialog.drawer{border:none;padding:0;background:var(--paper);color:var(--ink);border-radius:10px;
+box-shadow:0 24px 70px rgba(0,0,0,.35);width:min(760px,calc(100vw - 24px));max-height:min(86vh,940px);overflow:auto}
+dialog.drawer::backdrop{background:rgba(28,24,18,.45)}
+.dr-bar{position:sticky;top:0;z-index:1;display:flex;align-items:center;gap:6px;padding:8px 10px 8px 18px;
+background:var(--paper);border-bottom:1px solid var(--rule)}
+.dr-bar .pos{margin-right:auto;font:600 .68rem var(--mono);letter-spacing:.07em;text-transform:uppercase;color:var(--muted)}
+.dr-bar button{font:inherit;font-size:.82rem;border:1px solid var(--rule);background:var(--chip);color:var(--ink);
+border-radius:6px;padding:4px 10px;cursor:pointer}
+.dr-body{padding:16px 22px 24px}
+.dr-body .face{display:flex;flex-direction:column;gap:4px;margin:0 0 14px;padding-bottom:12px;border-bottom:1px solid var(--rule)}
+.dr-body .face .t{font:600 1.22rem/1.3 var(--serif)}
+.dr-body .face .clamp2,.dr-body .face .clamp3{display:block;-webkit-line-clamp:unset;overflow:visible}
+.dr-body .face .from{margin-top:2px}
+@media (max-width:640px){dialog.drawer{width:100vw;max-width:100vw;margin:auto 0 0;border-radius:14px 14px 0 0;max-height:88vh}}
+blockquote.q{margin:8px 0 4px;padding:2px 0 2px 14px;border-left:3px solid var(--folder-edge);font-family:var(--serif);font-size:1.02rem}
 ul.ev,ol.points,ul.plain{list-style:none;margin:0;padding:0}
-ul.ev li{margin:0 0 10px}
-details.ev{margin:4px 0 6px} details.ev>summary{cursor:pointer;width:max-content;max-width:100%;font:600 .72rem/1.3 var(--mono);
+ul.ev>li{margin:0 0 16px}
+details.ev{margin:4px 0 6px} details.ev>summary{cursor:pointer;width:max-content;max-width:100%;font:600 .7rem/1.3 var(--mono);
 letter-spacing:.08em;text-transform:uppercase;color:var(--muted);padding:4px 0} details.ev[open]>summary{margin-bottom:6px}
-.postit{background:var(--postit);color:var(--postit-ink);padding:14px 16px 16px;box-shadow:0 2px 7px rgba(60,45,20,.2);
-transform:rotate(-1deg);border-bottom-right-radius:22px 7px;margin:0 0 18px}
-.postit h3,.postit .label{color:var(--postit-ink)}
-.postit ol{margin:6px 0 0;padding-left:20px} .postit li{margin:0 0 6px}
-.postits{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:18px;margin:6px 0 22px}
-.postits .postit:nth-child(even){transform:rotate(1.1deg)}
+button.copy{font:600 .66rem/1 var(--mono);letter-spacing:.06em;text-transform:uppercase;border:1px solid var(--rule);
+background:transparent;color:var(--muted);border-radius:5px;padding:3px 7px;margin-left:8px;cursor:pointer}
+.postit{background:var(--postit);color:var(--postit-ink);padding:14px 16px 16px;box-shadow:0 2px 7px rgba(60,45,20,.14);
+transform:rotate(-.5deg);border-bottom-right-radius:22px 7px;margin:0 0 18px}
+.postit h2,.postit h3,.postit .label{color:var(--postit-ink)}
 .postit .who{display:block;font-size:.72rem;opacity:.75;margin-top:6px}
-.slip{background:var(--paper);border:1px dashed var(--folder-edge);padding:12px 14px;margin:0 0 18px;font-size:.92rem}
-.slip blockquote{margin:6px 0 0;font-family:var(--serif)}
-.lensbar{display:flex;flex-wrap:wrap;gap:6px;margin:6px 0 18px}
-.lensbar button{font:inherit;font-size:.82rem;border:1px solid var(--folder-edge);background:var(--chip);color:var(--ink);
-padding:5px 11px;border-radius:999px;cursor:pointer}
-.lensbar button[aria-pressed=true]{background:var(--ink);color:var(--paper);border-color:var(--ink)}
-.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:30px 20px;padding-top:14px}
-.group{margin:0 0 30px} .group-title{font-size:1.15rem;margin:18px 0 2px;padding-top:14px;border-top:2px solid var(--folder-edge)}
-.doc-card{position:relative;background:var(--paper);border:1px solid var(--rule);border-radius:3px 3px 6px 6px;
-box-shadow:var(--shadow);display:flex;flex-direction:column}
-.doc-card .tab{position:absolute;top:-17px;left:14px;background:var(--folder-2);border:1px solid var(--folder-edge);
-border-bottom:none;border-radius:7px 7px 0 0;padding:3px 10px;font:600 .72rem/1.3 var(--mono);letter-spacing:.08em}
-.doc-card .shot{display:block;height:150px;overflow:hidden;border-bottom:1px solid var(--rule);background:var(--chip)}
-.doc-card .shot img{width:100%;display:block}
-.doc-card .shot.ph{display:flex;align-items:flex-end;padding:12px;font:600 .8rem var(--mono);color:var(--muted)}
-.doc-card .body{padding:14px 16px 16px;display:flex;flex-direction:column;gap:6px;flex:1}
-.doc-card h3{margin:0;font-size:1.05rem} .doc-card h3 a{color:var(--ink);text-decoration:none}
-.doc-card h3 a:hover{text-decoration:underline}
-.kind{align-self:flex-start;font:600 .66rem/1.2 var(--mono);letter-spacing:.09em;text-transform:uppercase;color:var(--stamp)}
-.teaser{font-size:.9rem;margin:0}
-.rel{display:flex;flex-wrap:wrap;gap:5px;margin-top:auto;padding-top:6px}
-.rel span{font-size:.72rem;background:var(--chip);border:1px solid var(--rule);border-radius:999px;padding:1px 8px;white-space:nowrap}
-.rel b{letter-spacing:1px;color:var(--stamp);font-weight:400}
-.crumbs{font-size:.86rem;margin:0 0 12px}
-.docgrid{display:grid;grid-template-columns:minmax(0,1fr) 290px;gap:26px;align-items:start}
-.side .shot{background:var(--paper);padding:8px;box-shadow:var(--shadow);margin:0 0 16px;transform:rotate(.6deg)}
-.side .shot img{width:100%;display:block}
-dl.facts{margin:0;font-size:.88rem} dl.facts dt{font:600 .68rem/1.2 var(--mono);letter-spacing:.08em;text-transform:uppercase;
-color:var(--muted);margin-top:10px} dl.facts dd{margin:2px 0 0;overflow-wrap:anywhere}
-ol.points>li{padding:12px 0;border-top:1px solid var(--rule)} ol.points>li:first-child{border-top:none}
-.lens{font:600 .66rem/1.2 var(--mono);letter-spacing:.07em;text-transform:uppercase;color:var(--muted)}
+.postits{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:16px;margin:6px 0 22px}
+.postits .postit:nth-child(even){transform:rotate(.6deg)}
+.slip{background:var(--paper);border:1px dashed var(--folder-edge);padding:12px 14px;margin:0 0 18px;font-size:.9rem}
+.slip p{margin:4px 0 0} .slip blockquote{margin:6px 0 0;font-family:var(--serif)}
+ul.check li{padding-left:28px;position:relative;margin:0 0 9px;list-style:none}
+ul.check li::before{content:"";position:absolute;left:2px;top:4px;width:14px;height:14px;border:1.5px solid currentColor;
+border-radius:3px;opacity:.6}
+ul.check{padding:0;margin:0}
+.lens-tag{font:600 .66rem/1.2 var(--mono);letter-spacing:.07em;text-transform:uppercase;color:var(--stamp)}
 .scroll{overflow-x:auto}
 table.ledger{width:100%;border-collapse:collapse;font-size:.9rem}
 table.ledger th{font:600 .68rem/1.2 var(--mono);letter-spacing:.07em;text-transform:uppercase;color:var(--muted);
 text-align:left;border-bottom:2px solid var(--rule);padding:8px}
 table.ledger td{border-bottom:1px solid var(--rule);padding:9px 8px;vertical-align:top}
-table.ledger td.q{font-family:var(--serif);min-width:16em}
 code{font-size:.8rem;overflow-wrap:anywhere}
 .exhibits{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:26px;margin-top:10px}
 figure.exhibit{margin:0;background:var(--paper);padding:10px 10px 8px;box-shadow:var(--shadow);position:relative}
 figure.exhibit::before{content:"";position:absolute;top:-11px;left:50%;width:96px;height:24px;margin-left:-48px;
-background:var(--tape);transform:rotate(-2deg);box-shadow:0 1px 2px rgba(0,0,0,.08)}
+background:var(--tape);transform:rotate(-2deg)}
 figure.exhibit img{width:100%;display:block;border:1px solid var(--rule)}
 figure.exhibit figcaption{font-size:.82rem;color:var(--muted);margin-top:6px}
-ul.check li{padding-left:28px;position:relative;margin:0 0 8px}
-ul.check li::before{content:"";position:absolute;left:2px;top:4px;width:14px;height:14px;border:1.5px solid var(--muted);border-radius:3px}
-button.copy{font:600 .68rem/1 var(--mono);letter-spacing:.06em;text-transform:uppercase;border:1px solid var(--rule);
-background:transparent;color:var(--muted);border-radius:5px;padding:3px 7px;margin-left:8px;cursor:pointer}
 .prevnext{display:flex;justify-content:space-between;gap:12px;margin-top:18px;font-size:.9rem}
-.note{font-size:.84rem;color:var(--muted)}
-footer.site{margin:26px 0 0;color:var(--muted);font-size:.82rem;max-width:80ch}
+footer.site{margin:26px 0 0;color:var(--muted);font-size:.82rem;max-width:90ch}
 .hide{display:none!important}
-@media (max-width:820px){.cover-grid,.docgrid{grid-template-columns:minmax(0,1fr)}.side{order:-1}
-.side .shot{max-width:260px}}
-@media print{:root:is([data-theme],:not([data-theme])){--ink:#24201a;--muted:#6b6354;--rule:#ddd;--link:#22567f;
---paper:#fff;--folder:#fff;--chip:#fff;--postit:#fff;--postit-ink:#3a3212;--stamp:#a3302a;color-scheme:light}
-body{background:#fff}nav.tabs,.lensbar,button.copy,button.theme,.btn{display:none}main.folder,.sheet,.doc-card,
-figure.exhibit{box-shadow:none;border-color:#ccc;background:#fff}.postit,.stamp,.side .shot{transform:none}
-.postit{border:1px solid #bbb}a{color:inherit}}
-"""
+.sec{margin:26px 0 0}
+.sec-head{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 14px;margin:0 0 10px}
+.sec-head h2{margin:0;font-size:1.25rem}
+.d{display:block;border-radius:50%}
+.d3{width:15px;height:15px;background:var(--stamp)}
+.d2{width:11px;height:11px;margin-top:2px;background:var(--muted);opacity:.8}
+.d1{width:8px;height:8px;margin-top:3px;border:1.5px solid var(--muted);opacity:.7}
+.d0{width:4px;height:4px;margin-top:5px;background:var(--rule)}
+.d.il{display:inline-block;vertical-align:middle;margin:0 3px 0 8px}
+
+/* the cover */
+.cv-head{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px 24px;align-items:start;margin-bottom:16px}
+.cv-head h1{margin:.15em 0 .15em}
+.cv-meta{margin:0;font-size:.9rem;color:var(--muted)} .cv-meta b{color:var(--ink);font-weight:600}
+.cv-actions{display:flex;gap:8px;justify-content:flex-end;align-items:center}
+.cv-actions .stamp{margin-right:6px}
+.glance{display:grid;grid-template-columns:minmax(0,1.65fr) minmax(300px,1fr);gap:clamp(16px,2vw,28px);align-items:start}
+.bl{margin:0;padding:clamp(16px,2vw,26px) clamp(16px,2.2vw,30px)}
+.bl-top{display:flex;justify-content:space-between;align-items:baseline;gap:12px}
+.bl h2{font-size:1.2rem;margin:0}
+p.bottom{font:1.12rem/1.58 var(--serif);max-width:74ch;margin:.5em 0 1em}
+ol.find{list-style:none;margin:2px 0 0;padding:0;border-top:1px solid var(--rule)}
+ol.find a{display:flex;gap:10px;align-items:baseline;padding:7px 2px;border-bottom:1px solid var(--rule);color:var(--ink);text-decoration:none}
+ol.find a:hover .ft,ol.find a:focus-visible .ft{text-decoration:underline}
+ol.find .n{font:700 .74rem/1 var(--mono);color:var(--stamp);min-width:1.1em}
+ol.find .ft{font-weight:600;font-size:.98rem;line-height:1.35}
+ol.find .go{margin-left:auto;padding-left:10px;font-size:.78rem;color:var(--muted);white-space:nowrap}
+p.more{margin:10px 0 0;font-size:.9rem}
+.side-col .steps{margin:6px 0 0;padding:16px 18px 14px}
+.steps h2{font-size:1.2rem;margin:0 0 10px}
+.steps ul.check li{font-size:.95rem;line-height:1.4;margin:0 0 10px}
+.steps li a{font-size:.8rem;white-space:nowrap;color:inherit;opacity:.85}
+.side-col .slip{margin:18px 0 0;font-size:.86rem}
+.reg{background:var(--paper);border:1px solid var(--rule);border-radius:4px;box-shadow:var(--shadow)}
+.rh,a.r{display:grid;grid-template-columns:60px minmax(210px,1.05fr) minmax(0,2.1fr) repeat(var(--ncol),40px);gap:0 14px;align-items:start}
+.rh{position:sticky;top:0;z-index:2;background:var(--paper);border-bottom:2px solid var(--rule);padding:9px 14px 7px;
+font:600 .68rem/1.2 var(--mono);letter-spacing:.07em;text-transform:uppercase;color:var(--muted);align-items:end}
+.rh i{font-style:normal;opacity:.75}
+.rh button.c{all:unset;cursor:pointer;text-align:center;padding:3px 0;border-radius:4px;color:var(--ink)}
+.rh button.c:hover,.rh button.c.on{background:var(--ink);color:var(--paper)}
+.grp h3{margin:0;padding:12px 14px 6px;font:600 .72rem/1.3 var(--mono);letter-spacing:.08em;text-transform:uppercase;
+color:var(--stamp);border-top:1px solid var(--rule)}
+.reg .grp:first-of-type h3{border-top:none}
+a.r{padding:9px 14px;color:var(--ink);text-decoration:none;border-top:1px solid var(--rule)}
+.grp h3+a.r{border-top:none}
+a.r:hover{background:var(--chip)} a.r:hover b{text-decoration:underline}
+a.r .th{width:60px;height:76px;overflow:hidden;border:1px solid var(--rule);background:var(--chip);display:block}
+a.r .th img{width:100%;display:block}
+a.r .th .ph{display:flex;height:100%;align-items:flex-end;padding:5px;font:600 .58rem/1.1 var(--mono);text-transform:uppercase;color:var(--muted)}
+a.r .ti{display:flex;flex-direction:column;gap:2px;min-width:0}
+a.r .ti b{font-size:.98rem;line-height:1.3}
+a.r .ft{font-size:.8rem;line-height:1.35;color:var(--muted)}
+a.r .mt{font:600 .64rem/1.3 var(--mono);letter-spacing:.07em;text-transform:uppercase;color:var(--stamp)}
+a.r .fu{font-size:.92rem;line-height:1.45;max-width:80ch}
+a.r .read{display:block;margin-top:3px;font:600 .66rem/1.3 var(--mono);letter-spacing:.05em;text-transform:uppercase;color:var(--muted)}
+a.r .c{display:flex;justify-content:center;padding-top:6px}
+a.r .chips-sm{display:none}
+.filterable.f [data-col]{opacity:.35} .filterable.f [data-col].on{opacity:1}
+.lensnote{background:var(--paper);border:1px solid var(--rule);border-left:4px solid var(--stamp);padding:9px 14px;margin:0 0 12px;font-size:.94rem}
+.lensnote[hidden]{display:none}
+
+/* the memo */
+.memo-grid{display:grid;grid-template-columns:230px minmax(0,1fr);gap:28px;align-items:start}
+.toc{position:sticky;top:14px;font-size:.88rem}
+.toc ol{list-style:none;margin:6px 0 16px;padding:0}
+.toc li{margin:0 0 5px} .toc a{color:var(--ink);text-decoration:none} .toc a:hover{text-decoration:underline}
+.toc .sub{padding-left:12px;font-size:.84rem}
+.memo{max-width:900px;padding-top:34px}
+.clip{position:absolute;top:-24px;left:26px;width:22px;height:64px;color:var(--muted);transform:rotate(7deg)}
+.memo-head{display:grid;grid-template-columns:auto 1fr;gap:3px 14px;font:.86rem/1.45 var(--mono);
+border-bottom:2px solid var(--rule);padding-bottom:12px;margin-bottom:16px}
+.memo-head b{letter-spacing:.06em}
+.memo h2{margin-top:1.2em}
+.point{border-top:1px solid var(--rule);padding-top:14px;margin-top:16px}
+.point h3 .n{font:700 .8rem var(--mono);color:var(--stamp);margin-right:6px}
+ol.steps-full{list-style:none;margin:0;padding:0}
+ol.steps-full>li{padding:10px 0 10px 30px;border-top:1px solid var(--rule);position:relative}
+ol.steps-full>li::before{content:"";position:absolute;left:2px;top:14px;width:15px;height:15px;border:1.5px solid var(--muted);border-radius:3px}
+ol.steps-full b{display:block}
+
+/* the timeline */
+.ribbon{display:flex;align-items:flex-end;gap:5px;padding:12px 14px 0;background:var(--paper);border:1px solid var(--rule);
+border-radius:4px;box-shadow:var(--shadow);overflow-x:auto;margin:0 0 16px;scrollbar-width:thin}
+.ribbon a.bar{flex:1 0 38px;display:flex;flex-direction:column;align-items:stretch;justify-content:flex-end;text-decoration:none;color:var(--muted)}
+.ribbon .stack{display:flex;flex-direction:column-reverse;gap:1px;margin:0 6px}
+.ribbon .stack i{display:block;background:var(--k);border-radius:2px;min-height:3px}
+.ribbon .n{font:600 .66rem var(--mono);text-align:center;color:var(--muted);padding-bottom:2px}
+.ribbon .yr{font:600 .7rem var(--mono);text-align:center;padding:5px 0 8px;border-top:1px solid var(--rule);color:var(--ink)}
+.ribbon a.bar:hover .yr{color:var(--stamp)}
+.ribbon a.bar.ahead .stack i{opacity:.45}
+.ribbon a.bar.ahead .yr{color:var(--muted);font-style:italic}
+.ribbon .gap{flex:0 0 18px;align-self:flex-end;text-align:center;color:var(--muted);padding-bottom:8px}
+.year{display:grid;grid-template-columns:92px minmax(0,1fr);gap:0 18px;position:relative;padding:0 0 22px}
+.year::before{content:"";position:absolute;left:45px;top:6px;bottom:0;width:2px;background:var(--folder-edge)}
+.year h2.yl{position:sticky;top:10px;align-self:start;margin:0;text-align:center;font-size:1.2rem;background:var(--folder);
+z-index:1;padding:4px 0 6px;border-radius:6px}
+.year h2.yl span{display:block;font-size:.8em;line-height:1.1}
+.year h2.yl small{display:block;font:600 .62rem var(--mono);color:var(--muted);letter-spacing:.06em;text-transform:uppercase}
+.year .cards{grid-template-columns:repeat(auto-fill,minmax(250px,1fr))}
+details.ev-card.ahead{background:repeating-linear-gradient(135deg,var(--paper) 0 12px,var(--chip) 12px 14px)}
+.tl-note{font-size:.82rem;color:var(--muted);margin:-6px 0 14px}
+
+/* who's who, terms, leads */
+.who{display:flex;gap:10px;align-items:center}
+.av{flex:none;display:grid;place-items:center;width:38px;height:38px;border-radius:50%;background:var(--k,var(--muted));
+color:var(--paper);font:700 .7rem var(--mono);letter-spacing:.02em}
+.grp-sec{margin:0 0 22px}
+.grp-sec>h2{display:flex;align-items:center;gap:8px;font-size:1.12rem;margin:0 0 10px}
+.grp-sec>h2 .sw{width:12px;height:12px}
+.grp-sec>h2 small{font:600 .7rem var(--mono);color:var(--muted)}
+.letters{display:flex;flex-wrap:wrap;gap:4px}
+.letters a{font:600 .8rem var(--mono);text-decoration:none;color:var(--ink);background:var(--paper);border:1px solid var(--rule);
+border-radius:5px;padding:3px 8px}
+.letters a:hover{border-color:var(--ink)}
+.lsec{display:contents}
+.terms-flow .letter{margin:0;padding:8px 4px 0;font:600 2.6rem/1 var(--serif);color:var(--stamp);border-top:3px solid var(--stamp)}
+.badge{align-self:flex-start;font:600 .62rem/1.2 var(--mono);letter-spacing:.07em;text-transform:uppercase;border-radius:999px;
+padding:2px 8px;border:1px solid currentColor}
+.badge.here{color:var(--k1)} .badge.pull{color:var(--stamp)}
+
+/* a document's folder */
+.docgrid{display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:28px;align-items:start}
+.matters{background:var(--paper);border:1px solid var(--rule);border-left:4px solid var(--stamp);border-radius:4px;
+padding:14px 18px;box-shadow:var(--shadow);margin:0 0 18px}
+.matters p.big{font:1.12rem/1.55 var(--serif);margin:.3em 0 .4em;max-width:74ch}
+.side .shot{background:var(--paper);padding:8px;box-shadow:var(--shadow);margin:0 0 16px}
+.side .shot img{width:100%;display:block}
+dl.facts{margin:0;font-size:.88rem} dl.facts dt{font:600 .66rem/1.2 var(--mono);letter-spacing:.08em;text-transform:uppercase;
+color:var(--muted);margin-top:10px} dl.facts dd{margin:2px 0 0;overflow-wrap:anywhere}
+.relgrid{display:grid;grid-template-columns:auto auto;justify-content:start;gap:4px 10px;font-size:.84rem;margin-top:12px;align-items:center}
+.relgrid .d{display:inline-block;vertical-align:middle}
+ol.points>li{padding:12px 0;border-top:1px solid var(--rule)} ol.points>li:first-child{border-top:none;padding-top:0}
+.jump{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 18px}
+.jump a{font-size:.82rem;background:var(--paper);border:1px solid var(--rule);border-radius:999px;padding:3px 11px;
+text-decoration:none;color:var(--ink)} .jump a:hover{border-color:var(--ink)}
+.figs{grid-template-columns:repeat(auto-fill,minmax(190px,1fr))}
+.fig .v{font:600 1.3rem/1.2 var(--serif)}
+
+@media (max-width:1280px){.memo-grid{grid-template-columns:200px minmax(0,1fr)}}
+@media (max-width:1000px){.glance{grid-template-columns:minmax(0,1fr)}
+.rh,a.r{grid-template-columns:52px minmax(0,1fr) minmax(0,1.6fr) repeat(var(--ncol),30px);gap:0 10px}
+.docgrid,.memo-grid{grid-template-columns:minmax(0,1fr)}.side{order:-1}.side .shot{max-width:220px}.toc{position:static}}
+@media (max-width:760px){.cv-head{grid-template-columns:minmax(0,1fr)}.cv-actions{justify-content:flex-start;flex-wrap:wrap}
+.rh{display:none}
+a.r{grid-template-columns:52px minmax(0,1fr);gap:4px 12px}
+a.r .th{grid-row:span 2;width:52px;height:66px}
+a.r .fu,a.r .chips-sm{grid-column:2}
+a.r .c{display:none}
+a.r .chips-sm{display:flex;flex-wrap:wrap;gap:5px}
+a.r .chips-sm span{font-size:.7rem;background:var(--chip);border:1px solid var(--rule);border-radius:999px;padding:1px 8px;white-space:nowrap}
+a.r .chips-sm b{letter-spacing:1px;color:var(--stamp);font-weight:400}
+.year{grid-template-columns:58px minmax(0,1fr);gap:0 10px}.year::before{left:28px}
+.year .cards,.cards{grid-template-columns:minmax(0,1fr)}}
+@media print{:root:is([data-theme],:not([data-theme])){""" + LIGHT + """;--paper:#fff;--folder:#fff;--chip:#fff;--postit:#fff}
+body{background:#fff}nav.tabs,.toolbar,button.copy,button.theme,.btn,.ribbon,.toc,dialog{display:none}
+main.folder,.sheet,details.card,figure.exhibit,.reg{box-shadow:none;border-color:#ccc;background:#fff}
+.postit,.stamp{transform:none}.postit{border:1px solid #bbb}a{color:inherit}.rh,.year h2.yl{position:static}
+details.card .more{display:block}.clamp2,.clamp3{display:block;-webkit-line-clamp:unset}}
+""")
 
 JS = """
-document.querySelectorAll('.lensbar button').forEach(function(b){b.addEventListener('click',function(){
-var k=b.dataset.lens;document.querySelectorAll('.lensbar button').forEach(function(x){x.setAttribute('aria-pressed',x===b)});
-document.querySelectorAll('[data-lenses]').forEach(function(c){c.classList.toggle('hide',k!=='all'&&(' '+c.dataset.lenses+' ').indexOf(' '+k+' ')<0)});
-document.querySelectorAll('.group').forEach(function(g){g.classList.toggle('hide',!g.querySelector('[data-lenses]:not(.hide)'))});});});
+function upcApply(root){var g=root.dataset.g||'',w=root.dataset.w||'',q=(root.dataset.q||'').trim().toLowerCase();
+root.classList.toggle('f',!!g);
+root.querySelectorAll('[data-item]').forEach(function(it){var ok=(!g||(' '+(it.dataset.g||'')+' ').indexOf(' '+g+' ')>=0)&&
+(!w||it.dataset.w===w)&&(!q||it.textContent.toLowerCase().indexOf(q)>=0);it.classList.toggle('hide',!ok)});
+root.querySelectorAll('[data-section]').forEach(function(s){s.classList.toggle('hide',!s.querySelector('[data-item]:not(.hide)'))});
+root.querySelectorAll('[data-for]').forEach(function(n){n.hidden=n.dataset.for!==g});
+root.querySelectorAll('[data-col]').forEach(function(c){c.classList.toggle('on',!!g&&c.dataset.col===g)});
+root.querySelectorAll('button[data-set]').forEach(function(b){b.setAttribute('aria-pressed',String((root.dataset[b.dataset.set]||'')===b.dataset.v))});
+var n=root.querySelector('.shown');if(n)n.textContent=root.querySelectorAll('[data-item]:not(.hide)').length+' shown'}
+document.addEventListener('click',function(e){var b=e.target.closest('button[data-set]');if(!b)return;var root=b.closest('.filterable');
+if(!root)return;var s=b.dataset.set;root.dataset[s]=(root.dataset[s]===b.dataset.v)?'':b.dataset.v;upcApply(root)});
+document.querySelectorAll('.filterable').forEach(function(root){var i=root.querySelector('input.find');
+if(i)i.addEventListener('input',function(){root.dataset.q=i.value;upcApply(root)});upcApply(root)});
 document.addEventListener('click',function(e){var b=e.target.closest('button.copy');if(!b)return;var t=b.getAttribute('data-cite');
 function done(){b.textContent='Copied';setTimeout(function(){b.textContent='Copy'},1400)}
 if(navigator.clipboard){navigator.clipboard.writeText(t).then(done,function(){})}});
 window.addEventListener('beforeprint',function(){document.querySelectorAll('details').forEach(function(d){d.open=true})});
+(function(){var d=document.getElementById('drawer');if(!d||!d.showModal)return;
+var body=d.querySelector('.dr-body'),pos=d.querySelector('.pos'),cur=null;
+function list(){return Array.prototype.filter.call(document.querySelectorAll('details.card'),function(c){return c.offsetParent!==null})}
+function show(c){cur=c;var s=c.querySelector('summary'),m=c.querySelector('.more');
+var k=(c.className.match(/\bk\d\b/)||[''])[0];body.innerHTML='<div class="face '+k+'">'+s.innerHTML+'</div>'+(m?m.innerHTML:'');
+var L=list(),i=L.indexOf(c);pos.textContent=i<0?'':(i+1)+' of '+L.length;if(!d.open)d.showModal();d.scrollTop=0}
+function step(k){var L=list(),i=L.indexOf(cur);if(i<0||!L.length)return;show(L[(i+k+L.length)%L.length])}
+document.addEventListener('click',function(e){var s=e.target.closest('details.card>summary');if(!s||e.target.closest('a'))return;
+e.preventDefault();show(s.parentElement)});
+d.querySelector('.prev').addEventListener('click',function(){step(-1)});
+d.querySelector('.next').addEventListener('click',function(){step(1)});
+d.querySelector('.x').addEventListener('click',function(){d.close()});
+d.addEventListener('click',function(e){if(e.target===d)d.close()});
+d.addEventListener('keydown',function(e){if(e.key==='ArrowRight'){step(1);e.preventDefault()}else if(e.key==='ArrowLeft'){step(-1);e.preventDefault()}});
+d.addEventListener('close',function(){var s=cur&&cur.querySelector('summary');if(s)s.focus()})})();
 (function(){var r=document.documentElement,b=document.querySelector('button.theme');if(!b)return;
 var mq=window.matchMedia?window.matchMedia('(prefers-color-scheme: dark)'):null;
 function cur(){return r.getAttribute('data-theme')||(mq&&mq.matches?'dark':'light')}
@@ -912,6 +1187,11 @@ THEME_BUTTON = ('<button class="theme" type="button" hidden><svg class="moon" vi
                 'aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4'
                 'M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg><span>Dark</span></button>')
 
+# The one panel every card opens into.
+DRAWER = ('<dialog class="drawer" id="drawer" aria-label="Details"><div class="dr"><div class="dr-bar"><span class="pos"></span>'
+          '<button class="prev" type="button" aria-label="Previous">←</button><button class="next" type="button" '
+          'aria-label="Next">→</button><button class="x" type="button">Close</button></div><div class="dr-body"></div></div></dialog>')
+
 CLIP = ('<svg class="clip" viewBox="0 0 22 64" aria-hidden="true"><path d="M6 14v36a5 5 0 0 0 10 0V9a7.5 7.5 0 0 0-15 0v42" '
         'fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>')
 
@@ -923,6 +1203,19 @@ def fmt_day(s: str | None) -> str:
         return dt.date.fromisoformat(str(s)[:10]).strftime("%-d %b %Y")
     except ValueError:
         return str(s)
+
+
+def fmt_when(s) -> str:
+    """A date as the documents give it, made readable: 9 Mar 2022, Mar 2022, 2022, or as written."""
+    s = str(s or "").strip()
+    try:
+        if re.fullmatch(r"\d{4}-\d{2}-\d{2}", s):
+            return dt.date.fromisoformat(s).strftime("%-d %b %Y")
+        if re.fullmatch(r"\d{4}-\d{2}", s):
+            return dt.date(int(s[:4]), int(s[5:7]), 1).strftime("%b %Y")
+    except ValueError:
+        pass
+    return s
 
 
 def slug(s: str, n: int = 48) -> str:
@@ -937,6 +1230,10 @@ def short_title(d: dict) -> str:
         return f"{d['author_org']} {year.group(0)}"
     t = d["title"]
     return t if len(t) <= 60 else t[:57].rsplit(" ", 1)[0] + "…"
+
+
+def first_sentence(s) -> str:
+    return re.split(r"(?<=[.!?])\s+", str(s or "").strip(), maxsplit=1)[0]
 
 
 def cite_text(quote: str, d: dict, page: int | None) -> str:
@@ -954,20 +1251,61 @@ def dots(n: int) -> str:
     return f'<b aria-label="{n} of 3">{"●" * n}{"○" * (3 - n)}</b>'
 
 
+def dot(n: int) -> str:
+    return f'<span class="d d{n}" aria-label="{n} of 3"></span>' if n else '<span class="d d0" aria-hidden="true"></span>'
+
+
+def lens_code(lens: dict) -> str:
+    """A column label of a few characters: "2.1" for "2.1 Transitions", "H&E" for "Households & equity"."""
+    short = str(lens.get("short") or lens["title"])
+    first = short.split()[0]
+    if re.fullmatch(r"[\d.]+", first):
+        return first
+    words = [w for w in re.split(r"[\s/,]+", short) if w[:1].isalnum() and w.lower() not in ("and", "the", "of", "for")]
+    return ("&" if "&" in short else "").join(w[0].upper() for w in words[:2]) or short[:3]
+
+
+def lens_chip(lens: dict) -> str:
+    short, code = str(lens.get("short") or lens["title"]), lens_code(lens)
+    if short.startswith(code + " "):
+        return f"<b>{esc(code)}</b> {esc(short[len(code) + 1:])}"
+    return esc(short)
+
+
 def rel_html(d: dict, ctx: dict) -> str:
     rel = d.get("relevance") or {}
-    spans = [f'<span>{esc(ctx["lt"][k])} {dots(v)}</span>' for k, v in sorted(rel.items(), key=lambda kv: -kv[1])
-             if v and k in ctx["lt"]]
-    return f'<div class="rel">{"".join(spans)}</div>' if spans else ""
+    rows = [f'{dot(rel.get(lens["slug"], 0))}<span>{esc(lens.get("short") or lens["title"])}</span>'
+            for lens in ctx["proj"]["lenses"]]
+    return f'<div class="relgrid" aria-label="How much it bears on each lens">{"".join(rows)}</div>' if rel else ""
 
 
 def lenses_of(d: dict) -> str:
     return " ".join(k for k, v in (d.get("relevance") or {}).items() if v >= 2)
 
 
+def card(face: str, more: str, *, cls: str = "", attrs: str = "") -> str:
+    """A face to scan and the detail behind it: opens in the panel, or in place without JavaScript."""
+    return f'<details class="card {cls}" data-item {attrs}><summary>{face}</summary><div class="more">{more}</div></details>'
+
+
+def chips(group: str, label: str, options: list[tuple[str, str]]) -> str:
+    """Filter buttons: (value, label HTML); the first is usually ("", "All")."""
+    return (f'<div class="chips" role="group" aria-label="{esc(label)}"><span class="label">{esc(label)}</span>'
+            + "".join(f'<button type="button" class="chip" data-set="{group}" data-v="{esc(v)}" aria-pressed="false">{lab}</button>'
+                      for v, lab in options) + "</div>")
+
+
+def sw(cls: str) -> str:
+    return f'<span class="sw {cls}"></span>'
+
+
+def find_box(what: str) -> str:
+    return f'<input class="find" type="search" placeholder="Search {esc(what)}" aria-label="Search {esc(what)}"><span class="shown"></span>'
+
+
 def page_html(title: str, body: str, ctx: dict, here: str, depth: int = 0) -> str:
     up = "../" * depth
-    tabs = [("index.html", "Cover"), ("timeline.html", "Timeline"), ("people.html", "Who's who"),
+    tabs = [("index.html", "Cover"), ("memo.html", "Memo"), ("timeline.html", "Timeline"), ("people.html", "Who's who"),
             ("terms.html", "Terms"), ("leads.html", "Leads"), ("method.html", "Method")]
     nav = "".join(f'<a href="{up}{h}" class="{"here" if h == here else ""}">{esc(t)}</a>'
                   for h, t in tabs if h in ctx["pages"])
@@ -980,132 +1318,243 @@ def page_html(title: str, body: str, ctx: dict, here: str, depth: int = 0) -> st
 <meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow">
 <meta name="build" content="{esc(ctx['build'])}"><title>{esc(title)}</title>{THEME_HEAD}<style>{CSS}</style></head><body>
 <div class="wrap"><div class="topbar"><nav class="tabs" aria-label="Sections">{nav}</nav>{THEME_BUTTON}</div><main class="folder">{body}</main>
-<footer class="site">{foot}</footer></div><script>{JS}</script></body></html>
+<footer class="site">{foot}</footer></div>{DRAWER}<script>{JS}</script></body></html>
 """
 
 
+def steps_of(b: dict | None) -> list[dict]:
+    """Next steps as {step, detail, see}; a plain string is a step with no detail."""
+    return [s if isinstance(s, dict) else {"step": str(s)} for s in (b or {}).get("next_steps") or []]
+
+
+def see_link(see: str | None, ctx: dict, up: str = "") -> str | None:
+    if not see:
+        return None
+    if see in PAGE_OF and PAGE_OF[see] in ctx["pages"]:
+        return up + PAGE_OF[see]
+    d = next((d for d in ctx["docs"] if d["_source_id"] == see), None)
+    return f"{up}docs/{d['_file']}" if d else None
+
+
+def ev_list(evs: list[dict], ctx: dict, up: str = "") -> str:
+    # Folded, so a point reads first and its passages are one click away.
+    by_sid = {d["_source_id"]: d for d in ctx["docs"]}
+    n = len(evs)
+    return (f'<details class="ev"><summary>The passage{"" if n == 1 else "s"} ({n})</summary><ul class="ev">' + "".join(
+        f'<li>{quote_html(ev, by_sid[ev["source_id"]], up + "docs/" + by_sid[ev["source_id"]]["_file"]) if ev["source_id"] in by_sid else quote_html(ev, ctx["others"][ev["source_id"]])}</li>'
+        for ev in evs) + "</ul></details>") if evs else ""
+
+
+def cover_groups(ctx: dict) -> list[tuple[str, list[dict]]]:
+    """The documents in reading order: the memo's first three, then the rest of its order, then the others by section."""
+    by = {d["_source_id"]: d for d in ctx["docs"]}
+    order = [r["source_id"] for r in (ctx["brief"] or {}).get("reading_order") or [] if r["source_id"] in by]
+    groups = []
+    if order:
+        groups.append(("Read first", [by[s] for s in order[:3]]))
+        if order[3:]:
+            groups.append(("Then", [by[s] for s in order[3:]]))
+    rest = [d for d in ctx["docs"] if d["_source_id"] not in order]
+    for s, ds in doc_groups({**ctx, "docs": rest}):
+        groups.append((s["title"] if s else ("Also in the file" if order else "The documents"), ds))
+    return [(t, ds) for t, ds in groups if ds]
+
+
+def reg_row(d: dict, ctx: dict) -> str:
+    rel = d.get("relevance") or {}
+    kind = KIND_LABEL.get(d.get("kind"), d.get("kind") or "Document")
+    thumb = (f'<img src="{esc(d["_cover"])}" alt="" loading="lazy">' if d.get("_cover") else f'<span class="ph">{esc(kind)}</span>')
+    year = re.search(r"(19|20)\d\d", str(d.get("date") or ""))
+    meta = " · ".join(x for x in (kind, year.group(0) if year else "") if x)
+    read = f'<span class="read">Read: {esc(d["read_this"])}</span>' if d.get("read_this") else ""
+    cells = "".join(f'<span class="c" data-col="{esc(lens["slug"])}" title="{esc(lens["title"])}: {rel.get(lens["slug"], 0)} of 3">'
+                    f'{dot(rel.get(lens["slug"], 0))}</span>' for lens in ctx["proj"]["lenses"])
+    small = "".join(f'<span>{esc(lens_code(lens))} <b>{"●" * rel[lens["slug"]]}{"○" * (3 - rel[lens["slug"]])}</b></span>'
+                    for lens in ctx["proj"]["lenses"] if rel.get(lens["slug"], 0) >= 2)
+    return (f'<a class="r" href="docs/{esc(d["_file"])}" data-item data-g="{esc(lenses_of(d))}">'
+            f'<span class="th">{thumb}</span><span class="ti"><b>{esc(short_title(d))}</b>'
+            f'<span class="ft clamp2">{esc(d["title"])}</span><span class="mt">{esc(meta)}</span></span>'
+            f'<span class="fu">{esc(d.get("for_us") or first_sentence(d.get("summary")))}{read}</span>{cells}'
+            f'<span class="chips-sm">{small}</span></a>')
+
+
 def cover_html(ctx: dict) -> str:
-    cfg, aud, proj, docs, b = ctx["cfg"], ctx["aud"], ctx["proj"], ctx["docs"], ctx["brief"]
+    cfg, proj, docs, b = ctx["cfg"], ctx["proj"], ctx["docs"], ctx["brief"]
+    lenses = proj["lenses"]
     dl = "".join(f'<a class="btn" href="{esc(f)}" download>{esc(label)}</a>' for f, label in ctx["downloads"])
-    meta = [("Prepared for", cfg["prepared_for"]),
-            ("Project", proj["name"] + (f" · {proj['full_name']}" if proj.get("full_name") else "")),
-            ("Prepared by", cfg.get("prepared_by") or ""), ("Date", fmt_day(cfg.get("date")))]
-    head = (f'<header><div class="cover-top"><span class="label">{esc(cfg.get("file_no") or "Dossier")} · '
-            f'{len(docs)} documents</span><span class="stamp">{esc(cfg.get("stamp"))}</span></div>'
-            f'<h1>{esc(cfg["title"])}</h1>' + (f'<p class="lede">{esc(cfg["subtitle"])}</p>' if cfg.get("subtitle") else "")
-            + '<dl class="meta">' + "".join(f"<div><dt>{esc(k)}</dt><dd>{esc(v)}</dd></div>" for k, v in meta if v)
-            + f"</dl><div>{dl}</div></header>")
-    by_sid = {d["_source_id"]: d for d in docs}
-    memo = ""
+    memo_btn = '<a class="btn" href="memo.html">Full memo</a>' if b else ""
+    who = [f"For <b>{esc(cfg['prepared_for'])}</b>"] + ([f"Prepared by {esc(cfg['prepared_by'])}"] if cfg.get("prepared_by") else []) \
+        + ([esc(fmt_day(cfg.get("date")))] if cfg.get("date") else [])
+    head = (f'<header class="cv-head"><div><span class="label">{esc(cfg.get("file_no") or "Dossier")} · {len(docs)} documents · '
+            f'{ctx["quotes"]} passages, each checked against its source</span><h1>{esc(cfg["title"])}</h1>'
+            f'<p class="cv-meta">{" · ".join(who)}</p></div><div class="cv-actions">'
+            f'{"<span class=stamp>" + esc(cfg["stamp"]) + "</span>" if cfg.get("stamp") else ""}{memo_btn}{dl}</div></header>')
+
     if b:
-        def ev_list(evs):
-            # Folded, so the memo can be skimmed: each point first, its passages one click away.
-            n = len(evs)
-            return (f'<details class="ev"><summary>The passage{"" if n == 1 else "s"} ({n})</summary><ul class="ev">' + "".join(
-                f'<li>{quote_html(ev, by_sid[ev["source_id"]], "docs/" + by_sid[ev["source_id"]]["_file"]) if ev["source_id"] in by_sid else quote_html(ev, ctx["others"][ev["source_id"]])}</li>'
-                for ev in evs) + "</ul></details>")
-        parts = [f'<p>{esc(b.get("lede"))}</p>'] if b.get("lede") else []
-        for sec, title in (("themes", "Themes"), ("tensions", "Where the documents pull apart")):
-            if b.get(sec):
-                parts.append(f"<h2>{title}</h2>" + "".join(
-                    f'<section class="theme"><h3>{esc(t.get("title"))}</h3><p>{esc(t.get("text"))}</p>{ev_list(t["evidence"])}</section>'
-                    for t in b[sec]))
-        if b.get("for_project"):
-            parts.append(f"<h2>What it means for {esc(proj['name'])}</h2>" + "".join(
-                f'<section class="theme"><span class="lens">{esc(ctx["lt"].get(t.get("lens"), ""))}</span>'
-                f'<p>{esc(t.get("text"))}</p>{ev_list(t["evidence"]) if t.get("evidence") else ""}</section>'
-                for t in b["for_project"]))
-        if b.get("next_steps"):
-            parts.append('<h2>Next steps</h2><ul class="plain check">' + "".join(f"<li>{esc(s)}</li>" for s in b["next_steps"]) + "</ul>")
-        memo = (f'<article class="sheet memo">{CLIP}<div class="memo-head"><b>TO</b><span>{esc(cfg["prepared_for"])}</span>'
-                f'<b>FROM</b><span>{esc(cfg.get("prepared_by") or "")}</span><b>RE</b><span>{esc(cfg["title"])}</span>'
-                f'<b>DATE</b><span>{esc(fmt_day(cfg.get("date")))}</span></div>'
-                f'<p class="label">Memo · written by {esc(b["writer"])}</p>{"".join(parts)}</article>')
-    aside = []
+        bottom = b.get("bottom_line") or b.get("lede") or ""
+        finds = "".join(f'<li><a href="memo.html#theme-{i}"><span class="n">{i}</span><span class="ft">{esc(t.get("title"))}</span>'
+                        f'<span class="go">passages →</span></a></li>' for i, t in enumerate(b.get("themes") or [], 1))
+        tens = len(b.get("tensions") or [])
+        left = (f'<article class="sheet bl"><div class="bl-top"><h2>The bottom line</h2><span class="label">Written by '
+                f'{esc(b["writer"])}</span></div><p class="bottom">{esc(bottom)}</p>'
+                + (f'<h3 class="label">Findings · each opens its passages</h3><ol class="find">{finds}</ol>' if finds else "")
+                + (f'<p class="more"><a href="memo.html#tensions">Where the documents pull apart ({tens}) →</a></p>' if tens else "")
+                + "</article>")
+        steps = steps_of(b)
+        items = "".join(f'<li>{esc(s["step"])} '
+                        + (f'<a href="{esc(see_link(s.get("see"), ctx))}">{esc(SEE_LABEL.get(s.get("see"), "open"))} →</a>'
+                           if see_link(s.get("see"), ctx) else f'<a href="memo.html#step-{i}">details →</a>' if s.get("detail") else "")
+                        + "</li>" for i, s in enumerate(steps, 1))
+        right = (f'<aside class="postit steps"><h2>Next steps</h2><ul class="check">{items}</ul>'
+                 f'<span class="who">— {esc(b["writer"])}</span></aside>') if steps else ""
+    else:
+        left = '<article class="sheet bl"><p class="note">No cover memo yet (dossier.py brief).</p></article>'
+        right = ""
     req = cfg.get("request") or {}
-    if req.get("quote"):
-        aside.append(f'<div class="slip"><span class="label">Routing slip</span><p style="margin:4px 0 0">Resources suggested by '
-                     f'<b>{esc(req.get("by") or "")}</b>{", " + esc(fmt_day(req.get("date"))) if req.get("date") else ""}.</p>'
-                     f'<blockquote>“{esc(req["quote"])}”</blockquote></div>')
-    order = (b or {}).get("reading_order") or [{"source_id": d["_source_id"], "why": ""} for d in docs[:5]]
-    items = "".join(f'<li><a href="docs/{esc(by_sid[r["source_id"]]["_file"])}">{esc(short_title(by_sid[r["source_id"]]))}</a>'
-                    f'{" — " + esc(r["why"]) if r.get("why") else ""}</li>' for r in order if r["source_id"] in by_sid)
-    if items:
-        aside.append(f'<div class="postit"><span class="label">Start here</span><ol>{items}</ol>'
-                     f'<span class="who">— {esc((b or {}).get("writer") or cfg.get("prepared_by") or "")}</span></div>')
-    grid = (f'<div class="cover-grid"><div>{memo or "<p class=note>No cover memo yet.</p>"}</div><aside>{"".join(aside)}</aside></div>')
-    chips = ('<div class="lensbar" role="group" aria-label="Show documents by lens"><button data-lens="all" aria-pressed="true">All</button>'
-             + "".join(f'<button data-lens="{esc(k)}" aria-pressed="false">{esc(v)}</button>' for k, v in ctx["lt"].items()
-                       if any(k in lenses_of(d).split() for d in docs)) + "</div>")
-    cards = "".join(
-        (f'<div class="group" id="{esc(s["slug"])}"><h3 class="group-title">{esc(s["title"])}</h3>'
-         + (f'<p class="note">{esc(s.get("description"))}</p>' if s.get("description") else "") if s else '<div class="group">')
-        + f'<div class="cards">{"".join(card_html(d, ctx) for d in ds)}</div></div>' for s, ds in doc_groups(ctx))
-    return (head + grid + f'<section id="documents" style="margin-top:18px"><h2>The documents</h2>'
-            f'<p class="note">Lenses show how much each document bears on {esc(proj["name"])}: ●●● central, ●●○ useful, ●○○ background.</p>'
-            f'{chips}{cards}</section>')
+    slip = (f'<div class="slip"><span class="label">Routing slip</span><p>Resources suggested by <b>{esc(req.get("by") or "")}</b>'
+            f'{", " + esc(fmt_day(req.get("date"))) if req.get("date") else ""}:</p><blockquote>“{esc(req["quote"])}”</blockquote></div>'
+            if req.get("quote") else "")
+    glance = f'<section class="glance" aria-label="At a glance">{left}<div class="side-col">{right}{slip}</div></section>'
+
+    used = [lens for lens in lenses if any(lens["slug"] in lenses_of(d).split() for d in docs)]
+    notes = {t.get("lens"): t for t in (b or {}).get("for_project") or []}
+    lensbar = chips("g", "By task", [("", f"All {len(docs)}")] + [
+        (lens["slug"], f'{lens_chip(lens)} <i>{sum(lens["slug"] in lenses_of(d).split() for d in docs)}</i>') for lens in used])
+    lnotes = "".join(
+        f'<p class="lensnote" data-for="{esc(lens["slug"])}" hidden><b>{esc(lens["title"])}.</b> '
+        f'{esc(notes[lens["slug"]].get("headline") or first_sentence(notes[lens["slug"]].get("text")))} '
+        f'<a href="memo.html#{esc(lens["slug"])}">The paragraph in the memo, with passages →</a></p>'
+        for lens in used if lens["slug"] in notes)
+    head_row = (f'<div class="rh" aria-hidden="true"><span></span><span>Document</span><span>What matters for {esc(proj["name"])} '
+                f'<i>({esc(docs[0]["writer"]) if docs else ""})</i></span>'
+                + "".join(f'<button type="button" class="c" data-set="g" data-v="{esc(lens["slug"])}" data-col="{esc(lens["slug"])}" '
+                          f'title="{esc(lens["title"])}" tabindex="-1">{esc(lens_code(lens))}</button>' for lens in lenses) + "</div>")
+    groups = "".join(f'<div class="grp" data-section><h3>{esc(t)}</h3>{"".join(reg_row(d, ctx) for d in ds)}</div>'
+                     for t, ds in cover_groups(ctx))
+    reg = (f'<section class="sec filterable" id="documents"><div class="sec-head"><h2>The documents</h2><span class="note">'
+           f'{"In reading order. " if b and b.get("reading_order") else ""}How much each bears on each lens: '
+           f'<span class="d d3 il"></span>central <span class="d d2 il"></span>useful <span class="d d1 il"></span>background.</span></div>'
+           f'<div class="toolbar">{lensbar}</div>{lnotes}'
+           f'<div class="reg" style="--ncol:{len(lenses)}">{head_row}{groups}</div></section>')
+    return head + glance + reg
 
 
-def card_html(d: dict, ctx: dict) -> str:
-    img = (f'<a class="shot" href="docs/{esc(d["_file"])}" tabindex="-1"><img src="{esc(d["_cover"])}" alt="" loading="lazy"></a>'
-           if d.get("_cover") else f'<a class="shot ph" href="docs/{esc(d["_file"])}" tabindex="-1">{esc(KIND_LABEL.get(d.get("kind"), d.get("kind") or "Document"))}</a>')
-    first = re.split(r"(?<=[.!?])\s+", str(d.get("summary") or "").strip(), maxsplit=1)[0]
-    sug = d.get("suggested_by")
-    slip = (f'<p class="note" style="margin:0"><span class="label">{esc(sug.get("by") or "Suggested")}:</span> “{esc(sug["quote"])}”</p>'
-            if sug else "")
-    by = " · ".join(esc(x) for x in (d.get("author_org"), d.get("date")) if x)
-    return (f'<article class="doc-card" data-lenses="{esc(lenses_of(d))}"><span class="tab">{esc(d["_no"])}</span>{img}'
-            f'<div class="body"><span class="kind">{esc(KIND_LABEL.get(d.get("kind"), d.get("kind") or "Document"))}</span>'
-            f'<h3><a href="docs/{esc(d["_file"])}">{esc(d["title"])}</a></h3><div class="byline">{by}</div>'
-            f'<p class="teaser">{esc(first)}</p>{slip}{rel_html(d, ctx)}</div></article>')
+def memo_html(ctx: dict) -> str:
+    cfg, proj, b = ctx["cfg"], ctx["proj"], ctx["brief"]
+    by_sid = {d["_source_id"]: d for d in ctx["docs"]}
+    lmap = {lens["slug"]: lens for lens in proj["lenses"]}
+    toc, body = [], []
+    bottom = b.get("bottom_line") or b.get("lede") or ""
+    body.append(f'<p class="bottom" id="bottom-line">{esc(bottom)}</p>')
+    if b.get("lede") and b.get("bottom_line") and b["lede"] != b["bottom_line"]:
+        body.append(f'<p>{esc(b["lede"])}</p>')
+    if b.get("themes"):
+        toc.append('<li><a href="#findings">Findings</a><ol class="sub">' + "".join(
+            f'<li><a href="#theme-{i}">{esc(t.get("title"))}</a></li>' for i, t in enumerate(b["themes"], 1)) + "</ol></li>")
+        body.append('<h2 id="findings">Findings</h2>' + "".join(
+            f'<section class="point" id="theme-{i}"><h3><span class="n">{i}</span>{esc(t.get("title"))}</h3>'
+            f'<p>{esc(t.get("text"))}</p>{ev_list(t["evidence"], ctx)}</section>' for i, t in enumerate(b["themes"], 1)))
+    if b.get("tensions"):
+        toc.append(f'<li><a href="#tensions">Where the documents pull apart ({len(b["tensions"])})</a></li>')
+        body.append('<h2 id="tensions">Where the documents pull apart</h2>' + "".join(
+            f'<section class="point" id="tension-{i}"><h3>{esc(t.get("title"))}</h3><p>{esc(t.get("text"))}</p>'
+            f'{ev_list(t["evidence"], ctx)}</section>' for i, t in enumerate(b["tensions"], 1)))
+    if b.get("for_project"):
+        toc.append(f'<li><a href="#by-lens">What it means for {esc(proj["name"])}</a><ol class="sub">' + "".join(
+            f'<li><a href="#{esc(t.get("lens"))}">{esc((lmap.get(t.get("lens")) or {}).get("short") or t.get("lens"))}</a></li>'
+            for t in b["for_project"]) + "</ol></li>")
+        body.append(f'<h2 id="by-lens">What it means for {esc(proj["name"])}</h2>' + "".join(
+            f'<section class="point" id="{esc(t.get("lens"))}"><span class="lens-tag">{esc((lmap.get(t.get("lens")) or {}).get("title", ""))}</span>'
+            + (f'<h3>{esc(t["headline"])}</h3>' if t.get("headline") else "")
+            + f'<p>{esc(t.get("text"))}</p>{ev_list(t.get("evidence") or [], ctx)}</section>' for t in b["for_project"]))
+    steps = steps_of(b)
+    if steps:
+        toc.append('<li><a href="#next-steps">Next steps</a></li>')
+        body.append('<h2 id="next-steps">Next steps</h2><ol class="steps-full">' + "".join(
+            f'<li id="step-{i}"><b>{esc(s["step"])}</b>' + (f'<span>{esc(s["detail"])}</span>' if s.get("detail") else "")
+            + (f' <a href="{esc(see_link(s.get("see"), ctx))}">{esc(SEE_LABEL.get(s.get("see"), "open"))} →</a>' if see_link(s.get("see"), ctx) else "")
+            + "</li>" for i, s in enumerate(steps, 1)) + "</ol>")
+    order = [r for r in b.get("reading_order") or [] if r["source_id"] in by_sid]
+    if order:
+        toc.append('<li><a href="#reading-order">Where to start</a></li>')
+        body.append('<h2 id="reading-order">Where to start</h2><ol>' + "".join(
+            f'<li><a href="docs/{esc(by_sid[r["source_id"]]["_file"])}">{esc(short_title(by_sid[r["source_id"]]))}</a>'
+            f'{" — " + esc(r["why"]) if r.get("why") else ""}</li>' for r in order) + "</ol>")
+    req = cfg.get("request") or {}
+    slip = (f'<div class="slip" id="request"><span class="label">Routing slip</span><p>Resources suggested by '
+            f'<b>{esc(req.get("by") or "")}</b>:</p><blockquote>“{esc(req["quote"])}”</blockquote></div>' if req.get("quote") else "")
+    memo = (f'<article class="sheet memo">{CLIP}<div class="memo-head"><b>TO</b><span>{esc(cfg["prepared_for"])}</span>'
+            f'<b>FROM</b><span>{esc(cfg.get("prepared_by") or "")}</span><b>RE</b><span>{esc(cfg["title"])}</span>'
+            f'<b>DATE</b><span>{esc(fmt_day(cfg.get("date")))}</span></div>'
+            f'<p class="label">Memo · written by {esc(b["writer"])}</p>{"".join(body)}</article>')
+    return (f'<p class="crumbs"><a href="index.html">Cover</a> › Memo</p><div class="memo-grid"><nav class="toc" aria-label="In this memo">'
+            f'<span class="label">In this memo</span><ol>{"".join(toc)}</ol>{slip}</nav><div>{memo}</div></div>')
 
 
 def doc_html(d: dict, ctx: dict, prev: dict | None, nxt: dict | None) -> str:
     proj, lt = ctx["proj"], ctx["lt"]
     by = " · ".join(esc(x) for x in (d.get("authors"), d.get("author_org"), d.get("date"), d.get("identifier")) if x)
     sec = next((s for s in ctx["cfg"].get("sections") or [] if s["slug"] == d.get("section")), None)
-    out = [f'<p class="crumbs"><a href="../index.html#{esc(sec["slug"]) if sec else "documents"}">← All documents</a> · '
+    out = [f'<p class="crumbs"><a href="../index.html#documents">← All documents</a> · '
            f'File {esc(d["_no"])} of {len(ctx["docs"])}{" · " + esc(sec["title"]) if sec else ""}</p>',
-           f'<header><span class="kind">{esc(KIND_LABEL.get(d.get("kind"), d.get("kind") or "Document"))}</span>'
+           f'<header><span class="lens-tag">{esc(KIND_LABEL.get(d.get("kind"), d.get("kind") or "Document"))}</span>'
            f'<h1>{esc(d["title"])}</h1><p class="byline">{by}</p></header>']
-    sug = d.get("suggested_by")
     main = []
+    matters = d.get("for_us") or first_sentence(d.get("summary"))
+    main.append(f'<div class="matters"><span class="label">What matters for {esc(proj["name"])} · {esc(d["writer"])}</span>'
+                f'<p class="big">{esc(matters)}</p>'
+                + (f'<span class="label">Read: {esc(d["read_this"])}</span>' if d.get("read_this") else "") + "</div>")
+    parts = [(len(d.get(k) or []), lab, sid) for k, lab, sid in (
+        ("key_points", "key point", "points"), ("figures", "number", "numbers"), ("dates", "date", "dates"),
+        ("actors", "person or organization", "people"), ("terms", "term", "terms"), ("_exhibits", "exhibit", "exhibits"),
+        ("questions", "question", "questions"), ("cites", "cited work", "cites"))]
+    main.append('<nav class="jump" aria-label="In this folder">' + "".join(
+        f'<a href="#{sid}">{n} {lab if n == 1 else ("people and organizations" if lab.startswith("person") else lab + "s")}</a>'
+        for n, lab, sid in parts if n) + "</nav>")
+    sug = d.get("suggested_by")
     if sug:
         main.append(f'<div class="slip"><span class="label">Why it is in the file · {esc(sug.get("by") or "")}</span>'
                     f'<blockquote>“{esc(sug["quote"])}”</blockquote></div>')
     partial = (f'<p class="note">The writer read the first {d["read_chars"]:,} of {d["total_chars"]:,} characters.</p>'
                if d.get("read_chars") and d.get("total_chars") and d["read_chars"] < d["total_chars"] else "")
-    main.append(f'<section class="sheet"><p class="label">Summary · by {esc(d["writer"])}</p><p>{esc(d.get("summary"))}</p>{partial}</section>')
+    main.append(f'<section class="sheet"><p class="label">Summary · by {esc(d["writer"])}</p><p class="prose">{esc(d.get("summary"))}</p>{partial}</section>')
     if d.get("why_it_matters"):
         main.append(f'<h2>Why it matters for {esc(proj["name"])}</h2><div class="postits">' + "".join(
             f'<div class="postit"><span class="label">{esc(lt.get(w.get("lens"), ""))}</span><p style="margin:4px 0 0">{esc(w.get("text"))}</p>'
             f'<span class="who">— {esc(d["writer"])}</span></div>' for w in d["why_it_matters"]) + "</div>")
     if d.get("key_points"):
-        main.append('<section class="sheet"><h2>Key points</h2><ol class="points">' + "".join(
-            f'<li>{f"<span class=lens>{esc(lt[k["lens"]])}</span>" if k.get("lens") in lt else ""}<p style="margin:2px 0 0">{esc(k.get("text"))}</p>'
-            f'{quote_html(k, d)}</li>' for k in d["key_points"]) + "</ol></section>")
-    tables = (("figures", "Numbers", ("What", "Figure"), ("label", "value")),
-              ("dates", "Dates", ("When", "What"), ("date", "event")),
-              ("actors", "Who's who in it", ("Who", "Position"), ("name", "stance")),
-              ("terms", "Terms", ("Term", "Meaning"), ("term", "definition")))
-    for sec, head, cols, keys in tables:
-        if d.get(sec):
-            rows = "".join(f'<tr><td>{esc(it.get(keys[0]))}{"<br><span class=note>" + esc(it["type"]) + "</span>" if it.get("type") else ""}</td>'
-                           f'<td>{esc(it.get(keys[1]))}</td><td class="q">{quote_html(it, d)}</td></tr>' for it in d[sec])
-            main.append(f'<section class="sheet"><h2>{head}</h2><div class="scroll"><table class="ledger"><tr><th>{cols[0]}</th>'
-                        f'<th>{cols[1]}</th><th>The document says</th></tr>{rows}</table></div></section>')
+        main.append(f'<section class="sheet" id="points"><h2>Key points <span class="note">({len(d["key_points"])})</span></h2><ol class="points">' + "".join(
+            f'<li>{f"<span class=lens-tag>{esc(lt[k["lens"]])}</span>" if k.get("lens") in lt else ""}<p style="margin:2px 0 0" class="prose">{esc(k.get("text"))}</p>'
+            f'<details class="ev"><summary>The passage</summary>{quote_html(k, d)}</details></li>' for k in d["key_points"]) + "</ol></section>")
+
+    def block(title, items, face, cls="", sid=""):
+        return (f'<section class="sec" id="{sid}"><div class="sec-head"><h2>{title}</h2><span class="note">{len(items)} · open one for the '
+                f'passage</span></div><div class="cards {cls}">' + "".join(card(face(it), quote_html(it, d)) for it in items) + "</div></section>")
+
+    if d.get("figures"):
+        main.append(block("Numbers", d["figures"], lambda it: f'<span class="v">{esc(it.get("value"))}</span>'
+                          f'<span class="clamp3">{esc(it.get("label"))}</span>', "figs", sid="numbers"))
+    if d.get("dates"):
+        main.append(block("Dates", sorted(d["dates"], key=lambda it: date_key(it.get("date"))),
+                          lambda it: f'<span class="meta">{esc(fmt_when(it.get("date")))}</span><span class="t clamp3">{esc(it.get("event"))}</span>', sid="dates"))
+    if d.get("actors"):
+        main.append(block("Who's who in it", d["actors"], lambda it: f'<span class="t">{esc(it.get("name"))}</span>'
+                          f'<span class="meta">{esc(it.get("type") or "")}</span><span class="clamp3">{esc(it.get("stance"))}</span>', sid="people"))
+    if d.get("terms"):
+        main.append(block("Terms", d["terms"], lambda it: f'<span class="t">{esc(it.get("term"))}</span>'
+                          f'<span class="clamp3">{esc(it.get("definition"))}</span>', sid="terms"))
     if d.get("_exhibits"):
-        main.append('<section><h2>Exhibits</h2><div class="exhibits">' + "".join(
+        main.append('<section class="sec" id="exhibits"><h2>Exhibits</h2><div class="exhibits">' + "".join(
             f'<figure class="exhibit"><a href="../{esc(x["img"])}"><img src="../{esc(x["img"])}" alt="{esc(x["caption"])}" loading="lazy"></a>'
             f'<figcaption>{esc(x["caption"])} — page {x["page"]}</figcaption></figure>' for x in d["_exhibits"]) + "</div></section>")
     if d.get("questions"):
-        main.append(f'<section class="sheet"><h2>Questions for the team</h2><p class="label">by {esc(d["writer"])}</p><ul class="plain check">'
+        main.append(f'<section class="sheet sec" id="questions"><h2>Questions for the team</h2><p class="label">by {esc(d["writer"])}</p><ul class="check">'
                     + "".join(f"<li>{esc(q)}</li>" for q in d["questions"]) + "</ul></section>")
     if d.get("cites"):
-        main.append('<section class="sheet"><h2>What it leans on</h2><ul class="ev">' + "".join(
-            f'<li><b>{esc(c.get("ref"))}</b>{" — " + esc(c["note"]) if c.get("note") else ""}'
-            f'{(" · <a href=" + chr(34) + esc(c["_link"]) + chr(34) + ">in this dossier</a>") if c.get("_link") else ""}{quote_html(c, d)}</li>'
-            for c in d["cites"]) + "</ul></section>")
+        main.append(block("What it leans on", d["cites"], lambda it: (
+            f'<span class="badge {"here" if it.get("_link") else "pull"}">{"In this file" if it.get("_link") else "Not yet gathered"}</span>'
+            f'<span class="t clamp3">{esc(it.get("ref"))}</span><span class="note clamp2">{esc(it.get("note") or "")}</span>'
+            + (f'<a class="from" href="{esc(it["_link"])}">Open it in this file →</a>' if it.get("_link") else "")), sid="cites"))
     facts = [("Kind", KIND_LABEL.get(d.get("kind"), d.get("kind"))), ("By", d.get("author_org")), ("Date", d.get("date")),
              ("Identifier", d.get("identifier")), ("Pages", d.get("pages")), ("License", d.get("license"))]
     dlh = "".join(f"<dt>{k}</dt><dd>{esc(v)}</dd>" for k, v in facts if v)
@@ -1131,11 +1580,6 @@ def gathered(ctx: dict, sec: str) -> list[tuple[dict, dict]]:
     return [(it, d) for d in ctx["docs"] for it in d.get(sec) or []]
 
 
-def src_cell(it: dict, d: dict) -> str:
-    return (f'<a href="docs/{esc(d["_file"])}">{esc(short_title(d))}</a>{", p. " + str(it["page"]) if it.get("page") else ""}'
-            f'<button class="copy" type="button" data-cite="{esc(cite_text(it["quote"], d, it.get("page")))}">Copy</button>')
-
-
 def date_key(s: str) -> str:
     m = re.match(r"(\d{4})(?:-(\d{2}))?(?:-(\d{2}))?", str(s or ""))
     if m:
@@ -1144,46 +1588,263 @@ def date_key(s: str) -> str:
     return f"{y.group(0)}-99-99" if y else "9999"
 
 
+def threads(ctx: dict):
+    """The timeline's colour groups: the config's sections, or else the kinds of document. -> (keys, colour, of)."""
+    secs = ctx["cfg"].get("sections") or []
+    if secs:
+        keys = [(s["slug"], s["title"]) for s in secs]
+        known = {k for k, _ in keys}
+
+        def of(d):
+            return d.get("section") if d.get("section") in known else "other"
+    else:
+        keys = []
+        for d in ctx["docs"]:
+            k = d.get("kind") or "other"
+            if k not in [x for x, _ in keys]:
+                keys.append((k, KIND_LABEL.get(k, k.capitalize())))
+
+        def of(d):
+            return d.get("kind") or "other"
+    if any(of(d) == "other" for d in ctx["docs"]) and "other" not in [k for k, _ in keys]:
+        keys.append(("other", "Other documents"))
+    return keys, {k: f"k{i % 6 + 1}" for i, (k, _) in enumerate(keys)}, of
+
+
 def timeline_html(ctx: dict) -> str:
-    rows = sorted(gathered(ctx, "dates"), key=lambda p: (date_key(p[0].get("date")), p[1]["_no"]))
-    body = "".join(f'<tr><td style="white-space:nowrap">{esc(it.get("date"))}</td><td>{esc(it.get("event"))}</td>'
-                   f'<td class="q">“{esc(it["quote"])}”</td><td>{src_cell(it, d)}</td></tr>' for it, d in rows)
-    return ('<h1>Timeline</h1><p class="lede">Every date the documents give, in order. The event is the writer\'s words; '
-            'the quotation is the document\'s.</p><div class="sheet"><div class="scroll"><table class="ledger">'
-            f'<tr><th>When</th><th>What</th><th>The document says</th><th>Source</th></tr>{body}</table></div></div>')
+    keys, colour, of = threads(ctx)
+    today = str(ctx["cfg"].get("date") or "")[:10] or dt.date.today().isoformat()
+    evs = sorted(gathered(ctx, "dates"), key=lambda p: (date_key(p[0].get("date")), p[1]["_no"]))
+    years: dict[str, list] = {}
+    for it, d in evs:
+        k = date_key(it.get("date"))
+        years.setdefault(k[:4] if k != "9999" else "Undated", []).append((it, d, k != "9999" and k[:10] > today))
+    most = max(len(v) for v in years.values())
+    bars, prev = [], None
+    for y, rows in years.items():
+        if y != "Undated" and prev and int(y) - int(prev) > 1:
+            bars.append('<span class="gap" aria-hidden="true">⋯</span>')
+        counts = {k: sum(1 for _, d, _ in rows if of(d) == k) for k, _ in keys}
+        segs = "".join(f'<i class="{colour[k]}" style="height:{max(3, round(n * 84 / most))}px"></i>' for k, _ in keys if (n := counts[k]))
+        ahead = all(a for *_, a in rows)
+        bars.append(f'<a class="bar{" ahead" if ahead else ""}" href="#y{esc(y)}" title="{esc(y)}: {len(rows)} event{"s" * (len(rows) != 1)}'
+                    f'{" (ahead)" if ahead else ""}"><span class="n">{len(rows)}</span><span class="stack">{segs}</span><span class="yr">{esc(y)}</span></a>')
+        if y != "Undated":
+            prev = y
+
+    def ev_card(it, d, ahead):
+        face = (f'<span class="meta">{esc(fmt_when(it.get("date")))}{" · ahead" if ahead else ""}</span>'
+                f'<span class="t clamp3">{esc(it.get("event"))}</span>'
+                f'<span class="from"><span class="sw"></span>{esc(short_title(d))}</span>')
+        more = (f'{quote_html(it, d, "docs/" + d["_file"])}<p class="note">The line above is {esc(d["writer"])}\'s; the quotation '
+                f'is the document\'s.</p><p><a href="docs/{esc(d["_file"])}">Open the document\'s folder →</a></p>')
+        return card(face, more, cls=f"ev-card {colour[of(d)]}{' ahead' if ahead else ''}",
+                    attrs=f'data-g="{esc(of(d))}" data-w="{"ahead" if ahead else "past"}"')
+
+    # Neighbouring years with one or two events share a row, so a sparse decade doesn't fill the page.
+    blocks, run = [], []
+
+    def flush():
+        if run:
+            blocks.append(([y for y, _ in run], [r for _, rows in run for r in rows]))
+            run.clear()
+    for y, rows in years.items():
+        ahead = all(a for *_, a in rows)
+        sparse = y != "Undated" and len(rows) < 3
+        if run and (not sparse or all(a for *_, a in run[-1][1]) != ahead):
+            flush()
+        if sparse:
+            run.append((y, rows))
+        else:
+            blocks.append(([y], rows))
+    flush()
+    body = "".join(
+        f'<section class="year" id="y{esc(ys[0])}" data-section>{"".join(f"<span id=y{esc(y)}></span>" for y in ys[1:])}'
+        f'<h2 class="yl">{esc(ys[0])}{f"<span>–{esc(ys[-1])}</span>" if len(ys) > 1 else ""}<small>{len(rows)} event{"s" * (len(rows) != 1)}'
+        f'</small></h2><div class="cards">{"".join(ev_card(*r) for r in rows)}</div></section>' for ys, rows in blocks)
+    n_ahead = sum(1 for rows in years.values() for *_, a in rows if a)
+    real = [y for y in years if y != "Undated"]
+    span = f"{real[0]} to {real[-1]}" if real else ""
+    tools = (f'<div class="toolbar">{chips("g", "Thread", [("", "All")] + [(k, sw(colour[k]) + esc(t)) for k, t in keys if any(of(d) == k for _, d in evs)])}'
+             + (chips("w", "When", [("", "All"), ("past", "Happened"), ("ahead", f"Ahead <i>{n_ahead}</i>")]) if n_ahead else "")
+             + f'{find_box("events")}</div>')
+    return (f'<div class="page-head"><div><h1>Timeline</h1><p class="lede">{len(evs)} dated events from {len({d["_source_id"] for _, d in evs})} '
+            f'documents, {esc(span)}. Pick a year, a thread or a word; open an event for the passage behind it.</p></div>'
+            f'<div class="stats"><div class="stat"><b>{len(evs)}</b><span>events</span></div><div class="stat"><b>{len(real)}</b>'
+            f'<span>years</span></div><div class="stat"><b>{n_ahead}</b><span>still ahead</span></div></div></div>'
+            f'<nav class="ribbon" aria-label="Events per year">{"".join(bars)}</nav>'
+            f'<p class="tl-note">Each bar is a year, coloured by thread; faded years lie ahead of {esc(fmt_day(today))}. '
+            f'Events are the writer\'s words; each opens on the document\'s own.</p>'
+            f'<div class="filterable">{tools}<div class="tl">{body}</div></div>')
+
+
+# Who's who: the writer's free-text kinds of actor, sorted into a few groups for scanning (the card keeps the writer's words).
+ROLE_GROUPS = (
+    ("local", "Local government", ("local government", "city", "county", "municipal")),
+    ("lawmakers", "Lawmakers and officials", ("legislature", "legislator", "elected", "governor", "senator", "assembly")),
+    ("agencies", "Agencies and regulators", ("agency", "regulator", "commissioner", "commission", "staff", "department")),
+    ("research", "Researchers, consultants and advisers", ("consultant", "research", "university", "think tank", "advis",
+                                                           "convener", "academic", "laboratory")),
+    ("utilities", "Utilities and energy providers", ("utility", "utilities", "aggregator", "generator", "energy provider",
+                                                     "electricity provider", "gas provider")),
+    ("advocates", "Advocates", ("advocate", "ratepayer", "coalition", "parties", "justice", "commenter", "ngo")),
+    ("market", "Industry, trades and labour", ("industry", "contractor", "middle actor", "retail", "labor", "labour", "trade",
+                                               "vendor", "company", "business", "manufacturer", "installer")),
+    ("community", "Communities and households", ("community", "resident", "household", "tenant", "renter", "housing", "public")),
+)
+
+
+def role_group(kind: str, name: str) -> str:
+    """The group for an actor: by the writer's kind first, then by the name; a word matches at the start of a word."""
+    for text in (str(kind).lower(), str(name).lower()):
+        for slug_, _, words in ROLE_GROUPS:
+            if any(re.search(r"\b" + re.escape(w), text) for w in words):
+                return slug_
+    return "other"
+
+
+def _name_keys(name: str, long_paren: bool) -> set[str]:
+    """Keys under which two spellings of one name meet: "California Energy Commission (CEC)" and "CEC" share "cec"."""
+    name = re.sub(r"\s+", " ", str(name or "")).strip()
+    m = re.fullmatch(r"(.*?)\s*\(([^()]*)\)", name)
+    base, par = (m.group(1), m.group(2)) if m else (name, "")
+    keys = {base.lower().rstrip(".")}
+    # A person named with a title after it ("Siva Gunda, CEC Vice Chair"; "Siva Gunda (Vice Chair, CEC)"): the name
+    # alone is a key too, when it looks like a person's name (two or three capitalised words, no acronym).
+    person = re.split(r",| \(", name, maxsplit=1)[0].strip()
+    if person != name and re.fullmatch(r"[A-Z][a-z'’-]+(?: [A-Z][a-z'’.-]+){1,2}", person):
+        keys.add(person.lower())
+    if par and (re.fullmatch(r"[A-Z][A-Za-z0-9&.\-]{1,9}", par) or (long_paren and len(par.split()) >= 2 and not re.search(r"[,;]", par))):
+        keys.add(par.lower())
+    return {k for k in keys if k}
+
+
+def merged(items: list[tuple[dict, dict]], field: str, long_paren: bool = False) -> list[list[tuple[dict, dict]]]:
+    groups: list[list] = []
+    for it, d in items:
+        ks = _name_keys(it.get(field), long_paren)
+        hit = [g for g in groups if g[0] & ks]
+        if not hit:
+            groups.append([set(ks), [(it, d)]])
+            continue
+        first = hit[0]
+        first[0].update(ks)
+        first[1].append((it, d))
+        for g in hit[1:]:
+            first[0].update(g[0])
+            first[1].extend(g[1])
+            groups.remove(g)
+    return [g[1] for g in groups]
+
+
+def initials(name: str) -> str:
+    acr = re.search(r"\(([A-Z][A-Za-z0-9&]{1,4})\)", name)
+    if acr:
+        return acr.group(1)
+    if re.fullmatch(r"[A-Z0-9&]{2,5}", name.strip()):
+        return name.strip()
+    words = [w for w in re.findall(r"[A-Za-z][\w'&-]*", re.sub(r"\(.*?\)", "", name))
+             if w.lower() not in ("the", "of", "and", "for", "a", "an")]
+    return "".join(w[0] for w in words[:2]).upper() or "?"
 
 
 def people_html(ctx: dict) -> str:
-    groups: dict[str, list] = {}
-    for it, d in gathered(ctx, "actors"):
-        groups.setdefault(re.sub(r"\s+", " ", str(it.get("name") or "")).strip(), []).append((it, d))
-    out = ['<h1>Who\'s who</h1><p class="lede">The people and organizations the documents name, and the position each '
-           'document gives them. Positions are the writer\'s words; the quotations are the documents\'.</p>']
-    for name in sorted(groups, key=str.lower):
-        kinds = sorted({str(it.get("type")) for it, _ in groups[name] if it.get("type")})
-        out.append(f'<section class="sheet"><h2>{esc(name)}</h2>{"<p class=label>" + esc(" · ".join(kinds)) + "</p>" if kinds else ""}'
-                   '<ul class="ev">' + "".join(f'<li><p style="margin:0">{esc(it.get("stance"))}</p><blockquote class="q">“{esc(it["quote"])}”</blockquote>'
-                                              f'<div class="src">{src_cell(it, d)}</div></li>' for it, d in groups[name]) + "</ul></section>")
-    return "".join(out)
+    groups = merged(gathered(ctx, "actors"), "name")
+    names_ = {s: t for s, t, _ in ROLE_GROUPS} | {"other": "Others"}
+    titles = {s: names_[s] for s in ("agencies", "lawmakers", "utilities", "local", "research", "advocates", "community",
+                                     "market", "other")}
+    colour = {s: f"k{i % 6 + 1}" for i, s in enumerate(titles)}
+    by_group: dict[str, list] = {}
+    for g in groups:
+        name = max((str(it.get("name")) for it, _ in g), key=len)
+        kinds = list(dict.fromkeys(str(it.get("type")) for it, _ in g if it.get("type")))
+        grp = role_group(" ".join(kinds), name)
+        by_group.setdefault(grp, []).append((name, kinds, g))
+    order = [s for s in titles if s in by_group]
+
+    def person(name, kinds, g, grp):
+        docs = list(dict.fromkeys(d["_source_id"] for _, d in g))
+        face = (f'<span class="who"><span class="av">{esc(initials(name))}</span><span><span class="t">{esc(name)}</span>'
+                f'<span class="meta clamp2">{esc(" · ".join(kinds))}</span></span></span>'
+                f'<span class="clamp3">{esc(g[0][0].get("stance"))}</span>'
+                f'<span class="from">In {len(docs)} document{"s" * (len(docs) != 1)}</span>')
+        more = '<ul class="ev">' + "".join(f'<li><p class="meta">In {esc(short_title(d))}</p><p>{esc(it.get("stance"))}</p>'
+                                           f'{quote_html(it, d, "docs/" + d["_file"])}</li>' for it, d in g) + "</ul>"
+        return card(face, more, cls=colour[grp], attrs=f'data-g="{grp}"')
+
+    secs = "".join(
+        f'<section class="grp-sec" data-section><h2><span class="sw {colour[s]}"></span>{esc(titles[s])} <small>{len(by_group[s])}</small></h2>'
+        f'<div class="cards">' + "".join(person(*p, s) for p in sorted(by_group[s], key=lambda p: (-len({d["_source_id"] for _, d in p[2]}), p[0].lower())))
+        + "</div></section>" for s in order)
+    n = sum(len(v) for v in by_group.values())
+    tools = (f'<div class="toolbar">{chips("g", "Show", [("", "All")] + [(s, sw(colour[s]) + f"{esc(titles[s])} <i>{len(by_group[s])}</i>") for s in order])}'
+             f'{find_box("names and positions")}</div>')
+    many = sum(1 for v in by_group.values() for p in v if len({d["_source_id"] for _, d in p[2]}) > 1)
+    return (f'<div class="page-head"><div><h1>Who\'s who</h1><p class="lede">The people and organizations the documents name, '
+            f'grouped by the part they play, most-named first. Open one for the position each document gives them, with its passage.</p></div>'
+            f'<div class="stats"><div class="stat"><b>{n}</b><span>named</span></div><div class="stat"><b>{many}</b>'
+            f'<span>in more than one document</span></div><div class="stat"><b>{len(order)}</b><span>groups</span></div></div></div>'
+            f'<div class="filterable">{tools}{secs}</div>')
 
 
 def terms_html(ctx: dict) -> str:
-    rows = sorted(gathered(ctx, "terms"), key=lambda p: str(p[0].get("term")).lower())
-    body = "".join(f'<tr><td><b>{esc(it.get("term"))}</b></td><td>{esc(it.get("definition"))}</td>'
-                   f'<td class="q">“{esc(it["quote"])}”</td><td>{src_cell(it, d)}</td></tr>' for it, d in rows)
-    return ('<h1>Terms</h1><p class="lede">Terms the documents define or lean on. Meanings are the writer\'s words, '
-            'each beside the passage it comes from.</p><div class="sheet"><div class="scroll"><table class="ledger">'
-            f'<tr><th>Term</th><th>Meaning</th><th>The document says</th><th>Source</th></tr>{body}</table></div></div>')
+    groups = merged(gathered(ctx, "terms"), "term", long_paren=True)
+    rows = sorted(((max((str(it.get("term")) for it, _ in g), key=len), g) for g in groups), key=lambda p: p[0].lower())
+    letters: dict[str, list] = {}
+    for term, g in rows:
+        ch = term[:1].upper()
+        letters.setdefault(ch if ch.isalpha() else "#", []).append((term, g))
+
+    def term_card(term, g):
+        docs = list(dict.fromkeys(d["_source_id"] for _, d in g))
+        face = (f'<span class="t">{esc(term)}</span><span class="clamp3">{esc(g[0][0].get("definition"))}</span>'
+                f'<span class="from">{esc(short_title(g[0][1])) if len(docs) == 1 else f"In {len(docs)} documents"}</span>')
+        more = '<ul class="ev">' + "".join(f'<li><p class="meta">In {esc(short_title(d))}</p><p>{esc(it.get("definition"))}</p>'
+                                           f'{quote_html(it, d, "docs/" + d["_file"])}</li>' for it, d in g) + "</ul>"
+        return card(face, more)
+
+    bar = "".join(f'<a href="#letter-{esc(ch)}">{esc(ch)}</a>' for ch in letters)
+    # One grid for every term, the letters as markers in it, so a letter with one term leaves no gap.
+    body = '<div class="cards terms-flow">' + "".join(
+        f'<section class="lsec" data-section><h2 class="letter" id="letter-{esc(ch)}">{esc(ch)}</h2>'
+        f'{"".join(term_card(*r) for r in rs)}</section>' for ch, rs in letters.items()) + "</div>"
+    shared = sum(1 for _, g in rows if len({d["_source_id"] for _, d in g}) > 1)
+    return (f'<div class="page-head"><div><h1>Terms</h1><p class="lede">Terms the documents define or lean on. The meanings are '
+            f'the writer\'s words; open a term for the passage each comes from.</p></div><div class="stats"><div class="stat">'
+            f'<b>{len(rows)}</b><span>terms</span></div><div class="stat"><b>{shared}</b><span>in more than one document</span></div></div></div>'
+            f'<div class="filterable"><div class="toolbar"><nav class="letters" aria-label="Jump to a letter">{bar}</nav>{find_box("terms")}</div>{body}</div>')
 
 
 def leads_html(ctx: dict) -> str:
-    rows = gathered(ctx, "cites")
-    body = "".join(f'<tr><td><b>{esc(it.get("ref"))}</b>{"<br><span class=note>" + esc(it["note"]) + "</span>" if it.get("note") else ""}</td>'
-                   f'<td>{("<a href=" + chr(34) + "docs/" + esc(it["_link"]) + chr(34) + ">in this dossier</a>") if it.get("_link") else "not yet gathered"}</td>'
-                   f'<td class="q">“{esc(it["quote"])}”</td><td>{src_cell(it, d)}</td></tr>' for it, d in rows)
-    return ('<h1>Leads</h1><p class="lede">Earlier work the documents lean on. Each line is quoted from the document that '
-            'cites it; those not in this dossier yet are leads to follow.</p><div class="sheet"><div class="scroll"><table class="ledger">'
-            f'<tr><th>Work</th><th>Here?</th><th>Cited as</th><th>Cited in</th></tr>{body}</table></div></div>')
+    groups: dict[tuple, list] = {}
+    for it, d in gathered(ctx, "cites"):
+        key = ("here", it["_link"]) if it.get("_link") else ("pull", re.sub(r"[^a-z0-9]+", " ", str(it.get("ref")).lower()).strip()[:80])
+        groups.setdefault(key, []).append((it, d))
+    cites = sum(len(g) for g in groups.values())
+
+    def lead(key, g):
+        here = key[0] == "here"
+        docs = list(dict.fromkeys(short_title(d) for _, d in g))
+        ref = max((str(it.get("ref")) for it, _ in g), key=len)
+        note = next((it.get("note") for it, _ in g if it.get("note")), "")
+        face = (f'<span class="badge {"here" if here else "pull"}">{"In this file" if here else "Not yet gathered"}</span>'
+                f'<span class="t clamp3">{esc(ref)}</span>' + (f'<span class="note clamp2">{esc(note)}</span>' if note else "")
+                + f'<span class="from">Cited by {esc(", ".join(docs[:3]))}{f" and {len(docs) - 3} more" if len(docs) > 3 else ""}</span>')
+        more = ((f'<p><a href="docs/{esc(key[1])}">Open it in this file →</a></p>' if here else "")
+                + '<ul class="ev">' + "".join(f'<li><p class="meta">Cited in {esc(short_title(d))}</p>'
+                                              + (f'<p>{esc(it["note"])}</p>' if it.get("note") else "")
+                                              + f'{quote_html(it, d, "docs/" + d["_file"])}</li>' for it, d in g) + "</ul>")
+        return card(face, more, cls="k1" if here else "k6", attrs=f'data-w="{key[0]}"'), len(docs)
+
+    made = sorted((lead(k, g) + (k,) for k, g in groups.items()), key=lambda x: (x[2][0] != "pull", -x[1], x[0]))
+    n_pull = sum(1 for k in groups if k[0] == "pull")
+    tools = (f'<div class="toolbar">{chips("w", "Show", [("", f"All <i>{len(groups)}</i>"), ("pull", f"Not yet gathered <i>{n_pull}</i>"), ("here", f"In this file <i>{len(groups) - n_pull}</i>")])}'
+             f'{find_box("cited works")}</div>')
+    return (f'<div class="page-head"><div><h1>Leads</h1><p class="lede">Earlier work the documents lean on. Those not in this file '
+            f'are leads to follow, most-cited first; open one for how each document cites it.</p></div>'
+            f'<div class="stats"><div class="stat"><b>{cites}</b><span>citations</span></div><div class="stat"><b>{len(groups)}</b>'
+            f'<span>works</span></div><div class="stat"><b>{n_pull}</b><span>not yet gathered</span></div></div></div>'
+            f'<div class="filterable" data-w="{"pull" if n_pull else ""}">{tools}<div class="cards">{"".join(c for c, *_ in made)}</div></div>')
 
 
 def writers_line(ctx: dict) -> str:
@@ -1203,8 +1864,9 @@ def method_html(ctx: dict) -> str:
     readers = "".join(f"<li>{esc(r['name'])} — {esc(r['role'])}</li>" for r in aud["readers"])
     lenses = "".join(f"<li><b>{esc(lens['title'])}</b>: {esc(lens['description'])}</li>" for lens in proj["lenses"])
     dropped = ctx["dropped"]
-    return f"""<h1>How this was made</h1>
-<div class="sheet"><h2>The method</h2><ul>
+    return f"""<div class="page-head"><div><h1>How this was made</h1><p class="lede">Where each document came from, who wrote
+what, and how every quotation was checked.</p></div></div>
+<div class="sheet prose"><h2>The method</h2><ul>
 <li>Each document was saved as it was served or received, with its exact bytes, its SHA-256 hash and when and where it came from.
 The saved copies are kept with the corpus{"; the PDFs are offered for download here" if any(d.get("_copy") for d in ctx["docs"]) else ""}.</li>
 <li>For each document, a writer wrote a summary, notes and questions in their own words, labelled as such,
@@ -1213,10 +1875,11 @@ and proposed the passages behind each key point, figure, date, position, term an
 {ctx["quotes"]} quotations here{f", and {dropped} proposed quotations that were not found were left out" if dropped else ""}.
 It looked again when this page was built.</li>
 <li>A page number is the page as a PDF viewer counts it, which can differ from the number printed on the page.</li>
-<li>The memo's themes each rest on quotations checked the same way. Relevance (●) is the writer's judgement against the project's lenses.</li>
+<li>The memo's findings each rest on quotations checked the same way. Relevance (●) is the writer's judgement against the project's lenses.
+The groups on the Who's who page sort the writer's own descriptions of each actor; the card keeps those words.</li>
 <li>Fixity is not authenticity: a matching hash shows which bytes were read, not that what they say is right.
 Provenance is not truth.</li></ul></div>
-<div class="sheet"><h2>Written for</h2><p><b>{esc(aud['name'])}</b>{", " + esc(aud['organization']) if aud.get('organization') else ""}</p><ul>{readers}</ul>
+<div class="sheet prose"><h2>Written for</h2><p><b>{esc(aud['name'])}</b>{", " + esc(aud['organization']) if aud.get('organization') else ""}</p><ul>{readers}</ul>
 <h2 style="margin-top:18px">The lenses ({esc(proj['name'])})</h2><ul>{lenses}</ul></div>
 <div class="sheet"><h2>The documents</h2><div class="scroll"><table class="ledger"><tr><th>No.</th><th>Document</th><th>Where from</th>
 <th>Saved</th><th>SHA-256</th><th>Entry written by</th></tr>{rows}</table></div></div>"""
@@ -1256,8 +1919,19 @@ def docx_markdown(ctx: dict, out: Path) -> str:
         return [f"> {md(it['quote'])}", ">", f"> — {md(short_title(d))}{md(page)}", ""]
 
     if b:
-        L += ["# Cover memo", "", f"*{md('Written by ' + b['writer'] + '. Every quotation matches the saved copy of its source, character for character.')}*", ""]
-        if b.get("lede"):
+        L += ["# At a glance", "", f"*{md('Written by ' + b['writer'] + '. Every quotation matches the saved copy of its source, character for character.')}*", ""]
+        L += [md(b.get("bottom_line") or b.get("lede")), ""]
+        if b.get("themes"):
+            L += ["**Findings**", ""] + [f"{i}. {md(t.get('title'))}" for i, t in enumerate(b["themes"], 1)] + [""]
+        if steps_of(b):
+            L += ["**Next steps**", ""] + [f"- ☐ {md(s['step'])}" for s in steps_of(b)] + [""]
+        L += [f"**{md('The documents, in reading order')}**", "",
+              f"| | {md('Document')} | {md('What matters for ' + proj['name'])} |", "|---|---|---|"]
+        for i, d in enumerate((d for _, ds in cover_groups(ctx) for d in ds), 1):
+            L += [f"| {i} | {md(short_title(d))} | {md(d.get('for_us') or first_sentence(d.get('summary')))}"
+                  + (f" {md('Read: ' + d['read_this'] + '.')}" if d.get("read_this") else "") + " |"]
+        L += ["", "# Cover memo", ""]
+        if b.get("lede") and b.get("bottom_line") and b["lede"] != b["bottom_line"]:
             L += [md(b["lede"]), ""]
         for sec, title in (("themes", "Themes"), ("tensions", "Where the documents pull apart")):
             if b.get(sec):
@@ -1269,11 +1943,13 @@ def docx_markdown(ctx: dict, out: Path) -> str:
         if b.get("for_project"):
             L += [f"## What it means for {md(proj['name'])}", ""]
             for t in b["for_project"]:
-                L += [f"**{md(lt.get(t.get('lens'), ''))}.** {md(t.get('text'))}", ""]
+                L += [f"**{md(lt.get(t.get('lens'), ''))}.** " + (f"*{md(t['headline'])}* " if t.get("headline") else "")
+                      + md(t.get("text")), ""]
                 for ev in t.get("evidence") or []:
                     L += q(ev, by_sid.get(ev["source_id"]) or ctx["others"][ev["source_id"]])
-        if b.get("next_steps"):
-            L += ["## Next steps", ""] + [f"- ☐ {md(s)}" for s in b["next_steps"]] + [""]
+        if steps_of(b):
+            L += ["## Next steps", ""] + [f"- ☐ **{md(s['step'])}**" + (f" {md(s['detail'])}" if s.get("detail") else "")
+                                          for s in steps_of(b)] + [""]
         if b.get("reading_order"):
             L += ["## Where to start", ""] + [f"{i}. {md(short_title(by_sid[r['source_id']]))}" + (f" — {md(r['why'])}" if r.get("why") else "")
                                              for i, r in enumerate(b["reading_order"], 1) if r["source_id"] in by_sid] + [""]
@@ -1294,6 +1970,9 @@ def docx_markdown(ctx: dict, out: Path) -> str:
         if d.get("suggested_by"):
             L += [f"**{md('Why it is in the file (' + (d['suggested_by'].get('by') or '') + ')')}**", ""]
             L += [f"> {md(d['suggested_by']['quote'])}", ""]
+        if d.get("for_us"):
+            L += [f"**{md('What matters for ' + proj['name'])}.** {md(d['for_us'])}"
+                  + (f" *{md('Read: ' + d['read_this'] + '.')}*" if d.get("read_this") else ""), ""]
         L += [f"**{md('Summary, by ' + d['writer'])}.** {md(d.get('summary'))}", ""]
         if d.get("why_it_matters"):
             L += [f"**{md('Why it matters for ' + proj['name'])}**", ""]
@@ -1445,7 +2124,7 @@ def make_xlsx(ctx: dict, dest: Path) -> tuple[dict[str, int], str]:
     wb.properties.creator = ctx["cfg"].get("prepared_by") or "upc-corpus dossier"
     wb.properties.title = ctx["cfg"]["title"]
     lt = ctx["lt"]
-    head_font, head_fill = Font(bold=True), PatternFill("solid", fgColor="F2E2B6")
+    head_font, head_fill = Font(bold=True), PatternFill("solid", fgColor="EBE4D5")
     wrap = Alignment(wrap_text=True, vertical="top")
     counts, text = {}, []
 
@@ -1472,10 +2151,12 @@ def make_xlsx(ctx: dict, dest: Path) -> tuple[dict[str, int], str]:
 
     docs = ctx["docs"]
     secs = {s["slug"]: s["title"] for s in ctx["cfg"].get("sections") or []}
-    sheet("Documents", ["No.", "Section", "Title", "Kind", "By", "Date", "Identifier", "Pages", "Original URL", "Saved", "SHA-256",
+    sheet("Documents", ["No.", "Section", "Title", f"What matters for {ctx['proj']['name']}", "Read", "Kind", "By", "Date",
+                        "Identifier", "Pages", "Original URL", "Saved", "SHA-256",
                         "Suggested by", "Their words", "Entry written by", *[f"{v} (0-3)" for v in lt.values()]],
-          [6, 22, 50, 16, 24, 12, 18, 7, 40, 12, 20, 18, 50, 22] + [12] * len(lt),
-          [[d["_no"], secs.get(d.get("section"), ""), d["title"], KIND_LABEL.get(d.get("kind"), d.get("kind")), d.get("author_org"), d.get("date"),
+          [6, 22, 50, 60, 24, 16, 24, 12, 18, 7, 40, 12, 20, 18, 50, 22] + [12] * len(lt),
+          [[d["_no"], secs.get(d.get("section"), ""), d["title"], d.get("for_us"), d.get("read_this"),
+            KIND_LABEL.get(d.get("kind"), d.get("kind")), d.get("author_org"), d.get("date"),
             d.get("identifier"), d.get("pages"), d["_src"].get("url"), fmt_day(d["_src"].get("fetched_at")),
             d["_src"].get("sha256"), (d.get("suggested_by") or {}).get("by"), (d.get("suggested_by") or {}).get("quote"),
             d["writer"], *[(d.get("relevance") or {}).get(k, 0) for k in lt]] for d in docs])
@@ -1496,6 +2177,9 @@ def make_xlsx(ctx: dict, dest: Path) -> tuple[dict[str, int], str]:
            for it, d in sorted(gathered(ctx, "terms"), key=lambda p: str(p[0].get("term")).lower())])
     sheet("Leads", ["Work", "Note", "In this dossier", *tail], [50, 30, 14, *tw],
           [[it.get("ref"), it.get("note"), "yes" if it.get("_link") else "no", *src(it, d)] for it, d in gathered(ctx, "cites")])
+    if ctx["brief"] and steps_of(ctx["brief"]):
+        sheet("Next steps", ["Step", "Detail", "Written by"], [60, 90, 22],
+              [[s["step"], s.get("detail"), ctx["brief"]["writer"]] for s in steps_of(ctx["brief"])])
     sheet("Questions", ["Document", "Question", "Asked by"], [30, 80, 22],
           [[short_title(d), qn, d["writer"]] for d in docs for qn in d.get("questions") or []])
     sheet("Lenses", ["Lens", "Short", "What it covers"], [40, 16, 80],
@@ -1573,7 +2257,7 @@ def build(corpus: Path, out: Path, *, copies: bool = False, docx: bool = True, x
     ctx = {"cfg": cfg, "aud": aud, "proj": proj, "docs": docs, "brief": br, "lt": lens_titles(proj), "others": others,
            "build": f"{str(cfg.get('date'))[:10]}-{digest}", "quotes": nq,
            "dropped": sum(len(d.get("refused") or []) for d in docs) + len((br or {}).get("refused") or []),
-           "pages": {"index.html", "method.html"}}
+           "pages": {"index.html", "method.html"} | ({"memo.html"} if br else set())}
     for sec, name in (("dates", "timeline.html"), ("actors", "people.html"), ("terms", "terms.html"), ("cites", "leads.html")):
         if gathered(ctx, sec):
             ctx["pages"].add(name)
@@ -1637,6 +2321,8 @@ def build(corpus: Path, out: Path, *, copies: bool = False, docx: bool = True, x
 
         pages = {"index.html": page_html(cfg["title"], cover_html(ctx), ctx, "index.html"),
                  "method.html": page_html(f"Method · {cfg['title']}", method_html(ctx), ctx, "method.html")}
+        if br:
+            pages["memo.html"] = page_html(f"Memo · {cfg['title']}", memo_html(ctx), ctx, "memo.html")
         for i, d in enumerate(docs):
             pages[f"docs/{d['_file']}"] = page_html(f"{short_title(d)} · {cfg['title']}",
                                                     doc_html(d, ctx, docs[i - 1] if i else None, docs[i + 1] if i + 1 < len(docs) else None),
@@ -1644,7 +2330,7 @@ def build(corpus: Path, out: Path, *, copies: bool = False, docx: bool = True, x
         for name_, fn in (("timeline.html", timeline_html), ("people.html", people_html), ("terms.html", terms_html),
                           ("leads.html", leads_html)):
             if name_ in ctx["pages"]:
-                pages[name_] = page_html(f"{name_.split('.')[0].capitalize()} · {cfg['title']}", fn(ctx), ctx, name_)
+                pages[name_] = page_html(f"{PAGE_TITLE[name_]} · {cfg['title']}", fn(ctx), ctx, name_)
         texts.update(pages)
 
         never = list(aud.get("never_publish") or []) + list(proj.get("never_publish") or []) + list(cfg.get("suppress") or [])
@@ -1681,6 +2367,9 @@ def build(corpus: Path, out: Path, *, copies: bool = False, docx: bool = True, x
             "rows": rows, "covers": sum(bool(d.get("_cover")) for d in docs),
             "exhibits": sum(len(d.get("_exhibits") or []) for d in docs),
             "copies": sum(bool(d.get("_copy")) for d in docs), "out": str(out), "build": ctx["build"]}
+
+
+PAGE_TITLE = {"timeline.html": "Timeline", "people.html": "Who's who", "terms.html": "Terms", "leads.html": "Leads"}
 
 
 def size_label(n: int) -> str:
