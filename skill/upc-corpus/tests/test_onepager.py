@@ -310,14 +310,35 @@ class OnePager(unittest.TestCase):
             return {"content": json.dumps({"judgements": [
                 {"figure": f, "code": "support", "kind": "measured", "rationale": "Useful.", "angle": "days on the shelf"}
                 for f in ids]})}
+        before = O.judgements(c, O.load_reg(c))
+        judged = [f for f in O.load_reg(c) if before.get((f, O.rel_slug("policy")))]
+        self.assertIn("shelf-days", judged)
         with mock.patch.object(C, "llm_chat", stub):
             rc = O.cmd_code(c, "pol", None, False, False, coder="model-two")
+        self.assertEqual(rc, 0)
+        J = O.judgements(c, O.load_reg(c))
+        # a second model pass fills gaps only: it must not quietly replace another coder's answers
+        self.assertFalse([a for a in J[("shelf-days", O.rel_slug("policy"))] if a["coder"] == "model-two"])
+        with mock.patch.object(C, "llm_chat", stub):
+            rc = O.cmd_code(c, "pol", None, True, False, coder="model-two")  # --redo
         self.assertEqual(rc, 0)
         self.assertIn("State energy staff", seen["system"])
         J = O.judgements(c, O.load_reg(c))
         ans = [a for a in J[("shelf-days", O.rel_slug("policy"))] if a["coder"] == "model-two"]
         self.assertEqual(ans[0]["code"], "support")
         self.assertIn("Angle: days on the shelf", ans[0]["rationale"])
+
+    def test_the_note_says_whose_answer_counts_when_coders_disagree(self):
+        c = self.fresh("disagree")
+        reg = O.load_reg(c)
+        book = O.rel_slug("processors")
+        O.write_codes(c, reg, [{"figure": "shelf-days", "book": book, "code": "background"}], coder="model-three", kind="model")
+        note = O.figures_markdown(O.prepare(c, "proc", True))
+        self.assertIn("No person has answered, so the newest model answer (background, model-three) is used", note)
+        self.assertNotIn("a person's answer outranks", note)
+        O.write_codes(c, reg, [{"figure": "shelf-days", "book": book, "code": "lead"}], coder="ellie", kind="human")
+        note = O.figures_markdown(O.prepare(c, "proc", True))
+        self.assertIn("ellie's answer (lead) is used: a person's answer outranks a model's", note)
 
     def test_a_reviewers_reply_is_saved_as_a_source_and_cited(self):
         c = self.fresh("reply")
@@ -440,6 +461,9 @@ class OnePager(unittest.TestCase):
         self.assertIn("Words by Hermes, using Claude (test).", self.note)
         self.assertNotIn("Claude", self.html)
         self.assertIn("revolutionary", O.opt(AUD_A)["banned_words"])
+        ctx = {"aud": AUD_A, "page": {**PAGE, "subhead": "A revolutionary way to keep juice."}}
+        self.assertEqual(O.banned_in(ctx), ["revolutionary"])
+        self.assertEqual(O.banned_in({"aud": AUD_A, "page": PAGE}), [])  # the footer and quotations are not read
 
     def test_a_final_page_needs_every_figure_confirmed(self):
         c = self.fresh("final")
@@ -612,6 +636,7 @@ class Numbers(unittest.TestCase):
                          f"Heat to 55{nb}°C for 1{nb}to{nb}2{nb}minutes, 28{nb}days, CO2 to 2026")
         self.assertEqual(O.keep_units({"a": ["7 days"], "n": 3}), {"a": [f"7{nb}days"], "n": 3})
         self.assertEqual(O.keep_units("a 5-log kill, heat-treated"), "a 5-\u2060log kill, heat-treated")
+        self.assertEqual(O.keep_units("heats 3.5 gpm, 0.025 GPM"), f"heats 3.5{nb}gpm, 0.025{nb}GPM")
         self.assertEqual(O._wrap(O.keep_units("Heat to 55 °C for 1 to 2 minutes"), 21),
                          [f"Heat to 55{nb}°C for", f"1{nb}to{nb}2{nb}minutes"])
 

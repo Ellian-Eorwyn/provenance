@@ -108,6 +108,9 @@ Four kinds of answer, each a closed, single-label codebook made on first use:
 - **Every coder keeps their answer.** A coder's new answer supersedes only their own earlier
   one. The answer that counts is a person's (or an adjudicator's) over a model's; among equals,
   the newest. Disagreements are shown in the review sheet and the figures note.
+- **`code` fills gaps.** It asks the model only about figures no one has judged yet for the
+  page's audience. Among model answers the newest counts, so a second pass would otherwise
+  quietly replace the first; `--redo` asks again on purpose.
 - A derived figure has no passage for UPC to code, so its answers are kept in the register in
   the same shape.
 - The model's rationale ends with `Angle: …`, how this reader would see the figure. `write`

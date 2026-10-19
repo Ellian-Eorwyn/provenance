@@ -68,7 +68,6 @@ import sys
 import tempfile
 import time
 import zipfile
-from html import unescape
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
@@ -752,9 +751,14 @@ def cmd_code(corpus: Path, slug: str, only: list[str] | None, redo: bool, plan: 
     unknown = [x for x in only or [] if x not in reg]
     if unknown:
         raise SystemExit(f"--figure: not in the register: {', '.join(unknown)}")
-    todo = [fid for fid in (only or sorted(reg)) if redo or not any(a["coder"] == coder for a in J.get((fid, book), []))]
+    # `code` fills gaps. A figure someone has already judged for this audience is left alone, whoever judged
+    # it: among model answers the newest counts, so a second pass would silently replace the first. --redo
+    # judges them again.
+    asked = only or sorted(reg)
+    todo = [fid for fid in asked if redo or not J.get((fid, book))]
     C.counts_header("Code: plan", [("audience", f"{aud['name']} ({aud['id']})"), ("figures", len(reg)),
-                                   ("to judge now", len(todo)), ("coder", coder),
+                                   ("to judge now", len(todo)), ("judged already (--redo to judge again)", len(asked) - len(todo)),
+                                   ("coder", coder),
                                    ("model", f"{C.DEFAULT_MODEL} at {C.CHAT_URL}")])
     if plan or not todo:
         return 0
@@ -1502,7 +1506,7 @@ def chart_svg(ch: dict, reg: dict) -> str:
 
 # A number and its unit stay on one line, on screen and on paper ("55 °C", "28 days"), and so does a
 # range ("1 to 2").
-UNIT_GAP = re.compile(r"(\d) +(°[CF]?|%|days?\b|weeks?\b|minutes?\b|min\b|hours?\b|ppm\b|mL\b|log\b|kWh\b|MMBtu\b|therms?\b)")
+UNIT_GAP = re.compile(r"(\d) +(°[CF]?|%|days?\b|weeks?\b|minutes?\b|min\b|hours?\b|ppm\b|mL\b|log\b|kWh\b|MWh\b|kW\b|MMBtu\b|therms?\b|gpm\b|GPM\b|gallons?\b|cfm\b|CFM\b|psig?\b|Pa\b)")
 RANGE_GAP = re.compile(r"\b(\d[\d.,]*) (to|or|–) (?=\d)")  # \b: not the 2 of CO2
 NUM_HYPHEN = re.compile(r"(?<=\d)-(?=[A-Za-z])")  # "5-log": a word joiner after the hyphen keeps it whole
 
@@ -1740,8 +1744,14 @@ def figures_markdown(ctx: dict, e=str) -> str:
             if xs:
                 L += [f"- {what}: " + "; ".join(f"{e(a['code'])} ({e(a['coder'])}" + (f": {e(a['rationale'])}" if a.get("rationale") else "") + ")"
                                                 for a in sorted(xs, key=lambda a: -KIND_RANK.get(a.get("kind"), 0)))]
-        if s["disagree"]:
-            L += [f"- Coders disagree on {', '.join(s['disagree'])}; the person's answer is the one used."]
+        for what in s["disagree"]:
+            book = {"relevance": rel_slug(aud["id"]), "class": BOOKS["class"][0], "check": BOOKS["check"][0],
+                    "clearance": BOOKS["clearance"][0]}[what]
+            xs = J.get((x, book), [])
+            top = max(xs, key=lambda a: (KIND_RANK.get(a.get("kind"), 0), a.get("at") or ""))
+            L += [f"- Coders disagree on {what}. " + (f"{e(top['coder'])}'s answer ({e(top['code'])}) is used: a person's answer outranks a model's."
+                  if KIND_RANK.get(top.get("kind"), 0) >= KIND_RANK["human"] else
+                  f"No person has answered, so the newest model answer ({e(top['code'])}, {e(top['coder'])}) is used until one does.")]
         if f.get("note"):
             L += [f"- Note: {e(f['note'])}"]
         L.append("")
@@ -1930,8 +1940,10 @@ def text_checks(ctx: dict, texts: dict[str, str], corpus: Path) -> list[str]:
             + [f"a local path would be published: {n}: {w!r}" for n, w in leaks])
 
 
-def banned_in(ctx: dict, html: str) -> list[str]:
-    seen = unescape(re.sub(r"<[^>]+>", " ", re.sub(r"(?s)<(style|script)\b.*?</\1>", " ", html))).replace("\u00a0", " ").lower()
+def banned_in(ctx: dict, html: str = "") -> list[str]:
+    """The audience's words to avoid that the page's own words use. The project's name and award lines in
+    the footer, and a verbatim quotation, are not the writer's words, so they are not read."""
+    seen = " ".join(t for _, t in page_texts(ctx["page"])).replace("\u00a0", " ").lower()
     return [w for w in opt(ctx["aud"]).get("banned_words") or [] if re.search(r"\b" + re.escape(w.lower()) + r"\b", seen)]
 
 
