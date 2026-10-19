@@ -1,0 +1,95 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "upc-corpus/references/profiles/one-pager.schema.json",
+  "title": "One-pager fields on the dossier profiles",
+  "description": "Optional fields a one-pager reads from the same audience and project profiles a dossier uses. onepager.py checks a profile against audience.schema.json or project.schema.json first, then against the matching definition here (the same small JSON Schema subset). A dossier ignores these fields, so one profile serves both formats.",
+  "$defs": {
+    "audience": {
+      "type": "object",
+      "properties": {
+        "decides": {"type": "array", "items": {"type": "string", "minLength": 1},
+                    "description": "What this reader approves, buys or controls."},
+        "cares_about": {"type": "array", "items": {"type": "string", "minLength": 1},
+                        "description": "Their problems and priorities, in their own terms."},
+        "objections": {"type": "array", "description": "What they will push back on, and how a page might answer it.",
+                       "items": {"type": "object", "required": ["objection"],
+                                 "properties": {"objection": {"type": "string", "minLength": 1},
+                                                "answer_hint": {"type": "string"}}}},
+        "trusts": {"type": "array", "items": {"type": "string", "minLength": 1},
+                   "description": "The kinds of evidence that persuade them."},
+        "numbers": {"type": "object", "description": "The units and scales they think in, and those to keep off their page.",
+                    "properties": {"prefer": {"type": "array", "items": {"type": "string"}},
+                                   "avoid": {"type": "array", "items": {"type": "string"}}}},
+        "words": {"type": "array", "description": "Phrases these readers use themselves; a page may borrow them.",
+                  "items": {"type": "object", "required": ["phrase"], "properties": {"phrase": {"type": "string", "minLength": 1}}}},
+        "reading": {"type": ["string", "array"], "items": {"type": "string"},
+                    "description": "Where and how they read it: a handout at a trade show, an emailed PDF, a thirty-second scan."},
+        "one_pager": {
+          "type": "object",
+          "properties": {
+            "layout": {"enum": ["executive", "technical", "policy"],
+                       "description": "executive: the problem and the benefit first, few numbers; technical: the data and how it works; policy: impact, scale and the ask."},
+            "tag": {"type": "string", "description": "The line naming the audience on the page, e.g. 'For beverage processors'."},
+            "cta": {"type": "string", "description": "The one thing the page asks this reader to do."},
+            "cta_detail": {"type": "string"},
+            "distribution": {"enum": ["internal", "partner", "public"],
+                             "description": "How far a page for them travels. A partner or public page uses only figures cleared for it."},
+            "banned_words": {"type": "array", "items": {"type": "string", "minLength": 2},
+                             "description": "Words to keep off their page (a build warns)."}
+          }
+        }
+      }
+    },
+    "project": {
+      "type": "object",
+      "properties": {
+        "one_pager": {
+          "type": "object",
+          "properties": {
+            "brand": {
+              "type": "object",
+              "properties": {
+                "palette": {"type": "object", "properties": {"brand": {"type": "string", "pattern": "^#[0-9A-Fa-f]{6}$"},
+                                                             "accent": {"type": "string", "pattern": "^#[0-9A-Fa-f]{6}$"},
+                                                             "heat": {"type": "string", "pattern": "^#[0-9A-Fa-f]{6}$"}}},
+                "font": {"type": "object", "required": ["file", "family"],
+                         "properties": {"file": {"type": "string", "minLength": 1}, "family": {"type": "string", "minLength": 1},
+                                        "license": {"type": "string"}},
+                         "description": "A font file (woff2, woff, ttf or otf) to embed, which you hold a licence to embed. Without one, the toolkit's own OFL face (Figtree) is used."},
+                "logo": {"type": "string", "description": "The id of an asset of kind logo."},
+                "org_line": {"type": "string"},
+                "funder_line": {"type": "string"},
+                "award_line": {"type": "string"},
+                "footer": {"type": "string"},
+                "result_class": {"type": "string", "description": "e.g. 'Laboratory batch-scale results'."},
+                "draft_stamp": {"type": "string"}
+              }
+            },
+            "assets": {
+              "type": "array",
+              "items": {"type": "object", "required": ["id", "path", "kind", "alt"],
+                        "properties": {"id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$"},
+                                       "path": {"type": "string", "minLength": 1},
+                                       "kind": {"enum": ["photo", "diagram", "logo"]},
+                                       "alt": {"type": "string", "minLength": 1},
+                                       "credit": {"type": "string"},
+                                       "may_publish": {"type": "boolean"}}},
+              "description": "Real images only. One whose may_publish is not true goes only on internal drafts."
+            },
+            "reviewers": {"type": "array", "items": {"type": "object", "required": ["handle", "name"],
+                                                     "properties": {"handle": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$"},
+                                                                    "name": {"type": "string"}, "checks": {"type": "string"}}}},
+            "clearances": {"type": "array", "items": {"type": "object", "required": ["what", "who"],
+                                                      "properties": {"what": {"type": "string"}, "who": {"type": "string"}}}},
+            "may_name": {"type": "array", "items": {"type": "string"}},
+            "allow_numbers": {"type": "array", "items": {"type": "string", "minLength": 1},
+                              "description": "Numbers that are the project's own facts, not statistics (a temperature that defines the process, an award number)."},
+            "consent": {"type": "array", "description": "Sources whose words may be quoted on a page that leaves the team, with what the consent covers.",
+                        "items": {"type": "object", "required": ["source", "note"],
+                                  "properties": {"source": {"type": "string"}, "note": {"type": "string", "minLength": 1}}}}
+          }
+        }
+      }
+    }
+  }
+}

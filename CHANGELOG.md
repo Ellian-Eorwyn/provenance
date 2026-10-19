@@ -17,6 +17,35 @@ use the `x-` extension point.
   revived coding now supersedes the answer it replaces (the result says `revived: true` and
   names it), and the run is logged like any other change.
 
+### Added
+
+- **One-pagers** (`skill/upc-corpus/scripts/onepager.py`, `references/one-pager.md`): one
+  printable page for one audience, from the same audience and project profiles a dossier
+  uses, where every number on the page is a figure whose passage is stored in the corpus.
+  - **Figures** are `data_point` extractions with a register beside them (label, value, the
+    forms a page may print it in, readings with a tolerance, a rule for a derived one). A
+    value not in its passage is refused; readers who disagree, a thin derived margin and a
+    rounded display form are flagged.
+  - **What a figure is, and who may see it, are codings** in closed codebooks: relevance to
+    each audience (lead, support, background, avoid; one codebook per audience), class,
+    a reviewer's check and its release. A person's answer outranks a model's; every
+    answer stays visible.
+  - **A page** is an `x-one-pager` synthesis, gated by hop C; a revision supersedes the last
+    and records the wording changes.
+  - One command: `init`, `figures add|import|list`, `code` and `write` (the configured local
+    model), `review` (a sheet out and back), `signoff`, `add`, `build` and `check`.
+  - `build` writes the page (HTML with everything embedded, and a US Letter PDF through a
+    Playwright already installed) and the **figures note** (Markdown and Word): every number,
+    its passage, readings, checks, release, and the questions still open. It refuses a final
+    page with an unconfirmed, irrelevant or (for partners and the public) uncleared figure,
+    a number that is not one of its figures, a never-publish phrase, a local path, a voice
+    quotation without recorded consent, or a PDF longer than one page. `--draft` builds
+    anyway, stamped, and lists what is open. An unchanged page rebuilds to the same bytes.
+- `references/profiles/one-pager.schema.json`: the optional fields a one-pager reads from
+  the dossier profiles (what readers decide, their objections and numbers, the layout, the
+  ask, how far the page travels; the project's brand, images, reviewers and own numbers).
+- `assets/one-pager/`: the page's stylesheet and an embedded OFL font (Figtree).
+
 ## Unreleased — toolkit 1.1.0: dossiers
 
 **No schema or specification change.** Corpora and the site are as in 1.15.1; the CLI
