@@ -255,6 +255,10 @@ class Dossier(unittest.TestCase):
         for want in ('id="theme-1"', 'id="next-steps"', 'id="households"', "In this memo", "Memo · written by Claude (test)",
                      "The detail of the first step.", BRIEF["bottom_line"]):
             self.assertIn(want, memo)
+        # each part opens with its own divider, and the contents follow the scroll
+        for want in ('<section class="msec k2" id="findings">', 'class="divider"', 'class="card mcard k2" data-item id="theme-1"',
+                     '<nav class="toc" aria-label="In this memo" data-spy>', 'id="step-1"'):
+            self.assertIn(want, memo)
 
     def test_lists_are_cards_that_open_a_detail_panel(self):
         for name, want in (("timeline.html", 'class="card ev-card'), ("people.html", "Advocates"),
@@ -264,7 +268,14 @@ class Dossier(unittest.TestCase):
             self.assertIn('<details class="card', page, name)
         for f in self.out.rglob("*.html"):
             self.assertIn('<dialog class="drawer" id="drawer"', f.read_text(), f.name)
-        self.assertIn('href="#y2020"', (self.out / "timeline.html").read_text())  # the ribbon jumps to its year
+        timeline, terms = (self.out / "timeline.html").read_text(), (self.out / "terms.html").read_text()
+        self.assertIn('href="#y2020"', timeline)  # the ribbon jumps to its year
+        self.assertIn('<nav class="ribbon" aria-label="Events per year" data-spy>', timeline)  # and follows the scroll
+        self.assertIn('<nav class="az" aria-label="Jump to a letter" data-spy>', terms)
+        self.assertIn('<span aria-hidden="true">Z</span>', terms)  # the whole alphabet, a letter with no term faint
+        # the script's regular expressions reach the page intact (a "\b" in a plain Python string is a backspace)
+        self.assertNotIn("\x08", timeline)
+        self.assertIn(r"/\bk\d\b/", timeline)
 
     def test_two_spellings_of_one_name_are_one_card(self):
         items = [({"name": n}, {"_source_id": s}) for n, s in (
@@ -274,6 +285,8 @@ class Dossier(unittest.TestCase):
         self.assertEqual(sorted(len(g) for g in D.merged(items, "name")), [1, 1, 2, 3])
         terms = [({"term": t}, {}) for t in ("IEPR (Integrated Energy Policy Report)", "Integrated Energy Policy Report", "iepr")]
         self.assertEqual(len(D.merged(terms, "term", long_paren=True)), 1)
+        plurals = [({"term": t}, {}) for t in ("Terminal branch", "terminal branches", "stranded assets", "stranded asset", "gas", "basis")]
+        self.assertEqual(sorted(len(g) for g in D.merged(plurals, "term", long_paren=True)), [1, 1, 2, 2])
         self.assertEqual(D.role_group("community choice aggregator", "Ava"), "utilities")
         self.assertEqual(D.role_group("ratepayer advocate", "TURN"), "advocates")
         self.assertEqual(D.role_group("electricity provider", "X"), "utilities")

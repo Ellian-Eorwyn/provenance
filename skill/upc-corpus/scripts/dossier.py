@@ -846,14 +846,18 @@ DARK = ("--desk:#161513;--folder:#201e1a;--folder-2:#2a2722;--folder-edge:#3d382
         "--muted:#a69e91;--rule:#322e28;--stamp:#d99a86;--link:#93bedf;--postit:#36321f;--postit-ink:#efe6c6;"
         "--chip:#26231e;--tape:rgba(110,100,75,.45);--shadow:0 1px 2px rgba(0,0,0,.3),0 4px 14px rgba(0,0,0,.25);"
         "--k1:#93b598;--k2:#8ba7c4;--k3:#d2ae66;--k4:#b893b6;--k5:#7db5b6;--k6:#d69a85;color-scheme:dark")
-FONTS = ('--mono:"American Typewriter","Courier Prime","Courier New",ui-monospace,Menlo,monospace;'
+# The typewriter face's small 5 reads as a 6 ("2035" as "2036"), so its digits come from a plainer monospace where one is installed.
+DIGITS = ('@font-face{font-family:"Dossier Digits";src:local("Menlo-Regular"),local("Menlo"),local("SFMono-Regular"),local("Consolas");'
+          'unicode-range:U+0030-0039}\n@font-face{font-family:"Dossier Digits";font-weight:600 900;src:local("Menlo-Bold"),'
+          'local("SFMono-Bold"),local("Consolas Bold"),local("Consolas-Bold");unicode-range:U+0030-0039}\n')
+FONTS = ('--mono:"Dossier Digits","American Typewriter","Courier Prime","Courier New",ui-monospace,Menlo,monospace;'
          '--serif:"Iowan Old Style","Palatino Linotype",Palatino,Georgia,serif;'
          '--sans:-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif')
 
-CSS = (":root{" + LIGHT + ";" + FONTS + "}\n@media (prefers-color-scheme:dark){:root:not([data-theme=light]){" + DARK + "}}\n"
+CSS = (DIGITS + ":root{" + LIGHT + ";" + FONTS + "}\n@media (prefers-color-scheme:dark){:root:not([data-theme=light]){" + DARK + "}}\n"
        ":root[data-theme=dark]{" + DARK + "}\n" + """
 *{box-sizing:border-box}
-html{scroll-padding-top:12px}
+html{scroll-padding-top:calc(var(--stick,0px) + 12px)}
 body{margin:0;background:var(--desk);color:var(--ink);font:16px/1.6 var(--sans);-webkit-text-size-adjust:100%;overflow-wrap:break-word}
 a{color:var(--link);text-underline-offset:2px}
 h1,h2,h3{font-family:var(--serif);font-weight:600;line-height:1.22;margin:0 0 .5em}
@@ -861,12 +865,15 @@ h1{font-size:clamp(1.5rem,2.5vw,2.15rem);letter-spacing:-.01em}
 h2{font-size:1.28rem} h3{font-size:1.06rem}
 p{margin:0 0 .8em}
 .wrap{max-width:1600px;margin:0 auto;padding:0 clamp(12px,2.4vw,32px) 40px}
-nav.tabs{display:flex;gap:4px;overflow-x:auto;padding:20px 0 0;scrollbar-width:thin}
+/* The tabs scroll sideways on a phone without showing a bar; the open tab reaches 1px down over the folder's edge. */
+nav.tabs{display:flex;align-items:flex-end;gap:4px;overflow-x:auto;overflow-y:hidden;padding:20px 0 0;margin-bottom:-1px;
+position:relative;z-index:1;scrollbar-width:none}
+nav.tabs::-webkit-scrollbar{display:none}
 nav.tabs a{flex:0 0 auto;background:var(--folder-2);color:var(--ink);text-decoration:none;font:600 .72rem/1 var(--mono);
 letter-spacing:.07em;text-transform:uppercase;padding:11px 15px 10px;border:1px solid var(--folder-edge);border-bottom:none;
-border-radius:9px 9px 0 0}
+border-radius:9px 9px 0 0;margin-bottom:1px}
 nav.tabs a:hover{background:var(--folder)}
-nav.tabs a.here{background:var(--folder);position:relative;top:1px}
+nav.tabs a.here{background:var(--folder);margin-bottom:0;padding-bottom:11px}
 .topbar{display:flex;align-items:flex-end;gap:8px}
 .topbar nav.tabs{flex:1 1 auto;min-width:0}
 button.theme{flex:none;margin:0 0 7px;display:inline-flex;align-items:center;gap:6px;background:none;color:var(--muted);
@@ -898,10 +905,10 @@ color:var(--ink);text-decoration:none;font-size:.86rem;padding:6px 12px;border-r
 .stat b{display:block;font:600 1.45rem/1.15 var(--serif)}
 .stat span{font-size:.76rem;color:var(--muted)}
 .toolbar{display:flex;flex-wrap:wrap;align-items:center;gap:8px 14px;margin:0 0 14px}
-.chips{display:flex;gap:6px;align-items:center;overflow-x:auto;padding-bottom:3px;max-width:100%;scrollbar-width:thin}
+.chips{display:flex;flex-wrap:wrap;gap:6px;align-items:center;max-width:100%}
 .chips>.label{flex:none;margin-right:2px}
-button.chip{flex:none;font:inherit;font-size:.84rem;border:1px solid var(--folder-edge);background:var(--chip);color:var(--ink);
-padding:4px 11px;border-radius:999px;cursor:pointer;white-space:nowrap;display:inline-flex;align-items:center;gap:6px}
+button.chip{flex:none;max-width:100%;font:inherit;font-size:.84rem;line-height:1.35;text-align:left;border:1px solid var(--folder-edge);
+background:var(--chip);color:var(--ink);padding:4px 11px;border-radius:999px;cursor:pointer;display:inline-flex;align-items:center;gap:6px}
 button.chip:hover{border-color:var(--ink)}
 button.chip[aria-pressed=true]{background:var(--ink);color:var(--paper);border-color:var(--ink)}
 button.chip b{font:700 .72rem var(--mono);color:var(--stamp)} button.chip[aria-pressed=true] b{color:inherit}
@@ -937,7 +944,7 @@ border-radius:6px;padding:4px 10px;cursor:pointer}
 .dr-body .face{display:flex;flex-direction:column;gap:4px;margin:0 0 14px;padding-bottom:12px;border-bottom:1px solid var(--rule)}
 .dr-body .face .t{font:600 1.22rem/1.3 var(--serif)}
 .dr-body .face .clamp2,.dr-body .face .clamp3{display:block;-webkit-line-clamp:unset;overflow:visible}
-.dr-body .face .from{margin-top:2px}
+.dr-body .face .from{margin-top:2px} .dr-body .face .go-p{display:none}
 @media (max-width:640px){dialog.drawer{width:100vw;max-width:100vw;margin:auto 0 0;border-radius:14px 14px 0 0;max-height:88vh}}
 blockquote.q{margin:8px 0 4px;padding:2px 0 2px 14px;border-left:3px solid var(--folder-edge);font-family:var(--serif);font-size:1.02rem}
 ul.ev,ol.points,ul.plain{list-style:none;margin:0;padding:0}
@@ -1037,38 +1044,88 @@ a.r .chips-sm{display:none}
 
 /* the memo */
 .memo-grid{display:grid;grid-template-columns:230px minmax(0,1fr);gap:28px;align-items:start}
-.toc{position:sticky;top:14px;font-size:.88rem}
-.toc ol{list-style:none;margin:6px 0 16px;padding:0}
-.toc li{margin:0 0 5px} .toc a{color:var(--ink);text-decoration:none} .toc a:hover{text-decoration:underline}
-.toc .sub{padding-left:12px;font-size:.84rem}
-.memo{max-width:900px;padding-top:34px}
+.toc{position:sticky;top:14px;font-size:.88rem;max-height:calc(100vh - 28px);overflow-y:auto;scrollbar-width:none}
+.toc ol{list-style:none;margin:6px 0 12px;padding:0}
+.toc li{margin:0 0 2px}
+.toc a{display:flex;align-items:center;gap:8px;color:var(--ink);text-decoration:none;padding:4px 8px;border-radius:6px;
+border-left:3px solid transparent;line-height:1.35}
+.toc a:hover{background:var(--chip)}
+.toc a i{font:600 .7rem var(--mono);font-style:normal;color:var(--muted);margin-left:auto}
+.toc li:has(a.cur)>a{font-weight:600}
+.toc a.cur{background:var(--paper);border-left-color:var(--k,var(--stamp))}
+.toc .sub{margin:1px 0 8px 10px;font-size:.82rem} .toc .sub a{color:var(--muted)} .toc .sub a.cur{color:var(--ink)}
+.memo{max-width:1240px;padding-top:34px}
 .clip{position:absolute;top:-24px;left:26px;width:22px;height:64px;color:var(--muted);transform:rotate(7deg)}
-.memo-head{display:grid;grid-template-columns:auto 1fr;gap:3px 14px;font:.86rem/1.45 var(--mono);
-border-bottom:2px solid var(--rule);padding-bottom:12px;margin-bottom:16px}
+.memo-top{display:grid;grid-template-columns:minmax(0,1fr) minmax(260px,380px);gap:14px 28px;align-items:start;
+border-bottom:2px solid var(--rule);padding-bottom:14px;margin-bottom:18px}
+.memo-top .slip{margin:0}
+.memo-head{display:grid;grid-template-columns:auto 1fr;gap:3px 14px;align-content:start;font:.86rem/1.45 var(--mono)}
 .memo-head b{letter-spacing:.06em}
-.memo h2{margin-top:1.2em}
-.point{border-top:1px solid var(--rule);padding-top:14px;margin-top:16px}
-.point h3 .n{font:700 .8rem var(--mono);color:var(--stamp);margin-right:6px}
-ol.steps-full{list-style:none;margin:0;padding:0}
-ol.steps-full>li{padding:10px 0 10px 30px;border-top:1px solid var(--rule);position:relative}
-ol.steps-full>li::before{content:"";position:absolute;left:2px;top:14px;width:15px;height:15px;border:1.5px solid var(--muted);border-radius:3px}
-ol.steps-full b{display:block}
+.bl-box{border-left:4px solid var(--stamp);padding:2px 0 2px 18px;margin:6px 0 4px}
+.bl-box p.bottom{margin:.3em 0 .2em}
+/* each part of the memo opens with a divider tab in its own colour */
+.msec{margin:36px 0 0}
+.divider{display:flex;flex-wrap:wrap;align-items:flex-end;gap:4px 12px;border-bottom:3px solid var(--k);margin:0 0 16px}
+.divider h2{margin:0;padding:9px 16px 7px;background:var(--k);color:var(--paper);border-radius:8px 8px 0 0;
+font:700 .76rem/1.2 var(--mono);letter-spacing:.09em;text-transform:uppercase}
+.divider .count{font:600 1.4rem/1 var(--serif);color:var(--k);padding-bottom:6px}
+.divider .note{font-size:.84rem;color:var(--muted);padding-bottom:7px}
+.mcards{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,400px),1fr));gap:16px}
+details.mcard{background:color-mix(in srgb,var(--k) 5%,var(--paper))}
+details.mcard>summary{padding:14px 18px 15px;gap:8px}
+.mhead{display:flex;align-items:flex-start;gap:12px}
+.mhead .num{flex:none;font:600 2rem/.95 var(--serif);color:var(--k)}
+.mhead .glyph{flex:none;font:600 1.3rem/1.1 var(--serif);color:var(--k)}
+.mhead .h{font:600 1.1rem/1.32 var(--serif)}
+.lcode{flex:none;display:grid;place-items:center;min-width:44px;height:44px;padding:0 6px;border-radius:22px;
+background:color-mix(in srgb,var(--k) 16%,var(--paper));color:var(--k);font:700 .86rem/1 var(--mono)}
+.mcard .x{font-size:.96rem;line-height:1.58}
+.mcard .from{flex-wrap:wrap;gap:6px 8px;padding-top:8px;border-top:1px dashed var(--rule)}
+.go-p{font:700 .66rem/1.2 var(--mono);letter-spacing:.07em;text-transform:uppercase;color:var(--k)}
+.srcs{display:inline-flex;flex-wrap:wrap;gap:4px}
+.srcs span{font-size:.72rem;line-height:1.4;background:var(--paper);border:1px solid var(--rule);border-radius:999px;padding:1px 8px}
+.between{font-size:.8rem;color:var(--muted)} .between b{color:var(--ink);font-weight:600}
+ol.notes{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,270px),1fr));gap:18px}
+ol.notes>li.postit{margin:0;position:relative;padding:14px 16px 16px 44px}
+ol.notes>li.postit:nth-child(even){transform:rotate(.5deg)}
+ol.notes .box{position:absolute;left:16px;top:17px;width:16px;height:16px;border:1.5px solid currentColor;border-radius:3px;opacity:.6}
+ol.notes b{display:block;line-height:1.38;margin-bottom:5px}
+ol.notes span.dt{display:block;font-size:.9rem;line-height:1.5}
+ol.notes a{display:inline-block;margin-top:6px;font-size:.82rem;color:inherit}
+ol.path{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,330px),1fr));gap:12px}
+ol.path a{display:grid;grid-template-columns:58px minmax(0,1fr);gap:4px 14px;align-items:start;padding:10px 12px;background:var(--paper);
+border:1px solid var(--rule);border-left:3px solid var(--k);border-radius:4px;color:var(--ink);text-decoration:none;height:100%}
+ol.path a:hover{border-color:var(--k)} ol.path a:hover b{text-decoration:underline}
+ol.path .th{position:relative;width:58px;height:74px;border:1px solid var(--rule);background:var(--chip);overflow:hidden}
+ol.path .th img{width:100%;display:block}
+ol.path .pn{position:absolute;left:0;top:0;min-width:22px;padding:3px 5px;background:var(--k);color:var(--paper);
+font:700 .72rem/1 var(--mono);text-align:center;border-bottom-right-radius:6px}
+ol.path b{display:block;font-size:.95rem;line-height:1.3;margin-bottom:3px}
+ol.path .why{font-size:.84rem;line-height:1.45;color:var(--muted)}
 
 /* the timeline */
-.ribbon{display:flex;align-items:flex-end;gap:5px;padding:12px 14px 0;background:var(--paper);border:1px solid var(--rule);
-border-radius:4px;box-shadow:var(--shadow);overflow-x:auto;margin:0 0 16px;scrollbar-width:thin}
+/* The year bar sticks to the top once scrolled past, shrunk to a strip, and marks the year in view. */
+.ribbon{position:sticky;top:0;z-index:5;--bh:84px;display:flex;align-items:flex-end;gap:5px;padding:12px 14px 0;background:var(--paper);
+border:1px solid var(--rule);border-radius:4px;box-shadow:var(--shadow);overflow-x:auto;overflow-y:hidden;margin:0 0 16px;scrollbar-width:thin}
+.ribbon.stuck{--bh:24px;padding-top:7px;border-radius:0 0 8px 8px;box-shadow:0 8px 22px rgba(40,30,15,.16)}
 .ribbon a.bar{flex:1 0 38px;display:flex;flex-direction:column;align-items:stretch;justify-content:flex-end;text-decoration:none;color:var(--muted)}
-.ribbon .stack{display:flex;flex-direction:column-reverse;gap:1px;margin:0 6px}
-.ribbon .stack i{display:block;background:var(--k);border-radius:2px;min-height:3px}
+.ribbon .stack{display:flex;flex-direction:column-reverse;gap:1px;margin:0 6px;height:calc(var(--h) * var(--bh));min-height:3px}
+.ribbon .stack i{display:block;flex:1 1 0;background:var(--k);border-radius:2px;min-height:2px}
 .ribbon .n{font:600 .66rem var(--mono);text-align:center;color:var(--muted);padding-bottom:2px}
-.ribbon .yr{font:600 .7rem var(--mono);text-align:center;padding:5px 0 8px;border-top:1px solid var(--rule);color:var(--ink)}
+.ribbon.stuck .n{display:none}
+.ribbon .yr{font:600 .7rem var(--mono);text-align:center;padding:5px 0 8px;margin-top:3px;border-top:1px solid var(--rule);color:var(--ink)}
+.ribbon.stuck .yr{padding:3px 0 5px}
 .ribbon a.bar:hover .yr{color:var(--stamp)}
 .ribbon a.bar.ahead .stack i{opacity:.45}
 .ribbon a.bar.ahead .yr{color:var(--muted);font-style:italic}
+.ribbon a.bar.cur .yr{background:var(--ink);color:var(--paper);border-radius:4px;border-top-color:transparent}
+.ribbon a.bar.off{opacity:.3}
 .ribbon .gap{flex:0 0 18px;align-self:flex-end;text-align:center;color:var(--muted);padding-bottom:8px}
+.ribbon.stuck .gap{padding-bottom:4px}
 .year{display:grid;grid-template-columns:92px minmax(0,1fr);gap:0 18px;position:relative;padding:0 0 22px}
 .year::before{content:"";position:absolute;left:45px;top:6px;bottom:0;width:2px;background:var(--folder-edge)}
-.year h2.yl{position:sticky;top:10px;align-self:start;margin:0;text-align:center;font-size:1.2rem;background:var(--folder);
+.year>.anchor{position:absolute;top:0;left:0}
+.year h2.yl{position:sticky;top:calc(var(--stick,0px) + 10px);align-self:start;margin:0;text-align:center;font-size:1.2rem;background:var(--folder);
 z-index:1;padding:4px 0 6px;border-radius:6px}
 .year h2.yl span{display:block;font-size:.8em;line-height:1.1}
 .year h2.yl small{display:block;font:600 .62rem var(--mono);color:var(--muted);letter-spacing:.06em;text-transform:uppercase}
@@ -1084,10 +1141,16 @@ color:var(--paper);font:700 .7rem var(--mono);letter-spacing:.02em}
 .grp-sec>h2{display:flex;align-items:center;gap:8px;font-size:1.12rem;margin:0 0 10px}
 .grp-sec>h2 .sw{width:12px;height:12px}
 .grp-sec>h2 small{font:600 .7rem var(--mono);color:var(--muted)}
-.letters{display:flex;flex-wrap:wrap;gap:4px}
-.letters a{font:600 .8rem var(--mono);text-decoration:none;color:var(--ink);background:var(--paper);border:1px solid var(--rule);
-border-radius:5px;padding:3px 8px}
-.letters a:hover{border-color:var(--ink)}
+/* A to Z down the left, held in view, marking the letter on screen */
+.az-wrap{display:grid;grid-template-columns:36px minmax(0,1fr);gap:16px;align-items:start}
+nav.az{position:sticky;top:10px;display:flex;flex-direction:column;gap:1px;background:var(--paper);border:1px solid var(--rule);
+border-radius:8px;padding:4px 3px;box-shadow:var(--shadow)}
+nav.az a,nav.az span{display:block;text-align:center;font:700 min(.78rem,2.25vh)/1 var(--mono);padding:min(5px,.5vh) 0;border-radius:5px;
+text-decoration:none;color:var(--ink)}
+nav.az span{color:var(--muted);opacity:.4;font-weight:400}
+nav.az a:hover{background:var(--chip)}
+nav.az a.cur{background:var(--stamp);color:var(--paper)}
+nav.az a.off{opacity:.3}
 .lsec{display:contents}
 .terms-flow .letter{margin:0;padding:8px 4px 0;font:600 2.6rem/1 var(--serif);color:var(--stamp);border-top:3px solid var(--stamp)}
 .badge{align-self:flex-start;font:600 .62rem/1.2 var(--mono);letter-spacing:.07em;text-transform:uppercase;border-radius:999px;
@@ -1115,7 +1178,10 @@ text-decoration:none;color:var(--ink)} .jump a:hover{border-color:var(--ink)}
 @media (max-width:1280px){.memo-grid{grid-template-columns:200px minmax(0,1fr)}}
 @media (max-width:1000px){.glance{grid-template-columns:minmax(0,1fr)}
 .rh,a.r{grid-template-columns:52px minmax(0,1fr) minmax(0,1.6fr) repeat(var(--ncol),30px);gap:0 10px}
-.docgrid,.memo-grid{grid-template-columns:minmax(0,1fr)}.side{order:-1}.side .shot{max-width:220px}.toc{position:static}}
+.docgrid,.memo-grid{grid-template-columns:minmax(0,1fr)}.side{order:-1}.side .shot{max-width:220px}
+.toc{position:static;max-height:none}.toc>ol{display:flex;flex-wrap:wrap;gap:6px}.toc>ol>li{margin:0}.toc .sub{display:none}
+.toc>ol>li>a{background:var(--paper);border:1px solid var(--rule);border-radius:999px;padding:4px 12px}
+.memo-top{grid-template-columns:minmax(0,1fr)}}
 @media (max-width:760px){.cv-head{grid-template-columns:minmax(0,1fr)}.cv-actions{justify-content:flex-start;flex-wrap:wrap}
 .rh{display:none}
 a.r{grid-template-columns:52px minmax(0,1fr);gap:4px 12px}
@@ -1126,15 +1192,18 @@ a.r .chips-sm{display:flex;flex-wrap:wrap;gap:5px}
 a.r .chips-sm span{font-size:.7rem;background:var(--chip);border:1px solid var(--rule);border-radius:999px;padding:1px 8px;white-space:nowrap}
 a.r .chips-sm b{letter-spacing:1px;color:var(--stamp);font-weight:400}
 .year{grid-template-columns:58px minmax(0,1fr);gap:0 10px}.year::before{left:28px}
-.year .cards,.cards{grid-template-columns:minmax(0,1fr)}}
+.year .cards,.cards{grid-template-columns:minmax(0,1fr)}
+.az-wrap{grid-template-columns:24px minmax(0,1fr);gap:8px}nav.az{padding:3px 1px}nav.az a,nav.az span{font-size:min(.68rem,2.1vh)}
+.mhead .num{font-size:1.6rem}}
 @media print{:root:is([data-theme],:not([data-theme])){""" + LIGHT + """;--paper:#fff;--folder:#fff;--chip:#fff;--postit:#fff}
-body{background:#fff}nav.tabs,.toolbar,button.copy,button.theme,.btn,.ribbon,.toc,dialog{display:none}
+body{background:#fff}nav.tabs,.toolbar,button.copy,button.theme,.btn,.ribbon,.toc,nav.az,dialog{display:none}
+.az-wrap{display:block}
 main.folder,.sheet,details.card,figure.exhibit,.reg{box-shadow:none;border-color:#ccc;background:#fff}
 .postit,.stamp{transform:none}.postit{border:1px solid #bbb}a{color:inherit}.rh,.year h2.yl{position:static}
 details.card .more{display:block}.clamp2,.clamp3{display:block;-webkit-line-clamp:unset}}
 """)
 
-JS = """
+JS = r"""
 function upcApply(root){var g=root.dataset.g||'',w=root.dataset.w||'',q=(root.dataset.q||'').trim().toLowerCase();
 root.classList.toggle('f',!!g);
 root.querySelectorAll('[data-item]').forEach(function(it){var ok=(!g||(' '+(it.dataset.g||'')+' ').indexOf(' '+g+' ')>=0)&&
@@ -1166,7 +1235,34 @@ d.querySelector('.next').addEventListener('click',function(){step(1)});
 d.querySelector('.x').addEventListener('click',function(){d.close()});
 d.addEventListener('click',function(e){if(e.target===d)d.close()});
 d.addEventListener('keydown',function(e){if(e.key==='ArrowRight'){step(1);e.preventDefault()}else if(e.key==='ArrowLeft'){step(-1);e.preventDefault()}});
-d.addEventListener('close',function(){var s=cur&&cur.querySelector('summary');if(s)s.focus()})})();
+d.addEventListener('close',function(){var s=cur&&cur.querySelector('summary');if(s)s.focus()});
+var t=location.hash&&document.getElementById(decodeURIComponent(location.hash.slice(1)));
+if(t&&t.matches('details.card'))show(t)})();
+(function(){var r=document.querySelector('.ribbon');if(!r)return;var root=document.documentElement,s=document.createElement('div');
+s.style.height='1px';r.parentNode.insertBefore(s,r);r.classList.add('stuck');root.style.setProperty('--stick',r.offsetHeight+'px');
+r.classList.remove('stuck');
+function set(on){if(on===r.classList.contains('stuck'))return;if(on){var f=r.offsetHeight;r.classList.add('stuck');
+r.style.marginBottom=(f-r.offsetHeight+16)+'px'}else{r.classList.remove('stuck');r.style.marginBottom=''}}
+if(window.IntersectionObserver)new IntersectionObserver(function(es){set(es[0].boundingClientRect.top<0)}).observe(s)})();
+document.querySelectorAll('[data-spy]').forEach(function(nav){
+var links=Array.prototype.slice.call(nav.querySelectorAll('a[href^="#"]')),pend=false,pin=null,pinY=-1;
+links.forEach(function(a){a._t=document.getElementById(a.dataset.sec||decodeURIComponent(a.hash.slice(1)))});
+// The part just jumped to stays marked, even near the end where it cannot reach the top, until the reader scrolls on.
+nav.addEventListener('click',function(e){var a=e.target.closest('a[href^="#"]');if(!a||!a._t)return;pin=a._t;pinY=-1;
+setTimeout(function(){pinY=scrollY;upd()},80)});
+function upd(){pend=false;var lim=(parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--stick'))||0)+90,best=null,top=-1e9;
+links.forEach(function(a){var t=a._t,gone=!t||t.offsetParent===null;a.classList.toggle('off',gone);if(gone)return;
+var y=t.getBoundingClientRect().top;if(y<=lim&&y>top){top=y;best=t}});
+if(innerHeight+scrollY>=document.documentElement.scrollHeight-4){links.forEach(function(a){var t=a._t;   // at the very end, the last part
+if(t&&t.offsetParent!==null&&t.getBoundingClientRect().top<innerHeight)best=t})}
+if(pin&&pinY>=0&&Math.abs(scrollY-pinY)>60)pin=null;if(pin&&pin.offsetParent!==null)best=pin;
+links.forEach(function(a){var on=!!best&&a._t===best;a.classList.toggle('cur',on);
+if(on)a.setAttribute('aria-current','true');else a.removeAttribute('aria-current')});
+var c=nav.querySelector('a.cur');if(c&&nav.scrollWidth>nav.clientWidth){var l=c.offsetLeft,w=c.offsetWidth;
+if(l<nav.scrollLeft)nav.scrollLeft=l-24;else if(l+w>nav.scrollLeft+nav.clientWidth)nav.scrollLeft=l+w-nav.clientWidth+24}}
+function later(){if(!pend){pend=true;requestAnimationFrame(upd)}}
+window.addEventListener('scroll',later,{passive:true});window.addEventListener('resize',later);
+document.addEventListener('input',later);document.addEventListener('click',later);upd()});
 (function(){var r=document.documentElement,b=document.querySelector('button.theme');if(!b)return;
 var mq=window.matchMedia?window.matchMedia('(prefers-color-scheme: dark)'):null;
 function cur(){return r.getAttribute('data-theme')||(mq&&mq.matches?'dark':'light')}
@@ -1336,13 +1432,24 @@ def see_link(see: str | None, ctx: dict, up: str = "") -> str | None:
     return f"{up}docs/{d['_file']}" if d else None
 
 
+def ev_items(evs: list[dict], ctx: dict, up: str = "") -> str:
+    by_sid = {d["_source_id"]: d for d in ctx["docs"]}
+    return '<ul class="ev">' + "".join(
+        f'<li>{quote_html(ev, by_sid[ev["source_id"]], up + "docs/" + by_sid[ev["source_id"]]["_file"]) if ev["source_id"] in by_sid else quote_html(ev, ctx["others"][ev["source_id"]])}</li>'
+        for ev in evs) + "</ul>"
+
+
 def ev_list(evs: list[dict], ctx: dict, up: str = "") -> str:
     # Folded, so a point reads first and its passages are one click away.
-    by_sid = {d["_source_id"]: d for d in ctx["docs"]}
     n = len(evs)
-    return (f'<details class="ev"><summary>The passage{"" if n == 1 else "s"} ({n})</summary><ul class="ev">' + "".join(
-        f'<li>{quote_html(ev, by_sid[ev["source_id"]], up + "docs/" + by_sid[ev["source_id"]]["_file"]) if ev["source_id"] in by_sid else quote_html(ev, ctx["others"][ev["source_id"]])}</li>'
-        for ev in evs) + "</ul></details>") if evs else ""
+    return (f'<details class="ev"><summary>The passage{"" if n == 1 else "s"} ({n})</summary>{ev_items(evs, ctx, up)}</details>'
+            if evs else "")
+
+
+def ev_docs(evs: list[dict], ctx: dict) -> list[str]:
+    """The short names of the documents a point rests on, in the order first cited."""
+    by_sid = {d["_source_id"]: d for d in ctx["docs"]}
+    return list(dict.fromkeys(short_title(by_sid.get(ev["source_id"]) or ctx["others"][ev["source_id"]]) for ev in evs))
 
 
 def cover_groups(ctx: dict) -> list[tuple[str, list[dict]]]:
@@ -1443,52 +1550,77 @@ def memo_html(ctx: dict) -> str:
     cfg, proj, b = ctx["cfg"], ctx["proj"], ctx["brief"]
     by_sid = {d["_source_id"]: d for d in ctx["docs"]}
     lmap = {lens["slug"]: lens for lens in proj["lenses"]}
-    toc, body = [], []
+    toc, body = ['<li><a href="#bottom-line">The bottom line</a></li>'], []
     bottom = b.get("bottom_line") or b.get("lede") or ""
-    body.append(f'<p class="bottom" id="bottom-line">{esc(bottom)}</p>')
-    if b.get("lede") and b.get("bottom_line") and b["lede"] != b["bottom_line"]:
-        body.append(f'<p>{esc(b["lede"])}</p>')
-    if b.get("themes"):
-        toc.append('<li><a href="#findings">Findings</a><ol class="sub">' + "".join(
-            f'<li><a href="#theme-{i}">{esc(t.get("title"))}</a></li>' for i, t in enumerate(b["themes"], 1)) + "</ol></li>")
-        body.append('<h2 id="findings">Findings</h2>' + "".join(
-            f'<section class="point" id="theme-{i}"><h3><span class="n">{i}</span>{esc(t.get("title"))}</h3>'
-            f'<p>{esc(t.get("text"))}</p>{ev_list(t["evidence"], ctx)}</section>' for i, t in enumerate(b["themes"], 1)))
-    if b.get("tensions"):
-        toc.append(f'<li><a href="#tensions">Where the documents pull apart ({len(b["tensions"])})</a></li>')
-        body.append('<h2 id="tensions">Where the documents pull apart</h2>' + "".join(
-            f'<section class="point" id="tension-{i}"><h3>{esc(t.get("title"))}</h3><p>{esc(t.get("text"))}</p>'
-            f'{ev_list(t["evidence"], ctx)}</section>' for i, t in enumerate(b["tensions"], 1)))
-    if b.get("for_project"):
-        toc.append(f'<li><a href="#by-lens">What it means for {esc(proj["name"])}</a><ol class="sub">' + "".join(
-            f'<li><a href="#{esc(t.get("lens"))}">{esc((lmap.get(t.get("lens")) or {}).get("short") or t.get("lens"))}</a></li>'
-            for t in b["for_project"]) + "</ol></li>")
-        body.append(f'<h2 id="by-lens">What it means for {esc(proj["name"])}</h2>' + "".join(
-            f'<section class="point" id="{esc(t.get("lens"))}"><span class="lens-tag">{esc((lmap.get(t.get("lens")) or {}).get("title", ""))}</span>'
-            + (f'<h3>{esc(t["headline"])}</h3>' if t.get("headline") else "")
-            + f'<p>{esc(t.get("text"))}</p>{ev_list(t.get("evidence") or [], ctx)}</section>' for t in b["for_project"]))
+    body.append(f'<div class="bl-box" id="bottom-line"><span class="label">The bottom line</span><p class="bottom">{esc(bottom)}</p>'
+                + (f'<p>{esc(b["lede"])}</p>' if b.get("lede") and b.get("bottom_line") and b["lede"] != b["bottom_line"] else "")
+                + "</div>")
+
+    def part(sid, k, title, items, note, inner, sub=""):
+        # A part of the memo: a divider tab in its own colour, and a contents line that lights up while it is on screen.
+        toc.append(f'<li class="{k}"><a href="#{sid}"><span class="sw {k}"></span>{esc(title)}<i>{len(items)}</i></a>{sub}</li>')
+        body.append(f'<section class="msec {k}" id="{sid}"><div class="divider"><h2>{esc(title)}</h2><span class="count">{len(items)}'
+                    f'</span><span class="note">{esc(note)}</span></div>{inner}</section>')
+
+    def mcard(cid, head, title, text, evs, k, extra="", named=False):
+        # Readable in full where it stands; opening it shows the passages, and ←/→ walk the whole memo.
+        n, names = len(evs), [] if named else ev_docs(evs, ctx)  # named: the card already names its documents
+        srcs = "".join(f"<span>{esc(x)}</span>" for x in names[:4]) + (f"<span>+{len(names) - 4} more</span>" if len(names) > 4 else "")
+        face = (f'<span class="mhead">{head}<span class="h">{esc(title)}</span></span>{extra}<span class="x">{esc(text)}</span>'
+                + (f'<span class="from"><span class="go-p">{n} passage{"s" * (n != 1)} →</span><span class="srcs">{srcs}</span></span>' if n else ""))
+        return card(face, ev_items(evs, ctx) if n else '<p class="note">No passages.</p>', cls=f"mcard {k}", attrs=f'id="{esc(cid)}"')
+
+    themes, tensions, lenses_ = b.get("themes") or [], b.get("tensions") or [], b.get("for_project") or []
+    if themes:
+        part("findings", "k2", "Findings", themes, "What the documents establish. Open one for the passages behind it.",
+             '<div class="mcards">' + "".join(mcard(f"theme-{i}", f'<span class="num">{i}</span>', t.get("title"), t.get("text"),
+                                                    t["evidence"], "k2") for i, t in enumerate(themes, 1)) + "</div>",
+             '<ol class="sub">' + "".join(f'<li><a href="#theme-{i}">{esc(t.get("title"))}</a></li>' for i, t in enumerate(themes, 1)) + "</ol>")
+    if tensions:
+        def between(evs):
+            names = ev_docs(evs, ctx)
+            return f'<span class="between">Between <b>{esc(", ".join(names[:-1]))}</b> and <b>{esc(names[-1])}</b></span>' if len(names) > 1 else ""
+        part("tensions", "k6", "Where the documents pull apart", tensions, "Where they disagree, or one leaves open what another assumes.",
+             '<div class="mcards">' + "".join(mcard(f"tension-{i}", '<span class="glyph" aria-hidden="true">⇄</span>', t.get("title"),
+                                                    t.get("text"), t["evidence"], "k6", between(t["evidence"]),
+                                                    named=len(ev_docs(t["evidence"], ctx)) > 1)
+                                              for i, t in enumerate(tensions, 1)) + "</div>")
+    if lenses_:
+        def lens_of(t):
+            return lmap.get(t.get("lens")) or {"title": t.get("lens") or "", "slug": t.get("lens") or ""}
+        part("by-lens", "k1", f"What it means for {proj['name']}", lenses_, "One paragraph for each part of the project.",
+             '<div class="mcards">' + "".join(
+                 mcard(t.get("lens"), f'<span class="lcode">{esc(lens_code(lens_of(t)))}</span>', t.get("headline") or lens_of(t)["title"],
+                       t.get("text"), t.get("evidence") or [], "k1", f'<span class="meta">{esc(lens_of(t)["title"])}</span>')
+                 for t in lenses_) + "</div>",
+             '<ol class="sub">' + "".join(f'<li><a href="#{esc(t.get("lens"))}">{esc(lens_of(t).get("short") or lens_of(t)["title"])}</a></li>'
+                                          for t in lenses_) + "</ol>")
     steps = steps_of(b)
     if steps:
-        toc.append('<li><a href="#next-steps">Next steps</a></li>')
-        body.append('<h2 id="next-steps">Next steps</h2><ol class="steps-full">' + "".join(
-            f'<li id="step-{i}"><b>{esc(s["step"])}</b>' + (f'<span>{esc(s["detail"])}</span>' if s.get("detail") else "")
-            + (f' <a href="{esc(see_link(s.get("see"), ctx))}">{esc(SEE_LABEL.get(s.get("see"), "open"))} →</a>' if see_link(s.get("see"), ctx) else "")
-            + "</li>" for i, s in enumerate(steps, 1)) + "</ol>")
+        part("next-steps", "k3", "Next steps", steps, "For the team to pick up.",
+             '<ol class="notes">' + "".join(
+                 f'<li class="postit" id="step-{i}"><span class="box"></span><b>{esc(s["step"])}</b>'
+                 + (f'<span class="dt">{esc(s["detail"])}</span>' if s.get("detail") else "")
+                 + (f'<a href="{esc(see_link(s.get("see"), ctx))}">{esc(SEE_LABEL.get(s.get("see"), "open"))} →</a>' if see_link(s.get("see"), ctx) else "")
+                 + "</li>" for i, s in enumerate(steps, 1)) + "</ol>")
     order = [r for r in b.get("reading_order") or [] if r["source_id"] in by_sid]
     if order:
-        toc.append('<li><a href="#reading-order">Where to start</a></li>')
-        body.append('<h2 id="reading-order">Where to start</h2><ol>' + "".join(
-            f'<li><a href="docs/{esc(by_sid[r["source_id"]]["_file"])}">{esc(short_title(by_sid[r["source_id"]]))}</a>'
-            f'{" — " + esc(r["why"]) if r.get("why") else ""}</li>' for r in order) + "</ol>")
+        def stop(i, r):
+            d = by_sid[r["source_id"]]
+            th = f'<img src="{esc(d["_cover"])}" alt="" loading="lazy">' if d.get("_cover") else ""
+            return (f'<li><a href="docs/{esc(d["_file"])}"><span class="th">{th}<span class="pn">{i}</span></span><span>'
+                    f'<b>{esc(short_title(d))}</b><span class="why">{esc(r.get("why") or first_sentence(d.get("for_us") or d.get("summary")))}</span></span></a></li>')
+        part("reading-order", "k4", "Where to start", order, "The reading order, and why each comes where it does.",
+             '<ol class="path">' + "".join(stop(i, r) for i, r in enumerate(order, 1)) + "</ol>")
     req = cfg.get("request") or {}
     slip = (f'<div class="slip" id="request"><span class="label">Routing slip</span><p>Resources suggested by '
             f'<b>{esc(req.get("by") or "")}</b>:</p><blockquote>“{esc(req["quote"])}”</blockquote></div>' if req.get("quote") else "")
-    memo = (f'<article class="sheet memo">{CLIP}<div class="memo-head"><b>TO</b><span>{esc(cfg["prepared_for"])}</span>'
+    memo = (f'<article class="sheet memo">{CLIP}<div class="memo-top"><div class="memo-head"><b>TO</b><span>{esc(cfg["prepared_for"])}</span>'
             f'<b>FROM</b><span>{esc(cfg.get("prepared_by") or "")}</span><b>RE</b><span>{esc(cfg["title"])}</span>'
-            f'<b>DATE</b><span>{esc(fmt_day(cfg.get("date")))}</span></div>'
+            f'<b>DATE</b><span>{esc(fmt_day(cfg.get("date")))}</span></div>{slip}</div>'
             f'<p class="label">Memo · written by {esc(b["writer"])}</p>{"".join(body)}</article>')
-    return (f'<p class="crumbs"><a href="index.html">Cover</a> › Memo</p><div class="memo-grid"><nav class="toc" aria-label="In this memo">'
-            f'<span class="label">In this memo</span><ol>{"".join(toc)}</ol>{slip}</nav><div>{memo}</div></div>')
+    return (f'<p class="crumbs"><a href="index.html">Cover</a> › Memo</p><div class="memo-grid"><nav class="toc" aria-label="In this memo" data-spy>'
+            f'<span class="label">In this memo</span><ol>{"".join(toc)}</ol></nav><div>{memo}</div></div>')
 
 
 def doc_html(d: dict, ctx: dict, prev: dict | None, nxt: dict | None) -> str:
@@ -1619,28 +1751,6 @@ def timeline_html(ctx: dict) -> str:
     for it, d in evs:
         k = date_key(it.get("date"))
         years.setdefault(k[:4] if k != "9999" else "Undated", []).append((it, d, k != "9999" and k[:10] > today))
-    most = max(len(v) for v in years.values())
-    bars, prev = [], None
-    for y, rows in years.items():
-        if y != "Undated" and prev and int(y) - int(prev) > 1:
-            bars.append('<span class="gap" aria-hidden="true">⋯</span>')
-        counts = {k: sum(1 for _, d, _ in rows if of(d) == k) for k, _ in keys}
-        segs = "".join(f'<i class="{colour[k]}" style="height:{max(3, round(n * 84 / most))}px"></i>' for k, _ in keys if (n := counts[k]))
-        ahead = all(a for *_, a in rows)
-        bars.append(f'<a class="bar{" ahead" if ahead else ""}" href="#y{esc(y)}" title="{esc(y)}: {len(rows)} event{"s" * (len(rows) != 1)}'
-                    f'{" (ahead)" if ahead else ""}"><span class="n">{len(rows)}</span><span class="stack">{segs}</span><span class="yr">{esc(y)}</span></a>')
-        if y != "Undated":
-            prev = y
-
-    def ev_card(it, d, ahead):
-        face = (f'<span class="meta">{esc(fmt_when(it.get("date")))}{" · ahead" if ahead else ""}</span>'
-                f'<span class="t clamp3">{esc(it.get("event"))}</span>'
-                f'<span class="from"><span class="sw"></span>{esc(short_title(d))}</span>')
-        more = (f'{quote_html(it, d, "docs/" + d["_file"])}<p class="note">The line above is {esc(d["writer"])}\'s; the quotation '
-                f'is the document\'s.</p><p><a href="docs/{esc(d["_file"])}">Open the document\'s folder →</a></p>')
-        return card(face, more, cls=f"ev-card {colour[of(d)]}{' ahead' if ahead else ''}",
-                    attrs=f'data-g="{esc(of(d))}" data-w="{"ahead" if ahead else "past"}"')
-
     # Neighbouring years with one or two events share a row, so a sparse decade doesn't fill the page.
     blocks, run = [], []
 
@@ -1658,8 +1768,35 @@ def timeline_html(ctx: dict) -> str:
         else:
             blocks.append(([y], rows))
     flush()
+    row_of = {y: ys[0] for ys, _ in blocks for y in ys}
+
+    # A bar's height is a share of the tallest (--h), so the same bars shrink when the strip sticks to the top.
+    most = max(len(v) for v in years.values())
+    bars, prev = [], None
+    for y, rows in years.items():
+        if y != "Undated" and prev and int(y) - int(prev) > 1:
+            bars.append('<span class="gap" aria-hidden="true">⋯</span>')
+        counts = {k: sum(1 for _, d, _ in rows if of(d) == k) for k, _ in keys}
+        segs = "".join(f'<i class="{colour[k]}" style="flex-grow:{n}"></i>' for k, _ in keys if (n := counts[k]))
+        ahead = all(a for *_, a in rows)
+        bars.append(f'<a class="bar{" ahead" if ahead else ""}" href="#y{esc(y)}" data-sec="y{esc(row_of[y])}" '
+                    f'title="{esc(y)}: {len(rows)} event{"s" * (len(rows) != 1)}{" (ahead)" if ahead else ""}"><span class="n">{len(rows)}</span>'
+                    f'<span class="stack" style="--h:{len(rows) / most:.3f}">{segs}</span><span class="yr">{esc(y)}</span></a>')
+        if y != "Undated":
+            prev = y
+
+    def ev_card(it, d, ahead):
+        face = (f'<span class="meta">{esc(fmt_when(it.get("date")))}{" · ahead" if ahead else ""}</span>'
+                f'<span class="t clamp3">{esc(it.get("event"))}</span>'
+                f'<span class="from"><span class="sw"></span>{esc(short_title(d))}</span>')
+        more = (f'{quote_html(it, d, "docs/" + d["_file"])}<p class="note">The line above is {esc(d["writer"])}\'s; the quotation '
+                f'is the document\'s.</p><p><a href="docs/{esc(d["_file"])}">Open the document\'s folder →</a></p>')
+        return card(face, more, cls=f"ev-card {colour[of(d)]}{' ahead' if ahead else ''}",
+                    attrs=f'data-g="{esc(of(d))}" data-w="{"ahead" if ahead else "past"}"')
+
+    # The other years in a shared row are anchors placed out of the grid, so they take no cell of it.
     body = "".join(
-        f'<section class="year" id="y{esc(ys[0])}" data-section>{"".join(f"<span id=y{esc(y)}></span>" for y in ys[1:])}'
+        f'<section class="year" id="y{esc(ys[0])}" data-section>{"".join(f"<span class=anchor id=y{esc(y)}></span>" for y in ys[1:])}'
         f'<h2 class="yl">{esc(ys[0])}{f"<span>–{esc(ys[-1])}</span>" if len(ys) > 1 else ""}<small>{len(rows)} event{"s" * (len(rows) != 1)}'
         f'</small></h2><div class="cards">{"".join(ev_card(*r) for r in rows)}</div></section>' for ys, rows in blocks)
     n_ahead = sum(1 for rows in years.values() for *_, a in rows if a)
@@ -1672,9 +1809,9 @@ def timeline_html(ctx: dict) -> str:
             f'documents, {esc(span)}. Pick a year, a thread or a word; open an event for the passage behind it.</p></div>'
             f'<div class="stats"><div class="stat"><b>{len(evs)}</b><span>events</span></div><div class="stat"><b>{len(real)}</b>'
             f'<span>years</span></div><div class="stat"><b>{n_ahead}</b><span>still ahead</span></div></div></div>'
-            f'<nav class="ribbon" aria-label="Events per year">{"".join(bars)}</nav>'
             f'<p class="tl-note">Each bar is a year, coloured by thread; faded years lie ahead of {esc(fmt_day(today))}. '
-            f'Events are the writer\'s words; each opens on the document\'s own.</p>'
+            f'The bar stays at the top as you scroll and marks the year in view. Events are the writer\'s words; each opens on '
+            f'the document\'s own.</p><nav class="ribbon" aria-label="Events per year" data-spy>{"".join(bars)}</nav>'
             f'<div class="filterable">{tools}<div class="tl">{body}</div></div>')
 
 
@@ -1716,7 +1853,18 @@ def _name_keys(name: str, long_paren: bool) -> set[str]:
         keys.add(person.lower())
     if par and (re.fullmatch(r"[A-Z][A-Za-z0-9&.\-]{1,9}", par) or (long_paren and len(par.split()) >= 2 and not re.search(r"[,;]", par))):
         keys.add(par.lower())
+    if long_paren:  # a term and its plural are one term: "terminal branch", "terminal branches"
+        keys |= {_singular(k) for k in keys}
     return {k for k in keys if k}
+
+
+def _singular(key: str) -> str:
+    head, _, last = key.rpartition(" ")
+    if re.search(r"(ch|sh|x|ss|z)es$", last):
+        last = last[:-2]
+    elif len(last) > 3 and re.search(r"[^su]s$", last):
+        last = last[:-1]
+    return f"{head} {last}".strip()
 
 
 def merged(items: list[tuple[dict, dict]], field: str, long_paren: bool = False) -> list[list[tuple[dict, dict]]]:
@@ -1803,7 +1951,10 @@ def terms_html(ctx: dict) -> str:
                                            f'{quote_html(it, d, "docs/" + d["_file"])}</li>' for it, d in g) + "</ul>"
         return card(face, more)
 
-    bar = "".join(f'<a href="#letter-{esc(ch)}">{esc(ch)}</a>' for ch in letters)
+    # The whole alphabet down the left, so the rail keeps its shape; letters with no term are shown faint.
+    rail = "".join(f'<a href="#letter-{esc(ch)}">{esc(ch)}</a>' if ch in letters else f'<span aria-hidden="true">{ch}</span>'
+                   for ch in ["#"] * ("#" in letters) + [chr(c) for c in range(65, 91)]
+                   + [k for k in letters if k != "#" and not "A" <= k <= "Z"])
     # One grid for every term, the letters as markers in it, so a letter with one term leaves no gap.
     body = '<div class="cards terms-flow">' + "".join(
         f'<section class="lsec" data-section><h2 class="letter" id="letter-{esc(ch)}">{esc(ch)}</h2>'
@@ -1812,7 +1963,8 @@ def terms_html(ctx: dict) -> str:
     return (f'<div class="page-head"><div><h1>Terms</h1><p class="lede">Terms the documents define or lean on. The meanings are '
             f'the writer\'s words; open a term for the passage each comes from.</p></div><div class="stats"><div class="stat">'
             f'<b>{len(rows)}</b><span>terms</span></div><div class="stat"><b>{shared}</b><span>in more than one document</span></div></div></div>'
-            f'<div class="filterable"><div class="toolbar"><nav class="letters" aria-label="Jump to a letter">{bar}</nav>{find_box("terms")}</div>{body}</div>')
+            f'<div class="az-wrap"><nav class="az" aria-label="Jump to a letter" data-spy>{rail}</nav>'
+            f'<div class="filterable"><div class="toolbar">{find_box("terms")}</div>{body}</div></div>')
 
 
 def leads_html(ctx: dict) -> str:

@@ -81,10 +81,17 @@ gains one option. The new objects use the `x-` extension point.
     one laptop screen: the bottom line, the findings (each opening its passages in the memo),
     the next steps, and the documents in reading order, each with its first page, one line
     on what matters for the project, what to read, and a dot per lens, filterable by lens.
-    The memo has its own page. The timeline is a year spine of cards under a bar per year;
-    who's who, terms and leads are cards with spellings of one name joined, filters and a
-    search; a card opens its passage in one panel. Pages widen to 1600 px, the width going
-    to columns while lines of text stay near 75 characters.
+    The memo has its own page, each part under a divider tab in its own colour: findings,
+    tensions (naming the documents that pull apart) and lenses as cards that open on their
+    passages, next steps as notes, and the reading order with each document's first page;
+    its contents list marks the part on screen, and a link to a finding opens it. The
+    timeline is a year spine of cards under a bar per year, which stays at the top as a
+    strip once scrolled past and marks the year in view. Who's who, terms and leads are
+    cards with spellings of one name joined (a term and its plural too), filters that wrap
+    and a search; terms keep an A–Z rail in view. A card opens its passage in one panel.
+    Pages widen to 1600 px, the width going to columns while lines of text stay near 75
+    characters. Small labels take their digits from a plain monospace where one is
+    installed, since the typewriter face's small 5 reads as a 6.
   - The cover's lines have word limits, which `add` and `brief` enforce: an entry's `for_us`
     (45) and `read_this` (14); the memo's `bottom_line` (90), at most 6 themes (titles 14) and
     6 next steps (each 22, the rest in `detail`), and each lens `headline` (24). A next step
