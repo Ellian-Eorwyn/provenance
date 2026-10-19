@@ -62,7 +62,8 @@ TRIAL = ("# A gentler pasteurization trial\n\n"
          "Heat use per batch fell from 900 kWh to 600 kWh with the recovered heat. "
          "A separate test found a 4-log reduction after a shorter hold. "
          "National beverage plants use about 120 TBtu of process heat a year.\n\n" + SECRET + "\n\n" + "Method. " * 40)
-READ_A = "# Chart readings, reader A\n\nDay 14, treated: 2.76 log CFU/mL. Day 14, control: 4.10 log CFU/mL.\n\n" + "Note. " * 20
+READ_A = ("# Chart readings, reader A\n\nDay 14, treated: 2.76 log CFU/mL. Day 14, control: 4.10 log CFU/mL.\n\n"
+          "| Day | Treated |\n|---|---|\n| Day 21 | 3.10 ± 0.15 |\n\n" + "Note. " * 20)
 READ_B = "# Chart readings, reader B\n\nDay 14, treated: 2.80 log CFU/mL. Day 14, control: 4.40 log CFU/mL.\n\n" + "Note. " * 20
 INTERVIEW = ("# Interview 3 (pseudonymized)\n\n"
              "We lose half a shift every time the line goes down for cleaning, and that is what I would pay to fix. "
@@ -410,6 +411,8 @@ class OnePager(unittest.TestCase):
         self.assertTrue(self.draft["draft"])
         self.assertIn(O.DRAFT_STAMP, self.html)
         self.assertIn("log-kill", self.draft["open"])
+        self.assertEqual(O.open_groups({"a": ["x", "y"], "b": ["x"]}), [("x", ["a", "b"]), ("y", ["a"])])
+        self.assertIn("Not confirmed by a reviewer (not checked yet) (", self.note)
         self.assertIn("Before this goes outside the team", self.note)
         self.assertIn("> The treatment achieved a 5-log reduction at 55 °C in every run.", self.note)
         self.assertIn("Words by Hermes, using Claude (test).", self.note)
@@ -517,6 +520,19 @@ class OnePager(unittest.TestCase):
         with self.assertRaises(SystemExit) as cm:
             O.cmd_init(self.fresh("badprof"), args(slug="bad", audience=str(p), project=str(self.root / "project.json")))
         self.assertIn("layout", str(cm.exception))
+
+    @unittest.skipUnless(HAVE_PANDOC, "needs pandoc")
+    def test_a_table_row_passage_survives_into_the_word_note(self):
+        c = self.fresh("tablerow")
+        O.cmd_figures_add(c, [{"id": "d21", "label": "Day 21, treated", "value": "3.10", "source": RA,
+                               "quote": "| Day 21 | 3.10 ± 0.15"}], by="test", replace=False, plan=False)
+        p = copy.deepcopy(PAGE)
+        p["figures"] = ["d21"]
+        O.add_page(c, "proc", p, writer="Ellie")
+        out = self.root / "tablerow-out"
+        O.build(c, "proc", out, draft=True, pdf=False, docx=True)
+        self.assertIn("| Day 21 | 3.10 ± 0.15", O.D.docx_text(out / "proc-figures.docx"))
+        self.assertIn("> | Day 21 | 3.10 ± 0.15", (out / "proc-figures.md").read_text())
 
     @unittest.skipUnless(HAVE_PANDOC, "needs pandoc")
     def test_the_figures_note_has_a_word_copy_with_every_passage(self):

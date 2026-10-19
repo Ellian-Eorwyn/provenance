@@ -619,15 +619,14 @@ def gate(fid: str, reg: dict, J: dict, aud_id: str, distribution: str) -> tuple[
         final.append("no class yet (measured, modelled, literature or derived)")
     if s["check"] != "confirmed":
         final.append(f"not confirmed by a reviewer ({s['check'] or 'not checked yet'})")
-    for x, i in s["inputs"].items():
-        if i["check"] != "confirmed":
-            final.append(f"its input {x} is not confirmed ({i['check'] or 'not checked yet'})")
+    unchecked = [x for x, i in s["inputs"].items() if i["check"] != "confirmed"]
+    if unchecked:
+        final.append("not every figure it is worked out from is confirmed")
     if distribution != "internal":
         if s["clearance"] != "cleared":
             final.append(f"not cleared to leave the team ({s['clearance'] or 'no release recorded'})")
-        for x, i in s["inputs"].items():
-            if i["clearance"] != "cleared":
-                final.append(f"its input {x} is not cleared to leave the team")
+        if any(i["clearance"] != "cleared" for i in s["inputs"].values()):
+            final.append("not every figure it is worked out from is cleared to leave the team")
     if any(r.get("agrees") is False for r in f.get("readings") or []):
         final.append("its readings disagree by more than the tolerance")
     return hard, final
@@ -1263,13 +1262,27 @@ def add_page(corpus: Path, slug: str, page: dict, *, writer: str, model: str | N
     return report
 
 
+def open_groups(open_: dict[str, list[str]]) -> list[tuple[str, list[str]]]:
+    """What keeps figures off a final page, one line per reason with the figures it holds back,
+    the commonest first, so 30 unchecked figures read as one line, not 30."""
+    by: dict[str, list[str]] = {}
+    for fid, reasons in open_.items():
+        for r in reasons:
+            by.setdefault(r, []).append(fid)
+    return sorted(by.items(), key=lambda kv: (-len(kv[1]), kv[0]))
+
+
+def print_open(open_: dict[str, list[str]]) -> None:
+    for reason, fids in open_groups(open_):
+        print(f"  OPEN ({len(fids)}) {reason}: {', '.join(fids)}")
+
+
 def print_page_report(rep: dict) -> None:
     C.counts_header("Page", [("status", rep.get("status")), ("revision", rep.get("revision", "—")),
                              ("synthesis", rep.get("synthesis_id", "—")), ("figures cited", rep["figures"]),
                              ("figures still open for a final page", len(rep["open"])),
                              ("wording changes since the last revision", rep.get("changes", "—"))])
-    for x, w in rep["open"].items():
-        print(f"  OPEN {x}: {'; '.join(w)}")
+    print_open(rep["open"])
 
 
 # ------------------------------------------------------------------ write (the local model drafts the page)
@@ -1618,68 +1631,71 @@ def page_html(ctx: dict) -> str:
 
 
 # ------------------------------------------------------------------ the figures note (the build's own 05a)
-def figures_markdown(ctx: dict) -> str:
+def figures_markdown(ctx: dict, e=str) -> str:
+    """The figures note. `e` escapes every piece of source or writer text: str for the Markdown file,
+    dossier.md for the copy pandoc turns into Word (a passage that is a table row would otherwise
+    be read as Markdown and lost)."""
     page, reg, aud, proj, cfg, J = ctx["page"], ctx["reg"], ctx["aud"], ctx["proj"], ctx["cfg"], ctx["J"]
     idx, exts = ctx["idx"], ctx["exts"]
     figs = closure(page_figures(page), reg)
-    L = [f"# {cfg['title']}: the figures", "",
-         f"Page `{cfg['slug']}`, revision {ctx['revision']}, for {aud['name']}. "
+    L = [f"# {e(cfg['title'])}: the figures", "",
+         f"Page `{cfg['slug']}`, revision {ctx['revision']}, for {e(aud['name'])}. "
          + ("An internal draft, not for distribution." if ctx["draft"] else f"Distribution: {cfg['distribution']}.")
-         + f" {ctx['writers']}", "",
+         + f" {e(ctx['writers'])}", "",
          "Every number on the page is listed below with the passage it comes from, found again in the saved source "
          "when this note was made, and with who has checked it. Fixity is not authenticity: a matching passage shows "
          "which words were read, not that they are right.", ""]
     open_ = {x: w for x, w in ctx["open"].items() if w}
     if open_ or ctx["voice_note"] or ctx["asset_notes"]:
         L += ["## Before this goes outside the team", ""]
-        L += [f"- **{x}**: {'; '.join(w)}." for x, w in open_.items()]
-        L += [f"- {n}" for n in ctx["voice_note"] + ctx["asset_notes"]] + [""]
+        L += [f"- {e(reason[0].upper() + reason[1:])} ({len(fids)}): {e(', '.join(fids))}." for reason, fids in open_groups(open_)]
+        L += [f"- {e(n)}" for n in ctx["voice_note"] + ctx["asset_notes"]] + [""]
     L += ["## Every number on the page", "", "| Figure | On the page | Class | Checked | Release | For these readers |",
           "|---|---|---|---|---|---|"]
     for x in figs:
         s = status_of(x, reg, J, aud["id"])
-        L.append(f"| {x} | {' / '.join(shown_forms(reg[x]))} | {s['class'] or '—'} | {s['check'] or 'not yet'} | "
+        L.append(f"| {e(x)} | {e(' / '.join(shown_forms(reg[x])))} | {s['class'] or '—'} | {s['check'] or 'not yet'} | "
                  f"{s['clearance'] or 'not recorded'} | {s['rel'] or 'not judged'} |")
     L.append("")
     for x in figs:
         f, s = reg[x], status_of(x, reg, J, aud["id"])
-        L += [f"### {f['label']} ({x})", "", f"**Value:** {f['value']}{' ' + f['unit'] if f.get('unit') else ''}."
-              + (f" **Shown as:** {' / '.join(shown_forms(f))}." if shown_forms(f) != [f["value"]] else ""), ""]
+        L += [f"### {e(f['label'])} ({e(x)})", "", f"**Value:** {e(f['value'])}{' ' + e(f['unit']) if f.get('unit') else ''}."
+              + (f" **Shown as:** {e(' / '.join(shown_forms(f)))}." if shown_forms(f) != [f["value"]] else ""), ""]
         if f.get("rounded"):
-            L += [f"The page shows it as {', '.join(f['rounded'])}, which is not how the source writes it: check the rounding.", ""]
+            L += [f"The page shows it as {e(', '.join(f['rounded']))}, which is not how the source writes it: check the rounding.", ""]
         if f.get("extraction_id"):
-            e = exts.get(f["extraction_id"]) or {}
+            ext = exts.get(f["extraction_id"]) or {}
             src = idx.get(f["source_id"]) or {}
-            pg = D.page_of(e)
-            L += [f"> {f['quote']}", ">", f"> — {src.get('title') or f['source_id']}" + (f", p. {pg}" if pg else "")
+            pg = D.page_of(ext)
+            L += [f"> {e(f['quote'])}", ">", f"> — {e(src.get('title') or f['source_id'])}" + (f", p. {pg}" if pg else "")
                   + f" ({f['source_id']}, passage {f['extraction_id']})", ""]
         for i, r in enumerate(f.get("readings") or [], 1):
             agree = {True: "agrees", False: "DISAGREES", None: "no tolerance set"}[r.get("agrees")]
-            L += [f"Reading {i}: {r['value']} ({agree}" + (f", tolerance {f['tolerance']}" if f.get("tolerance") is not None else "")
-                  + f"), from {(idx.get(r['source_id']) or {}).get('title') or r['source_id']}:", "", f"> {r['quote']}", ""]
+            L += [f"Reading {i}: {e(r['value'])} ({agree}" + (f", tolerance {f['tolerance']}" if f.get("tolerance") is not None else "")
+                  + f"), from {e((idx.get(r['source_id']) or {}).get('title') or r['source_id'])}:", "", f"> {e(r['quote'])}", ""]
         if f.get("derived"):
-            L += [f"Worked out from {', '.join(f['derived']['from'])}: {f['derived']['rule']}.", ""]
+            L += [f"Worked out from {e(', '.join(f['derived']['from']))}: {e(f['derived']['rule'])}.", ""]
         if f.get("thin"):
-            L += [f"**Thin:** {f['thin']}.", ""]
+            L += [f"**Thin:** {e(f['thin'])}.", ""]
         for book, what in ((BOOKS["class"][0], "Class"), (BOOKS["check"][0], "Checked"), (BOOKS["clearance"][0], "Release"),
                            (rel_slug(aud["id"]), "For these readers")):
             xs = J.get((x, book), [])
             if xs:
-                L += [f"- {what}: " + "; ".join(f"{a['code']} ({a['coder']}" + (f": {a['rationale']}" if a.get("rationale") else "") + ")"
+                L += [f"- {what}: " + "; ".join(f"{e(a['code'])} ({e(a['coder'])}" + (f": {e(a['rationale'])}" if a.get("rationale") else "") + ")"
                                                 for a in sorted(xs, key=lambda a: -KIND_RANK.get(a.get("kind"), 0)))]
         if s["disagree"]:
             L += [f"- Coders disagree on {', '.join(s['disagree'])}; the person's answer is the one used."]
         if f.get("note"):
-            L += [f"- Note: {f['note']}"]
+            L += [f"- Note: {e(f['note'])}"]
         L.append("")
     plain = page.get("plain_numbers") or []
     if plain:
-        L += ["## Numbers on the page that are not figures", ""] + [f"- {p['text']}: {p['why']}" for p in plain] + [""]
+        L += ["## Numbers on the page that are not figures", ""] + [f"- {e(p['text'])}: {e(p['why'])}" for p in plain] + [""]
     if ctx["changes"]:
         L += [f"## Wording changed since revision {ctx['revision'] - 1}", ""]
-        L += [f"- {c['where']}: {c['before'] or '(none)'} → {c['after'] or '(removed)'}" for c in ctx["changes"]] + [""]
+        L += [f"- {e(c['where'])}: {e(c['before'] or '(none)')} → {e(c['after'] or '(removed)')}" for c in ctx["changes"]] + [""]
     if page.get("limits"):
-        L += ["## Left off the page", ""] + [f"- {x}" for x in page["limits"]] + [""]
+        L += ["## Left off the page", ""] + [f"- {e(x)}" for x in page["limits"]] + [""]
     qs = list(page.get("questions") or [])
     for x in figs:
         s = status_of(x, reg, J, aud["id"])
@@ -1692,14 +1708,14 @@ def figures_markdown(ctx: dict) -> str:
         if reg[x].get("rounded"):
             qs.append(f"{x}: is it fair to show it as {', '.join(reg[x]['rounded'])}?")
     if qs:
-        L += ["## Questions for the engineers", ""] + [f"- [ ] {q}" for q in qs] + [""]
+        L += ["## Questions for the engineers", ""] + [f"- [ ] {e(q)}" for q in qs] + [""]
     used = sorted({reg[x][k] for x in figs for k in ("source_id",) if reg[x].get(k)}
                   | {r["source_id"] for x in figs for r in reg[x].get("readings") or []}
                   | ({ctx["voice"]["source_id"]} if ctx.get("voice") else set()))
     L += ["## Sources", ""]
     for sid in used:
         src = idx.get(sid) or {}
-        L.append(f"- {sid}: {src.get('title') or sid}" + (f" (SHA-256 {src['sha256'][:16]}…)" if src.get("sha256") else ""))
+        L.append(f"- {sid}: {e(src.get('title') or sid)}" + (f" (SHA-256 {src['sha256'][:16]}…)" if src.get("sha256") else ""))
     return "\n".join(L) + "\n"
 
 
@@ -1880,7 +1896,7 @@ def build(corpus: Path, slug: str, out: Path, *, draft: bool = False, pdf: bool 
         tmp = Path(tmpd)
         if docx:
             quotes = [ctx["reg"][x]["quote"] for x in ctx["figures"] if ctx["reg"][x].get("quote")]
-            words, missing = make_docx(md, quotes, tmp / f"{slug}-figures.docx", tmp, str(ctx["cfg"]["date"]))
+            words, missing = make_docx(figures_markdown(ctx, D.md), quotes, tmp / f"{slug}-figures.docx", tmp, str(ctx["cfg"]["date"]))
             if missing:
                 raise SystemExit("refusing to build: passages missing from the Word file:\n  " + "\n  ".join(repr(m[:90]) for m in missing[:8]))
             texts[f"{slug}-figures.docx"] = words
@@ -1941,8 +1957,7 @@ def cmd_check(corpus: Path, slug: str, draft: bool) -> int:
                                          ("figures", len(ctx["figures"])), ("passages found again", "all"),
                                          ("open for a final page", len(open_)), ("text problems", len(bad)),
                                          ("words to avoid", ", ".join(banned_in(ctx, html)) or "none")])
-    for x, w in open_.items():
-        print(f"  OPEN {x}: {'; '.join(w)}")
+    print_open(open_)
     for b in bad:
         print(f"  PROBLEM {b}")
     return 1 if bad else 0
@@ -2086,8 +2101,7 @@ def main() -> int:
                                       ("open for a final page", len(r["open"])),
                                       ("words to avoid found", ", ".join(r["banned_words"]) or "none"),
                                       ("out", Path(a.out).expanduser()), ("seconds", round(time.time() - t0, 1))])
-        for x, w in r["open"].items():
-            print(f"  OPEN {x}: {'; '.join(w)}")
+        print_open(r["open"])
         rc, nxt = 0, "look at the page and its figures note"
     else:
         rc, nxt = cmd_check(corpus, a.slug, a.draft), "build"
