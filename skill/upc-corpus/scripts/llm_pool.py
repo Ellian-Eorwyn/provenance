@@ -61,9 +61,11 @@ def is_relayed(headers, url: str) -> bool:
 
 
 def chat(url: str, system: str, user: str, max_tokens: int, model: str = "chat",
-         effort: str = "", temperature: float | None = 0, timeout: int = 900) -> str:
+         effort: str = "", temperature: float | None = 0, timeout: int = 900,
+         schema: dict | None = None) -> str:
     """One chat call. Raises Relayed for a relayed reply, TooLong when the reply hit
-    max_tokens, Unavailable when nothing answered."""
+    max_tokens, Unavailable when nothing answered. `schema` asks the server to hold
+    the answer to that JSON shape (as common.llm_chat does)."""
     if model in ("think", "code"):
         max_tokens += THINK_HEADROOM
     body: dict[str, Any] = {"model": model, "max_tokens": max_tokens,
@@ -73,6 +75,8 @@ def chat(url: str, system: str, user: str, max_tokens: int, model: str = "chat",
         body["temperature"] = temperature
     if effort:
         body["reasoning_effort"] = effort
+    if schema:
+        body["response_format"] = {"type": "json_schema", "json_schema": {"name": "result", "schema": schema}}
     request = urllib.request.Request(url, data=json.dumps(body).encode(),
                                      headers={"Content-Type": "application/json"})
     try:
