@@ -1,6 +1,6 @@
 ---
 name: upc-corpus
-description: Build, code, rate and publish UPC research corpora with local models — PDFs, Markdown bundles or spreadsheets in; quote-checked passages, codings, evidence ratings, overviews and a browsable site out, or a dossier for an audience and a project. Use when turning a folder of papers into a corpus, coding or screening it, answering a question from it, rating how strong its evidence is, writing overviews from it, or publishing it for a team.
+description: Build, code, rate and publish UPC research corpora with local models — PDFs, Markdown bundles or spreadsheets in; quote-checked passages, codings, evidence ratings, overviews and a browsable site out, an annotated list of the papers, or a dossier for an audience and a project. Use when turning a folder of papers into a corpus, coding or screening it, annotating each paper, answering a question from it, rating how strong its evidence is, writing overviews from it, or publishing it for a team.
 version: 1.1.0
 license: PolyForm-Noncommercial-1.0.0
 ---
@@ -53,6 +53,7 @@ the end.
 | Who codes the blind sheet | A person, or another model, before any model output exists | Never show the coder the model's ratings |
 | A dossier profile's contents and its never-publish phrases | The owner | Draft from their notes, with `basis`; the owner reads it before any build |
 | A dossier's words (entries, memo) | Their writer, named on every page | The owner reviews before it is shared |
+| The annotation fields (`fields.json`) and a full annotation run | The owner | Draft the fields from the research questions; run past the pilot only on the owner's word (Task 14) |
 
 Everything else (preflight, reports, `--plan` runs, building into staging, comparing) you
 may run without asking.
@@ -133,6 +134,10 @@ task, embeddings, or several chat servers in a `pool`) may run at once.
      PDF was saved twice under different names and one of the two records is wrong. Report
      both row ids.
    - "no DOI printed in the text" on many rows is normal.
+   - A PDF with a pdf-harvest record beside it (`<file>.acq.json`, whose sha256 is the
+     PDF's) gets it as its source's `retrieval`: where and how it was fetched. Its URL then
+     addresses the source. A record that describes other bytes is noted and not attached; a
+     row already in the corpus keeps its id.
 3. **Codebooks, with the owner.** Draft `<recipe folder>/codebooks.json` from the research
    questions (`references/codebook-authoring.md`), check it, and give it to the owner to
    edit:
@@ -184,6 +189,8 @@ task, embeddings, or several chat servers in a `pool`) may run at once.
     (the PDFs), `<Name>.zip` (the thing to send) and `<Name>-site/` (the folder version:
     better to host, useless to email). Tell the owner the paths, and once how the site
     browses: ticks inside one scheme widen the set, ticks across two schemes narrow it.
+    A PDF over 25 MiB (`--max-pdf-mib`) is left out of both bundles and not linked; its
+    paper's page says so, and they are listed in `<Name>-left-out.json`.
 12. **Online:** only when the owner asks. The `<Name>-site/` folder is a static site; put
     it behind a password if it carries the PDFs.
 
@@ -604,6 +611,60 @@ same as a Word file and a spreadsheet. The shapes and checks are in `references/
 10. **Online, only on the owner's go**, each time. Behind a password if it carries copies of
     papers.
 
+## Task 14: Annotate each paper, then list them all (Word, spreadsheet)
+
+An annotation is a few fields per paper, written by the model from the paper's opening and
+the passages already coded in it: codes from one of the corpus's codebooks with a one-line
+note, or a sentence or two, each listing the passages it rests on. The list is one row per
+paper (citation, DOI, its page on the site, its codes, its annotation) as a spreadsheet and
+a Word file. Run the coding pass first (Task 3, steps 4 and 5): a paper with no coded
+passages is annotated from its opening alone, and the plan counts them.
+
+1. **The fields, with the owner.** Write `<recipe folder>/fields.json`:
+   ```
+   [{"key": "setting", "label": "Setting", "kind": "code", "scheme": "<codebook slug>", "max_words": 25},
+    {"key": "findings", "label": "What it found", "kind": "text", "max_words": 60, "guide": "<what the field means>"}]
+   ```
+   `key` is a lower-case slug. A `code` field's `scheme` is a codebook slug in the corpus;
+   a single-label codebook gives one code, a multi-label one several. `guide` says what the
+   field means. The owner approves the fields before any full run.
+2. **Plan:**
+   ```
+   <python> -u <skill>/scripts/annotate.py --corpus <corpus> --fields <recipe folder>/fields.json --coder <ns>-annotate-<model>-v1 --context "<what the team is studying>" --plan
+   ```
+   Expect an `Annotation plan` table, then the prompt and the first paper's input.
+   - If it stops with `scheme '…' is not a codebook here`, fix the field's `scheme`.
+3. **Pilot on ten papers:** the same command with `--limit 10` in place of `--plan`. About
+   15 s a paper on a 27B model (every server in the pool works at once). Expect an
+   `Annotation result` table with `refused by upc 0`. Publish into staging (Task 3,
+   step 11) and read three papers' "Annotation" cards against the papers, with the owner.
+   - `dropped or cut` counts what the checks removed: `quote_not_found` (not in the paper),
+     `quote_unrenderable` (found only across a line break, which a card can't show),
+     `unknown_code`, `unknown_citation`, `quotation_marks`, `trimmed` (over `max_words`).
+     A few are normal. Many `unknown_code` mean a field's `guide` points at codes its
+     codebook lacks.
+4. **Full run, on the owner's go:** the same command without `--limit`, in the background.
+   A re-run does only the papers left. `--redo` writes them again (`--ids <alias,…>` for
+   some); a paper with the same inputs keeps one annotation.
+5. **Page numbers**, so the Word file gives them: `<python> <skill>/scripts/paginate.py --corpus <corpus>`.
+6. **The front matter:** `<recipe folder>/front.md`, in Markdown (methods, search strings,
+   a flow diagram as a picture beside the file, appendices). It may start with its own
+   `---` title block; otherwise `--title` (default: the corpus title) is used.
+7. **The list:**
+   ```
+   <python> -u <skill>/scripts/sources_table.py --corpus <corpus> --site-base <the site's URL> --front <recipe folder>/front.md --coders <scheme>=<coder>,… --xlsx <staging>/<Name>.xlsx --docx <staging>/<Name>.docx
+   ```
+   `--site-base` is where the folder site will be hosted: each row links
+   `<site-base>/sources/<slug>.html`, and the Word file links each cited passage there.
+   `--coders` says whose codes each paper-level scheme shows; a scheme left out gets a column
+   per coder, and the evidence schemes (grade, citation tier) come last. `--annotator
+   <coder>` picks whose annotations when there are several. Expect a `Sources table` table
+   with `local paths none`.
+   - If it prints `Refusing to keep the list`, nothing was kept. Fix what it names (Known
+     failures) and run it again.
+8. **Look at both:** the Word file (an entry is about a third of a page) and the
+   spreadsheet (filters on the header row). They go to people only on the owner's word.
+
 ## Known failures
 
 | What you see | What it means | What to do |
@@ -620,6 +681,11 @@ same as a Word file and a spreadsheet. The shapes and checks are in `references/
 | `dossier.py build`: `a never-publish phrase would appear` | A profile's phrase is in an entry, the memo or a source quotation | Reword the writer's text, or drop that item; never delete the phrase from the profile to get past it |
 | `dossier.py build`: `a local path would be published` | A writer's text or a caption names a file on this machine | Reword it |
 | `NOTE … passages have no page number` | `paginate.py` hasn't run | Run it (Task 3, step 10), then publish again |
+| `annotate.py`: `REFUSED …: … already exists from these inputs with a different output` | Another coder's annotation of that paper read the same passages (an annotation's id is its type and inputs) | `--redo` replaces it; or leave that paper to the first coder |
+| `sources_table.py`: `Refusing to keep the list: a local path in …` | The front matter (or an annotation) names a file on this machine | Reword it; nothing was kept |
+| `sources_table.py`: `… quotation differs from its passage` | An annotation's quotation no longer matches its stored passage | `annotate.py --redo --ids <alias>`, then the list again |
+| `sources_table.py`: `not in the Word file word for word` | pandoc changed a quotation's characters | Report it with the quotation; don't share that Word file |
+| A paper's page says its PDF `is over the … a file can be here` | `publish.py` left it out of the bundles: over `--max-pdf-mib` (25, the host's per-file limit) | Expected. They are listed in `<Name>-left-out.json`; readers use the DOI |
 | A wrong PDF was replaced but nothing changed | `ingest.py` remembers each row in `<corpus>/.upc/upc-corpus/ingest.json` | Delete that row's entry and `<corpus>/.upc/upc-corpus/text/<id>.txt` and `.info.json`, then re-run ingest, `screen.py` and `code_pass.py` (each does only the new paper) |
 | Import errors | The Python lacks `requirements.txt` | Use the venv |
 | Compare says `DIFFERENT` in `assets/` only | The renderer changed since the hosted build | Task 4, step 3 |
