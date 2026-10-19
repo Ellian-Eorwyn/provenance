@@ -5,8 +5,19 @@ Versioning is semantic (§00 Versioning policy).
 
 ## Unreleased — toolkit 1.1.0: dossiers
 
-**No schema or specification change.** Corpora, the CLI and the site are as in 1.15.1;
-the new objects use the `x-` extension point.
+**No schema or specification change.** Corpora and the site are as in 1.15.1; the CLI
+gains one option. The new objects use the `x-` extension point.
+
+### Fixed
+
+- **`upc anchor` on a shared representation.** When one document is saved as two sources
+  (two PDFs of one paper whose text is identical), their reading copies are one
+  representation (spec/08 rule 1.1, `representation_shared`). `anchor` attached every
+  passage to whichever source loaded last, so a generation written about the other copy
+  was refused for quoting another source. `--source <src-id>` now names the source the
+  passages belong to (a source that does not record the representation is refused), and
+  without it the result carries a `warning` naming every holder. `dossier.py` and
+  `code_pass.py` pass `--source`.
 
 ### Added
 
@@ -28,7 +39,7 @@ the new objects use the `x-` extension point.
   reused across dossiers. A project's lenses are what relevance is judged against.
 - `requirements.txt`: `pyyaml` for profiles written as YAML. pandoc and pdftoppm are
   optional, for the Word file and pictures.
-- Tests: `tests/test_dossier.py` (16, no model server).
+- Tests: `tests/test_dossier.py` (18, no model server), and five selftests for `anchor --source`.
 
 ## 1.15.1 — 2026-10-06
 

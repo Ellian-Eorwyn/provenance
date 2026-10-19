@@ -13,7 +13,7 @@
 //                    obsidian: [-o <dir> | --into <vault>] [--strip none|standard|aggressive]
 //                    [--frontmatter approved|extended] [--allow-rewrite-body] [--profile <f>]
 //                    [--filenames title|citation] [--image-names id|citation] [--force]
-//   upc anchor --corpus <dir> --rep <rep-id> [--set <id> [--hidden]] [--dry-run]  (JSONL candidates on stdin)
+//   upc anchor --corpus <dir> --rep <rep-id> [--source <src-id>] [--set <id> [--hidden]] [--dry-run]  (JSONL candidates on stdin)
 //   upc code --corpus <dir> --set <cds-id> [--dry-run]     (JSONL codings on stdin)
 //   upc codebook <dir> [<cbk-id>]
 //   upc mint [--batch] <src|rep|ext|gen|syn|cod|cbk>       (JSON object / JSONL on stdin)
@@ -1841,8 +1841,14 @@ function addSynthesisCmd(root, obj, opts = {}) {
 function anchorCmd(root, repId, candidates, opts = {}) {
   const loaded = U.loadCorpus(root);
   const model = buildModel(loaded);
-  const rep = model.repById.get(repId);
-  if (!rep) throw new Error(`no representation ${repId}`);
+  if (!model.repById.has(repId)) throw new Error(`no representation ${repId}`);
+  // A shared representation (spec/08 rule 1.1: the same bytes recorded by several
+  // sources) has one id and several holders. --source names the holder the passages
+  // belong to; without it the last-loaded holder is used and the result says so.
+  const holders = loaded.representations.filter((r) => r.obj.representation_id === repId);
+  const holderIds = [...new Set(holders.map((r) => r.sourceId))];
+  const rep = opts.source ? holders.find((r) => r.sourceId === opts.source) : model.repById.get(repId);
+  if (!rep) throw new Error(`source ${opts.source} does not record representation ${repId} (recorded by ${holderIds.join(", ")})`);
   if (!TEXTUAL(rep.obj.media_type)) throw new Error(`representation ${repId} is not textual (${rep.obj.media_type})`);
   if (!rep.contained || !fs.existsSync(rep.abs)) throw new Error(`representation ${repId} bytes unavailable`);
 
@@ -1961,7 +1967,10 @@ function anchorCmd(root, repId, candidates, opts = {}) {
 
   const tally = { anchored: 0, refound: 0, exists: 0, not_found: 0, ambiguous: 0, invalid: 0 };
   for (const r of results) tally[r.status] = (tally[r.status] || 0) + 1;
-  return { status: "ok", representation_ref: repId, source_id: sourceId, wrote: opts.dryRun ? 0 : minted.length, tally, results };
+  const shared = holderIds.length > 1 && !opts.source
+    ? { warning: `representation ${repId} is shared by ${holderIds.join(", ")}; passages were attached to ${sourceId}: pass --source to choose` }
+    : {};
+  return { status: "ok", representation_ref: repId, source_id: sourceId, ...shared, wrote: opts.dryRun ? 0 : minted.length, tally, results };
 }
 
 /**
@@ -2370,10 +2379,10 @@ async function main() {
       case "anchor": {
         const corpus = arg(rest, "--corpus");
         const repId = arg(rest, "--rep");
-        if (!corpus || !repId) { process.stderr.write("usage: upc anchor --corpus <dir> --rep <rep-id> [--set <id> [--hidden]] [--type <t>] [--query <q>] [--tool <t>] [--model <m>] [--normalize] [--dry-run] < candidates.jsonl\n"); process.exit(2); }
+        if (!corpus || !repId) { process.stderr.write("usage: upc anchor --corpus <dir> --rep <rep-id> [--source <src-id>] [--set <id> [--hidden]] [--type <t>] [--query <q>] [--tool <t>] [--model <m>] [--normalize] [--dry-run] < candidates.jsonl\n"); process.exit(2); }
         const cands = readJsonlText(fs.readFileSync(0, "utf8"));
         const out = anchorCmd(corpus, repId, cands, {
-          set: arg(rest, "--set"), type: arg(rest, "--type"), query: arg(rest, "--query"),
+          set: arg(rest, "--set"), type: arg(rest, "--type"), query: arg(rest, "--query"), source: arg(rest, "--source"),
           tool: arg(rest, "--tool"), model: arg(rest, "--model"), promptVersion: arg(rest, "--prompt-version"),
           normalize: rest.includes("--normalize"), hidden: rest.includes("--hidden"),
           dryRun: rest.includes("--dry-run"),

@@ -71,7 +71,7 @@ node scripts/upc.mjs mint <src|rep|ext|gen|syn|cod|cbk> [--batch] < object.json
 node scripts/upc.mjs add source --corpus <corpus-dir> [--batch] [--hardlink] < source.json
 node scripts/upc.mjs add generation --corpus <corpus-dir> [--output <file>] [--replace] < generation.json
 node scripts/upc.mjs add synthesis --corpus <corpus-dir> --output <file.md> < synthesis.json
-node scripts/upc.mjs anchor --corpus <corpus-dir> --rep <rep-id> [--normalize] [--set <id>] < candidates.jsonl
+node scripts/upc.mjs anchor --corpus <corpus-dir> --rep <rep-id> [--source <src-id>] [--normalize] [--set <id>] < candidates.jsonl
 node scripts/upc.mjs code --corpus <corpus-dir> --set <cds-id> [--coder-kind model|human] < codings.jsonl
 node scripts/upc.mjs codebook <corpus-dir> [<cbk-id>]
 node scripts/upc.mjs batch --corpus <corpus-dir> < commands.ndjson

@@ -220,7 +220,10 @@ def anchor_quotes(corpus: Path, info: dict, quotes: list[str | None], *, model: 
     todo = [i for i, q in enumerate(fixed) if q]
     if not todo:
         return out
-    args = ["anchor", "--corpus", str(corpus), "--rep", info["text_rep"], "--normalize", "--set", exs_id(corpus),
+    # --source: a reading copy shared by two sources (one paper saved twice) is one
+    # representation; the passages belong to the source this entry is about.
+    args = ["anchor", "--corpus", str(corpus), "--rep", info["text_rep"], "--source", info["source_id"],
+            "--normalize", "--set", exs_id(corpus),
             "--type", "evidence", "--tool", TOOL["tool"], "--model", model or "unknown", "--prompt-version", prompt]
     res = C.upc_jsonl(*args, *(["--dry-run"] if dry else []), records=[{"quote": fixed[i]} for i in todo])
     if not isinstance(res, dict) or "results" not in res:

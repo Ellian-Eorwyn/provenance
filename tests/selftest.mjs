@@ -1668,6 +1668,7 @@ ok("filename rejects reserved", !checkFilename("sources/con/x.md").ok);
   try { anchorCmd(dir, rep, [{ quote: "often lack training" }], { tool: "selftest", set: "exs-listed", hidden: true }); } catch { threw = true; }
   ok("1.15 hidden: a set of listed passages can't be made hidden", threw);
 
+
   // Codebooks: one topical, two in the evidence group.
   const stamp = { produced_by: { tool: "selftest", method: "import" }, created_at: "2026-10-05T00:00:00Z" };
   const mkCb = (slug, title, codes, ext) => {
@@ -2849,6 +2850,47 @@ ok("filename rejects reserved", !checkFilename("sources/con/x.md").ok);
 
   fs.rmSync(dir, { recursive: true, force: true });
 }
+
+  // Shared representations: one paper saved twice (two different PDFs, the same text).
+  // --source puts the passages on the source the caller means; without it the result warns.
+  {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "upc-shared-"));
+  const stage = fs.mkdtempSync(path.join(os.tmpdir(), "upc-shared-s-"));
+  fs.mkdirSync(path.join(dir, "provenance"), { recursive: true });
+  fs.writeFileSync(path.join(dir, "provenance", "events.jsonl"), "");
+  fs.writeFileSync(path.join(dir, "corpus.json"), JSON.stringify({
+    upc_spec_version: specVersion(), corpus_id: "cor-000000000116", title: "Fixture: shared representation",
+    sections: { sources: "sources/", provenance: "provenance/events.jsonl" },
+  }, null, 2));
+  const twinTxt = path.join(stage, "twin.txt");
+  fs.writeFileSync(twinTxt, "Gas rates rise as customers leave the system.\n");
+  const twinOf = (slug) => {
+    const orig = path.join(stage, slug + ".html");
+    fs.writeFileSync(orig, "<p>" + slug + "</p>");
+    return addSourceCmd(dir, [{ slug, title: "Gas rates", source_kind: "document",
+      bibliographic: { item_type: "report", title: "Gas rates", issued: { date_parts: [[2024]] } },
+      files: [{ path: orig, role: "original", media_type: "text/html", produced_by: "import" },
+              { path: twinTxt, role: "text", media_type: "text/plain", produced_by: "import" }] }], { tool: "selftest" }).results[0];
+  };
+  const tA = twinOf("gas-a"), tB = twinOf("gas-b");
+  const shRep = tA.representation_ids.find((r) => tB.representation_ids.includes(r));
+  ok("shared rep: two sources, one text representation", tA.source_id !== tB.source_id && !!shRep);
+  clearRepCache();
+  const mine = anchorCmd(dir, shRep, [{ quote: "customers leave" }], { tool: "selftest", source: tA.source_id, dryRun: true });
+  eq("shared rep: --source keeps the passage on the source named", mine.source_id, tA.source_id);
+  ok("shared rep: no warning when --source chooses", !mine.warning);
+  clearRepCache();
+  const theirs = anchorCmd(dir, shRep, [{ quote: "customers leave" }], { tool: "selftest", source: tB.source_id, dryRun: true });
+  eq("shared rep: --source can name the other copy", theirs.source_id, tB.source_id);
+  clearRepCache();
+  const unsaid = anchorCmd(dir, shRep, [{ quote: "customers leave" }], { tool: "selftest", dryRun: true });
+  ok("shared rep: without --source the result names both holders",
+     /shared by/.test(unsaid.warning || "") && unsaid.warning.includes(tA.source_id) && unsaid.warning.includes(tB.source_id));
+  clearRepCache();
+  let refused = "";
+  try { anchorCmd(dir, shRep, [{ quote: "customers leave" }], { tool: "selftest", source: "src-000000000000", dryRun: true }); } catch (e) { refused = String(e.message); }
+  ok("shared rep: --source must be a source that records it", /does not record representation/.test(refused));
+  }
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

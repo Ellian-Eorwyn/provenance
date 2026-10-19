@@ -330,6 +330,37 @@ class Dossier(unittest.TestCase):
         self.assertEqual(len(e["key_points"]), 1)
         self.assertEqual(e["read_chars"], e["total_chars"])  # a short document is read whole
 
+    def test_a_document_saved_twice_keeps_each_entry_on_its_own_copy(self):
+        # Two saves of one filing (different page bytes, the same reading copy) share a text
+        # representation. Each copy's entry must quote its own source, whichever loads last.
+        dest, _cfg = self.fresh("twin")
+        stage = self.root / "twin-stage"
+        stage.mkdir()
+        raw = stage / "twin.html"
+        raw.write_text(f"<html><body><!-- the agency's copy -->{FILING}</body></html>")
+        md = stage / "twin.md"
+        md.write_text(FILING)
+        prov = {"original_url": "https://agency.example/filing", "final_url": "https://agency.example/filing",
+                "http_status": 200, "content_type": "text/html", "fetched_at": "2026-10-19T17:00:00Z",
+                "fetch_status": "success", "fetch_method": "playwright", "extraction_method": "readability",
+                "sha256": hashlib.sha256(raw.read_bytes()).hexdigest()}
+        items = stage / "items.jsonl"
+        items.write_text(json.dumps({"key": "url:https://agency.example/filing", "kind": "web", "file": str(raw),
+                                     "reading_copy": str(md), "provenance": prov, "title": "Comments (agency copy)",
+                                     "asr": None}) + "\n")
+        subprocess.run([sys.executable, str(HERE / "add_acquired.py"), "--corpus", str(dest), "--items", str(items)],
+                       check=True, capture_output=True)
+        reps = C.corpus_reps(dest)
+        first, twin = reps["url:https://ex.org/filing"], reps["url:https://agency.example/filing"]
+        self.assertNotEqual(first["source_id"], twin["source_id"])
+        self.assertEqual(first["text_rep"], twin["text_rep"])
+        for key in ("url:https://ex.org/filing", "url:https://agency.example/filing"):
+            rep = D.add_entry(dest, {**ENTRY_B, "source": key}, writer="Claude (test)", replace=True)
+            self.assertEqual(rep["kept"]["key_points"], 1, key)
+        self.assertEqual(D.validate(dest).get("errors") or [], [])
+        by_source = {e["_source_id"] for e in D.entries(dest)}
+        self.assertTrue({first["source_id"], twin["source_id"]} <= by_source)
+
     def test_check_finds_every_quotation_again(self):
         self.assertEqual(D.cmd_check(self.corpus), 0)
 

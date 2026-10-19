@@ -326,7 +326,7 @@ def main() -> int:
 
         # The model proposes; the tool decides what is real.
         anchor_res = C.upc_jsonl(
-            "anchor", "--corpus", str(corpus), "--rep", info["text_rep"], "--normalize",
+            "anchor", "--corpus", str(corpus), "--rep", info["text_rep"], "--source", info["source_id"], "--normalize",
             "--set", exs, "--type", "passage", "--tool", "upc-corpus",
             "--model", args.model, "--prompt-version", args.prompt_version,
             *(["--query", args.query] if args.query else []),
