@@ -1,7 +1,7 @@
 ---
 name: upc-corpus
-description: Build, code, rate and publish UPC research corpora with local models — PDFs, Markdown bundles or spreadsheets in; quote-checked passages, codings, evidence ratings, overviews and a browsable site out, or a dossier for an audience and a project. Use when turning a folder of papers into a corpus, coding or screening it, answering a question from it, rating how strong its evidence is, writing overviews from it, or publishing it for a team.
-version: 1.1.0
+description: Build, code, rate and publish UPC research corpora with local models — PDFs, Markdown bundles or spreadsheets in; quote-checked passages, codings, evidence ratings, overviews and a browsable site out, or a dossier or a one-pager for an audience and a project. Use when turning a folder of papers into a corpus, coding or screening it, answering a question from it, rating how strong its evidence is, writing overviews from it, or publishing it for a team.
+version: 1.2.0
 license: PolyForm-Noncommercial-1.0.0
 ---
 
@@ -604,6 +604,68 @@ same as a Word file and a spreadsheet. The shapes and checks are in `references/
 10. **Online, only on the owner's go**, each time. Behind a password if it carries copies of
     papers.
 
+## Task 14: A one-pager for an audience
+
+A one-pager is one printable page for one reader (a CEO, a plant manager, state staff), from
+the same two profiles as a dossier: a headline in their terms, up to three numbers, how it
+works, where it stands and the ask. Every number on it is a **figure** whose passage is in the
+corpus, judged for that reader, checked by a person and found again at every build. The build
+also writes the **figures note**: every number, its passage, who checked it and what is open.
+The shapes and checks are in `references/one-pager.md`.
+
+**Who decides:** the model may propose relevance and a class (`code`) and draft the words
+(`write`). The owner sets relevance and class (`review --apply`). Only the named reviewer
+records a check, and only the person who may release a result records a clearance
+(`signoff`), each from their own reply saved as a source. A page leaves the team only on the
+owner's go.
+
+1. **Profiles** (Task 13, step 1), with the one-pager fields: for the audience, what they
+   decide, their objections, the numbers they think in and those to keep off their page, the
+   `one_pager` block (layout, ask, distribution); for the project, the brand, real images,
+   reviewers and `allow_numbers`.
+2. **The page's config:**
+   ```
+   <python> <skill>/scripts/onepager.py init --corpus <corpus> --slug <slug> --audience <audience.yaml> --project <project.yaml> --title "<title>" --show-writer-as "<writer>=<label>"
+   ```
+   Expect a `One-pager: config` table. One slug per page; the codebooks are made here.
+3. **Figures.** Write `figures.json` (shape in `references/one-pager.md`): each figure's
+   value, the passage that states it, copied from the saved text, and the forms the page may
+   print. A value read off a chart is anchored in a readings table saved as its own source.
+   ```
+   <python> <skill>/scripts/onepager.py figures add --corpus <corpus> --from <figures.json> --by "<who>" --plan
+   ```
+   Fix every `NOT FOUND`, then run it without `--plan`. `figures import --from-dossier` adds a
+   dossier's figures from the same corpus.
+4. **Relevance and class.** The model's first pass:
+   `<python> -u <skill>/scripts/onepager.py code --corpus <corpus> --slug <slug>`. Then the
+   owner's sheet:
+   ```
+   <python> <skill>/scripts/onepager.py review --corpus <corpus> --slug <slug> --out <sheet.xlsx>
+   <python> <skill>/scripts/onepager.py review --corpus <corpus> --slug <slug> --apply <sheet.xlsx> --coder <owner's handle>
+   ```
+   The owner edits only the class and relevance columns.
+5. **Checks and clearances**, as replies arrive. Save each reply as a source first, then:
+   ```
+   <python> <skill>/scripts/onepager.py signoff --corpus <corpus> --figure <id> --figure <id> --by <reviewer's handle> --check confirmed --ref <reply's source_id>
+   <python> <skill>/scripts/onepager.py signoff --corpus <corpus> --figure <id> --by <handle> --clearance cleared --note "<what it covers>"
+   ```
+6. **The words.** Either a writer drafts `page.json` and runs
+   `onepager.py add --corpus <corpus> --slug <slug> --from <page.json> --writer "<name>" --plan`,
+   then without `--plan`; or the model drafts it:
+   `<python> -u <skill>/scripts/onepager.py write --corpus <corpus> --slug <slug>`. Expect a
+   `Page` table; each `OPEN` line is a figure not yet fit for a final page.
+7. **Check:** `<python> <skill>/scripts/onepager.py check --corpus <corpus> --slug <slug> --draft`.
+8. **Build into staging:**
+   ```
+   <python> <skill>/scripts/onepager.py build --corpus <corpus> --slug <slug> --out <staging>/<slug> --draft --playwright-dir <a folder with node_modules/playwright>
+   ```
+   Drop `--draft` only when every figure is confirmed (and, for a partner or public page,
+   cleared). Needs `node` and an installed Playwright for the PDF (`--no-pdf` skips it) and
+   `pandoc` for the Word note (`--no-docx`).
+9. **Look at it:** the PDF, the page at phone width, and the figures note. The note's
+   questions go to the engineers.
+10. **Out of the team, only on the owner's go**, each time.
+
 ## Known failures
 
 | What you see | What it means | What to do |
@@ -619,6 +681,12 @@ same as a Word file and a spreadsheet. The shapes and checks are in `references/
 | `dossier.py`: `already exists from these inputs with a different output` | A rewritten entry uses the same passages as the stored one | Add `--replace` |
 | `dossier.py build`: `a never-publish phrase would appear` | A profile's phrase is in an entry, the memo or a source quotation | Reword the writer's text, or drop that item; never delete the phrase from the profile to get past it |
 | `dossier.py build`: `a local path would be published` | A writer's text or a caption names a file on this machine | Reword it |
+| `onepager.py figures add`: `its value … is not in its quote` | The passage doesn't state the figure | Copy the span that states the value; for a chart, anchor the readings table |
+| `onepager.py`: `the same passage as figure …` | Two figures on one span | Give each figure the span that states it |
+| `onepager.py add`: `… is not a figure on this page` | The words print a number that isn't a cited figure's value or form | Cite the figure, use one of its display forms, or add a `plain_numbers` entry with a reason; never spell the number out to get past it |
+| `onepager.py build`: `not confirmed by a reviewer` | No reviewer has checked that figure | Build `--draft` for now; ask the reviewer; record their reply with `signoff` |
+| `onepager.py build`: `it prints on 2 pages, not one` | The words are too long for one sheet | Shorten the blocks it names; never shrink the type |
+| `onepager.py build`: `figures changed since revision …` | A figure was replaced after the page was written | Add the page again |
 | `NOTE … passages have no page number` | `paginate.py` hasn't run | Run it (Task 3, step 10), then publish again |
 | A wrong PDF was replaced but nothing changed | `ingest.py` remembers each row in `<corpus>/.upc/upc-corpus/ingest.json` | Delete that row's entry and `<corpus>/.upc/upc-corpus/text/<id>.txt` and `.info.json`, then re-run ingest, `screen.py` and `code_pass.py` (each does only the new paper) |
 | Import errors | The Python lacks `requirements.txt` | Use the venv |
