@@ -1784,7 +1784,7 @@ function passageHtml(p, model, base, { showSource = true, context = true, compac
   const where = p.line_range ? `line ${p.line_range.start}` : "";
   const textHref = where
     ? `${base}sources/${encodeURIComponent(p.source_slug)}.html#text=${encodeURIComponent(p.id)}` : srcHref;
-  const pdfName = src && src.pdfRep ? path.basename(src.pdfRep.path) : "";
+  const pdfName = src && src.pdfRep && !src.pdfOff ? path.basename(src.pdfRep.path) : "";
   const pdfLink = originalLinkHtml(p.page,
     model.filesDir && pdfName ? `${base}${model.filesDir}/${encodeURIComponent(pdfName)}` : null,
     src && src.doi);
@@ -1959,7 +1959,7 @@ function sourcePage(model, s, textInfo) {
   const b = s.bibliographic || {};
   const bits = [s.authors, s.year ? String(s.year) : "", s.container, b.volume ? `vol. ${b.volume}` : "",
     b.page ? `pp. ${b.page}` : ""].filter(Boolean).join(" · ");
-  const pdfHref = model.filesDir && s.pdfRep
+  const pdfHref = model.filesDir && s.pdfRep && !s.pdfOff
     ? `${base}${model.filesDir}/${encodeURIComponent(path.basename(s.pdfRep.path))}` : null;
   const marks = s.passages.filter((p) => p.quote && p.line_range).sort((a, b2) => (a.line_range.start - b2.line_range.start));
   return page({
@@ -1979,7 +1979,8 @@ ${s.passages.length ? `<div class="evshow">${s.passages.map((p) => passageHtml(p
   : `<p class="muted">No passages have been coded from this paper yet.</p>`}
 
 <h2>The text this was checked against</h2>
-<p class="small muted">Extracted from the PDF${pdfHref ? ` — <a href="${pdfHref}">open the PDF</a>` : ""}.
+<p class="small muted">Extracted from the PDF${pdfHref ? ` — <a href="${pdfHref}">open the PDF</a>`
+  : model.filesDir && s.pdfOff ? ` — the PDF (${mib(s.pdfOff.bytes)}) is over the ${mib(s.pdfOff.max)} a file can be here, so it is not included` : ""}.
 Highlighted spans are the passages above.${textInfo && textInfo.omitted ? " The full text is too large to show here." : ""}</p>
 ${textInfo && textInfo.inline != null
   ? `<div class="reading" id="reading">${textInfo.inline}</div>`
@@ -2630,11 +2631,33 @@ export function readAbout(file) {
 
 // --- writer ---------------------------------------------------------------
 
+/** A PDF over `maxBytes` (a host's per-file limit) stays out of a bundle: it is
+ *  not copied and not linked, and its paper's page says why, so no link is dead.
+ *  Marks those sources (`pdfOff`) and returns [{source, file, bytes}]. */
+function leaveOutLarge(loaded, model, maxBytes) {
+  const out = [];
+  if (!(maxBytes > 0)) return out;
+  for (const s of model.sources) {
+    if (!s.pdfRep) continue;
+    const entry = (loaded.representations || []).find((r) => r.obj.representation_id === s.pdfRep.representation_id);
+    if (!entry || !entry.contained || !fs.existsSync(entry.abs)) continue;
+    const bytes = fs.statSync(entry.abs).size;
+    if (bytes > maxBytes) {
+      s.pdfOff = { bytes, max: maxBytes };
+      out.push({ source: s.slug, file: path.basename(s.pdfRep.path), bytes });
+    }
+  }
+  return out;
+}
+
+const mib = (n) => `${(n / 1048576).toFixed(n < 10485760 ? 1 : 0)} MB`;
+
 export function writeSite(root, opts = {}) {
   const loaded = U.loadCorpus(root);
   const model = buildSiteModel(loaded, opts);
   // Where the original PDFs travel with the site, if they do (--bundle).
   model.filesDir = opts.bundle ? "files" : null;
+  const leftOut = opts.bundle ? leaveOutLarge(loaded, model, opts.maxFileBytes) : [];
   const outDir = path.resolve(opts.out || path.join(root, "site"));
   const written = [];
   const w = (rel, text) => {
@@ -2729,7 +2752,7 @@ export function writeSite(root, opts = {}) {
   let copied = 0;
   if (opts.bundle) {
     for (const s of model.sources) {
-      for (const r of [s.pdfRep, s.textRep].filter(Boolean)) {
+      for (const r of [s.pdfOff ? null : s.pdfRep, s.textRep].filter(Boolean)) {
         const entry = (loaded.representations || []).find((x) => x.obj.representation_id === r.representation_id);
         if (!entry || !entry.contained || !fs.existsSync(entry.abs)) continue;
         const dest = path.join(outDir, "files", path.basename(r.path));
@@ -2746,6 +2769,7 @@ export function writeSite(root, opts = {}) {
     pages: written.filter((f) => f.endsWith(".html")).length,
     files: written.length,
     copied,
+    left_out: leftOut,
     home_summary: model.homeSummary ? model.homeSummary.synthesis_id : null,
     home_candidates: model.homeCandidates,
     counts: {
@@ -2976,7 +3000,8 @@ const CLIENT_ONE = String.raw`
     }
     return '<p class="small muted" id="crumb"><a href="#/sources">Sources</a></p><h1>'+E(s.t)+"</h1>"+
       '<p class="lede">'+E(bits)+(s.d?' · <a href="https://doi.org/'+encodeURIComponent(s.d)+'">doi:'+E(s.d)+"</a>":"")+
-        ((D.files&&s.p)?' · <a href="'+E(D.files+"/"+encodeURIComponent(s.p))+'" target="_blank" rel="noopener">open the PDF ↗</a>':"")+"</p>"+
+        ((D.files&&s.p)?' · <a href="'+E(D.files+"/"+encodeURIComponent(s.p))+'" target="_blank" rel="noopener">open the PDF ↗</a>':"")+
+        ((D.files&&s.po)?' · the PDF ('+E(s.po)+') is too large to include':"")+"</p>"+
       ((s.g.length||mine.some(function(p){return p.g.length;}))?'<p class="small muted">'+E(UPCB.codeNote())+"</p>":"")+
       (s.cb||"")+
       (sTop.length?'<div class="card"><div class="small muted">Judgements about this paper as a whole</div>'+
@@ -3240,7 +3265,8 @@ function browsePayload(model) {
     srcIndex.set(s.id, i);
     return {
       i, t: s.title, a: s.authors, y: s.year, d: s.doi, c: s.container, k: s.cite, sl: s.slug,
-      p: s.pdfRep ? path.basename(s.pdfRep.path) : "",
+      p: s.pdfRep && !s.pdfOff ? path.basename(s.pdfRep.path) : "",
+      ...(s.pdfOff ? { po: mib(s.pdfOff.bytes) } : {}),
       g: s.codings.map((c) => [c.codebook_slug, c.code != null ? c.code : c.value, c.coder, c.confidence, c.rationale || ""]),
     };
   });
@@ -3290,6 +3316,7 @@ function browsePayload(model) {
 export function writeSingleFile(root, opts = {}) {
   const loaded = U.loadCorpus(root);
   const model = buildSiteModel(loaded, opts);
+  const leftOut = opts.files ? leaveOutLarge(loaded, model, opts.maxFileBytes) : [];
   const withText = opts.withText !== false;
   const { srcIndex, sources, passages, codebooks, ck } = browsePayload(model);
   const oneLinks = {
@@ -3443,7 +3470,7 @@ ${textIslands}
     const dir = path.join(path.dirname(out), opts.files);
     fs.mkdirSync(dir, { recursive: true });
     for (const s of model.sources) {
-      if (!s.pdfRep) continue;
+      if (!s.pdfRep || s.pdfOff) continue;
       const entry = (loaded.representations || []).find((r) => r.obj.representation_id === s.pdfRep.representation_id);
       if (!entry || !entry.contained || !fs.existsSync(entry.abs)) continue;
       const dest = path.join(dir, path.basename(s.pdfRep.path));
@@ -3456,7 +3483,7 @@ ${textIslands}
 
   return {
     status: "ok", out, bytes: Buffer.byteLength(html, "utf8"),
-    pdfs_bundled: copied, files_dir: opts.files || null,
+    pdfs_bundled: copied, files_dir: opts.files || null, left_out: leftOut,
     home_summary: model.homeSummary ? model.homeSummary.synthesis_id : null,
     home_candidates: model.homeCandidates,
     counts: {
