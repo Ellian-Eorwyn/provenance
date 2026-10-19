@@ -88,6 +88,7 @@ PROJECT = {"id": "heat", "kind": "project", "name": "Low Heat", "full_name": "Lo
                                    "org_line": "Example University", "funder_line": "Example Agency",
                                    "award_line": "Award EX-0001", "result_class": "Laboratory batch-scale results"},
                          "reviewers": [{"handle": "lab-lead", "name": "The lab lead", "checks": "food science"}],
+                         "clearances": [{"what": "The unpublished trial results", "who": "The lab lead"}],
                          "allow_numbers": ["55 °C"]}}
 
 T, RA, RB, IV, RP = ("url:https://ex.org/trial", "url:https://ex.org/read-a", "url:https://ex.org/read-b",
@@ -368,6 +369,26 @@ class OnePager(unittest.TestCase):
         self.assertIn("900 kWh", self.html)  # bars are labelled with their figures' values
         self.assertIn("Heat used: 900 kWh, 600 kWh", self.html)
 
+    def test_a_reference_line_is_drawn_at_its_figure_and_its_label_is_checked(self):
+        ok = copy.deepcopy(PAGE)
+        ok["hero"]["chart"]["refs"] = [{"figure": "heat-after", "label": "600 kWh goal"}]
+        self.assertEqual(O.add_page(self.corpus, "proc", ok, writer="x", plan=True)["status"], "plan")
+        self.assertIn("600 kWh goal", O.chart_svg(ok["hero"]["chart"], self.reg))
+        for ref, want in (({"figure": "nowhere", "label": "goal"}, "refs[0]"),
+                          ({"figure": "heat-after", "label": "500 kWh goal"}, "500")):
+            bad = copy.deepcopy(PAGE)
+            bad["hero"]["chart"]["refs"] = [ref]
+            with self.assertRaises(SystemExit) as cm:
+                O.add_page(self.corpus, "proc", bad, writer="x", plan=True)
+            self.assertIn(want, str(cm.exception))
+
+    def test_the_numbers_behind_the_chart_are_a_table_in_about(self):
+        table = self.html[self.html.index('<table class="vals">'):]
+        table = table[:table.index("</table>")]
+        self.assertIn("<caption>Heat per batch</caption>", table)
+        self.assertIn('<th scope="row">Before</th><td>900 kWh</td>', table)
+        self.assertIn('<th scope="row">After</th><td>600 kWh</td>', table)
+
     def test_rewording_supersedes_and_lists_the_changes(self):
         c = self.fresh("reword")
         first = O.current_page(c, "proc")
@@ -414,6 +435,7 @@ class OnePager(unittest.TestCase):
         self.assertEqual(O.open_groups({"a": ["x", "y"], "b": ["x"]}), [("x", ["a", "b"]), ("y", ["a"])])
         self.assertIn("Not confirmed by a reviewer (not checked yet) (", self.note)
         self.assertIn("Before this goes outside the team", self.note)
+        self.assertIn("- The unpublished trial results: The lab lead", self.note)  # who may release it
         self.assertIn("> The treatment achieved a 5-log reduction at 55 °C in every run.", self.note)
         self.assertIn("Words by Hermes, using Claude (test).", self.note)
         self.assertNotIn("Claude", self.html)
@@ -513,6 +535,11 @@ class OnePager(unittest.TestCase):
         self.assertLess(tiles, how)
         self.assertLess(how, status)
 
+    def test_the_steps_are_also_a_list_for_a_phone(self):
+        flow = self.html[self.html.index('<div class="flow">'):]
+        self.assertIn('<ol class="steps">', flow[:flow.index("</div>")])
+        self.assertIn(".flow svg{display:none}", self.html)  # swapped in the narrow-screen rules, back in print
+
     def test_a_profile_that_breaks_the_overlay_fails_clearly(self):
         bad = {**AUD_B, "one_pager": {"layout": "glossy"}}
         p = self.root / "aud-bad.json"
@@ -578,6 +605,15 @@ class Numbers(unittest.TestCase):
         self.assertEqual(O.number_of("5-log"), 5.0)
         self.assertAlmostEqual(O.number_of("⅓ less"), 1 / 3)
         self.assertIsNone(O.number_of("a week"))
+
+    def test_a_number_keeps_its_unit_and_a_range_stays_whole(self):
+        nb = "\u00a0"
+        self.assertEqual(O.keep_units("Heat to 55 °C for 1 to 2 minutes, 28 days, CO2 to 2026"),
+                         f"Heat to 55{nb}°C for 1{nb}to{nb}2{nb}minutes, 28{nb}days, CO2 to 2026")
+        self.assertEqual(O.keep_units({"a": ["7 days"], "n": 3}), {"a": [f"7{nb}days"], "n": 3})
+        self.assertEqual(O.keep_units("a 5-log kill, heat-treated"), "a 5-\u2060log kill, heat-treated")
+        self.assertEqual(O._wrap(O.keep_units("Heat to 55 °C for 1 to 2 minutes"), 21),
+                         [f"Heat to 55{nb}°C for", f"1{nb}to{nb}2{nb}minutes"])
 
     def test_pdf_dates_are_replaced_at_the_same_length(self):
         raw = b"<< /CreationDate (D:20261019123456+00'00') /ModDate (D:20261019123456+00'00') >>"

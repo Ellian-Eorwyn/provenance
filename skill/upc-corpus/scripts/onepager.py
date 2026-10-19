@@ -68,6 +68,7 @@ import sys
 import tempfile
 import time
 import zipfile
+from html import unescape
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
@@ -986,6 +987,7 @@ def page_figures(page: dict) -> list[str]:
         ch = (page.get(blk) or {}).get("chart")
         for s in (ch or {}).get("series") or []:
             ids += [p for p in s.get("points") or [] if p]
+        ids += [r.get("figure") for r in (ch or {}).get("refs") or []]
     ids += page.get("figures") or []
     return list(dict.fromkeys(x for x in ids if x))
 
@@ -1013,6 +1015,7 @@ def page_texts(page: dict) -> list[tuple[str, str]]:
         ch = b.get("chart") or {}
         out += [(f"{blk}.chart.{k}", ch.get(k)) for k in ("title", "sub", "note")]
         out += [(f"{blk}.chart.series[{i}].label", s.get("label")) for i, s in enumerate(ch.get("series") or [])]
+        out += [(f"{blk}.chart.refs[{i}].label", r.get("label")) for i, r in enumerate(ch.get("refs") or [])]
     out += [(f"about.items[{i}]", x) for i, x in enumerate((page.get("about") or {}).get("items") or [])]
     return [(w, str(t)) for w, t in out if t]
 
@@ -1053,6 +1056,9 @@ def check_shape(page: dict, reg: dict, proj: dict) -> list[str]:
                         errs.append(f"{blk}.chart.series[{i}]: figure {p} has no number to plot")
             if not ch.get("series"):
                 errs.append(f"{blk}.chart.series: at least one")
+            for i, r in enumerate(ch.get("refs") or []):
+                if not isinstance(r, dict) or r.get("figure") not in reg or number_of(reg[r["figure"]]["value"]) is None:
+                    errs.append(f"{blk}.chart.refs[{i}]: a figure in the register, with a number to draw the line at")
         if b.get("image") and b["image"] not in {x["id"] for x in opt(proj).get("assets") or []}:
             errs.append(f"{blk}.image: {b['image']!r} is not an asset in the project profile")
     if (page.get("how") or {}).get("image") and page["how"]["image"] not in {x["id"] for x in opt(proj).get("assets") or []}:
@@ -1416,14 +1422,18 @@ def _ticks(ch: dict, vals: list[float]) -> tuple[float, float, list[tuple[float,
     return lo, hi, ticks
 
 
-def _legend(series: list[dict], W: int) -> tuple[list[str], int]:
+def _legend(series: list[dict], W: int, refs: list[dict] = ()) -> tuple[list[str], int]:
+    """A key for each series, then a dashed key for each reference line (a target or a limit)."""
     out, x, y = [], 0, 14
-    for s in series:
-        w = 22 + len(str(s.get("label", ""))) * 6.6 + 16
+    for s in list(series) + [{**r, "_ref": True} for r in refs]:
+        sw = 24 if s.get("_ref") else 12
+        w = sw + 10 + len(str(s.get("label", ""))) * 6.6 + 16
         if x and x + w > W:
             x, y = 0, y + 18
-        out.append(f'<rect x="{x:.0f}" y="{y - 9}" width="12" height="12" rx="2" fill="{TONE.get(s.get("tone"), TONE["cool"])}"/>'
-                   f'<text x="{x + 18:.0f}" y="{y + 1}" class="lab">{esc(s.get("label", ""))}</text>')
+        out.append((f'<line x1="{x:.0f}" x2="{x + sw:.0f}" y1="{y - 3}" y2="{y - 3}" stroke="var(--ink-2)" stroke-width="1.5" stroke-dasharray="5 3"/>'
+                    if s.get("_ref") else
+                    f'<rect x="{x:.0f}" y="{y - 9}" width="12" height="12" rx="2" fill="{TONE.get(s.get("tone"), TONE["cool"])}"/>')
+                   + f'<text x="{x + sw + 6:.0f}" y="{y + 1}" class="lab">{esc(s.get("label", ""))}</text>')
         x += w
     return out, y + 14
 
@@ -1436,9 +1446,9 @@ def chart_svg(ch: dict, reg: dict) -> str:
     vals = [[number_of(reg[p]["value"]) if p else None for p in s.get("points") or []] for s in series]
     flat = [v for vs in vals for v in vs if v is not None]
     lo, hi, ticks = _ticks(ch, flat)
-    leg, top = _legend(series, W)
-    m = {"l": 36, "r": 8, "t": top + 10, "b": 36}
-    ph = 150
+    leg, top = _legend(series, W, ch.get("refs") or [])
+    m = {"l": max(30, 10 + 7 * max([len(str(lab)) for _, lab in ticks] or [1])), "r": 8, "t": top + 10, "b": 34}
+    ph = 132
     H = m["t"] + ph + m["b"]
     pw = W - m["l"] - m["r"]
 
@@ -1449,10 +1459,14 @@ def chart_svg(ch: dict, reg: dict) -> str:
     for v, lab in ticks:
         g.append(f'<line x1="{m["l"]}" x2="{W - m["r"]}" y1="{Y(v):.1f}" y2="{Y(v):.1f}" stroke="var(--rule)" stroke-width="1"/>'
                  f'<text x="{m["l"] - 6}" y="{Y(v) + 4:.1f}" text-anchor="end">{esc(lab)}</text>')
+    for r in ch.get("refs") or []:  # a target or a limit, drawn at its own figure's value
+        y = Y(number_of(reg[r["figure"]]["value"]))
+        g.append(f'<line x1="{m["l"]}" x2="{W - m["r"]}" y1="{y:.1f}" y2="{y:.1f}" stroke="var(--ink-2)" stroke-width="1.5" '
+                 'stroke-dasharray="5 3"/>')
     if ch.get("type") == "bars":
         groups = ch.get("groups") or []
         gw = pw / max(1, len(groups))
-        bw = min(30.0, gw * 0.78 / max(1, len(series)))
+        bw = min(40.0, gw * 0.8 / max(1, len(series)))  # wide enough for a label like "≥ 5.05"
         for gi, name in enumerate(groups):
             x0 = m["l"] + gi * gw + (gw - bw * len(series)) / 2
             for si, s in enumerate(series):
@@ -1481,13 +1495,49 @@ def chart_svg(ch: dict, reg: dict) -> str:
                      f'fill="none" stroke="{col}" stroke-width="{3 if s.get("tone") == "cool" else 2.2}" stroke-linejoin="round"/>')
             g += [f'<circle cx="{x:.1f}" cy="{y:.1f}" r="3.6" fill="{col}" stroke="var(--sheet)" stroke-width="1.5"/>' for x, y in pts]
     desc = "; ".join(f"{s.get('label')}: " + ", ".join(reg[p]["value"] for p in s.get("points") or [] if p) for s in series)
+    desc += "".join(f"; {r.get('label')}: {reg[r['figure']]['value']}" for r in ch.get("refs") or [])
     return (f'<svg viewBox="0 0 {W} {H}" role="img" aria-label="{esc((ch.get("title") or "Chart") + ". " + desc)}">'
             + "".join(leg) + "".join(g) + "</svg>")
 
 
+# A number and its unit stay on one line, on screen and on paper ("55 °C", "28 days"), and so does a
+# range ("1 to 2").
+UNIT_GAP = re.compile(r"(\d) +(°[CF]?|%|days?\b|weeks?\b|minutes?\b|min\b|hours?\b|ppm\b|mL\b|log\b|kWh\b|MMBtu\b|therms?\b)")
+RANGE_GAP = re.compile(r"\b(\d[\d.,]*) (to|or|–) (?=\d)")  # \b: not the 2 of CO2
+NUM_HYPHEN = re.compile(r"(?<=\d)-(?=[A-Za-z])")  # "5-log": a word joiner after the hyphen keeps it whole
+
+
+def keep_units(v):
+    """The page's words with a no-break space between each number and its unit, through lists and dicts."""
+    if isinstance(v, str):
+        return NUM_HYPHEN.sub("-\u2060", UNIT_GAP.sub("\\1\u00a0\\2", RANGE_GAP.sub("\\1\u00a0\\2\u00a0", v)))
+    if isinstance(v, list):
+        return [keep_units(x) for x in v]
+    if isinstance(v, dict):
+        return {k: keep_units(x) for k, x in v.items()}
+    return v
+
+
+def chart_table(ch: dict, reg: dict) -> str:
+    """The values a chart plots, as a table: each one its figure's own value, with the unit they share."""
+    series = ch.get("series") or []
+    cats = (ch.get("groups") if ch.get("type") == "bars" else ch.get("x")) or []
+    units = {reg[p].get("unit") or "" for s in series for p in s.get("points") or [] if p}
+    cap = (ch.get("title") or "The chart") + (f", {units.pop()}" if len(units) == 1 and "" not in units else "")
+    head = "<th scope=\"col\"></th>" + "".join(f'<th scope="col">{esc(s.get("label"))}</th>' for s in series)
+    def cell(s, i):
+        pts = s.get("points") or []
+        return esc(reg[pts[i]]["value"]) if i < len(pts) and pts[i] else ""
+    rows = "".join(f'<tr><th scope="row">{esc(c)}</th>' + "".join(f"<td>{cell(s, i)}</td>" for s in series) + "</tr>"
+                   for i, c in enumerate(cats))
+    return f'<div class="vals-wrap"><table class="vals"><caption>{esc(cap)}</caption><tr>{head}</tr>{rows}</table></div>'
+
+
 def _wrap(text: str, width: int) -> list[str]:
     out, cur = [], ""
-    for w in str(text or "").split():
+    for w in str(text or "").split(" "):  # not split(): that would break at a no-break space too
+        if not w:
+            continue
         if cur and len(cur) + 1 + len(w) > width:
             out.append(cur)
             cur = w
@@ -1500,18 +1550,18 @@ def flow_svg(steps: list[dict]) -> str:
     """The steps as a simple process flow: numbered boxes, left to right, with arrows between."""
     n, W, gap = len(steps), 720, 28
     bw = (W - gap * (n - 1)) / n
-    tl = [_wrap(s.get("title"), int((bw - 52) / 8.4)) for s in steps]
-    dl = [_wrap(s.get("text"), int((bw - 20) / 7.1)) for s in steps]
-    H = 22 + 19 * max(len(t) for t in tl) + 17 * max(len(d) for d in dl) + 18
+    tl = [_wrap(s.get("title"), int((bw - 50) / 7.9)) for s in steps]
+    dl = [_wrap(s.get("text"), int((bw - 20) / 6.6)) for s in steps]
+    H = 20 + 17 * max(len(t) for t in tl) + 15.5 * max(len(d) for d in dl) + 13
     g = []
     for i, s in enumerate(steps):
         x = i * (bw + gap)
-        g.append(f'<rect x="{x:.1f}" y="1" width="{bw:.1f}" height="{H - 2}" rx="6" fill="var(--tint-2)" stroke="var(--rule)"/>'
-                 f'<circle cx="{x + 22:.1f}" cy="24" r="13" fill="var(--brand)"/>'
-                 f'<text x="{x + 22:.1f}" y="29" text-anchor="middle" class="n">{i + 1}</text>')
-        g += [f'<text x="{x + 44:.1f}" y="{29 + 19 * j}" class="t">{esc(line)}</text>' for j, line in enumerate(tl[i])]
-        y0 = 29 + 19 * len(tl[i]) + 6
-        g += [f'<text x="{x + 12:.1f}" y="{y0 + 17 * j}" class="d">{esc(line)}</text>' for j, line in enumerate(dl[i])]
+        g.append(f'<rect x="{x:.1f}" y="1" width="{bw:.1f}" height="{H - 2:.1f}" rx="6" fill="var(--tint-2)" stroke="var(--rule)"/>'
+                 f'<circle cx="{x + 21:.1f}" cy="21" r="12" fill="var(--brand)"/>'
+                 f'<text x="{x + 21:.1f}" y="26" text-anchor="middle" class="n">{i + 1}</text>')
+        g += [f'<text x="{x + 42:.1f}" y="{26 + 17 * j}" class="t">{esc(line)}</text>' for j, line in enumerate(tl[i])]
+        y0 = 26 + 17 * len(tl[i]) + 4
+        g += [f'<text x="{x + 12:.1f}" y="{y0 + 15.5 * j:.1f}" class="d">{esc(line)}</text>' for j, line in enumerate(dl[i])]
         if i < n - 1:
             ax = x + bw + 5
             g.append(f'<path d="M{ax:.1f},{H / 2 - 9:.1f} L{ax + gap - 10:.1f},{H / 2:.1f} L{ax:.1f},{H / 2 + 9:.1f} Z" fill="var(--accent)"/>')
@@ -1536,7 +1586,7 @@ def asset_path(cfg: dict, a: dict) -> Path:
 
 
 def page_html(ctx: dict) -> str:
-    page, reg, aud, proj, cfg = ctx["page"], ctx["reg"], ctx["aud"], ctx["proj"], ctx["cfg"]
+    page, reg, aud, proj, cfg = keep_units(ctx["page"]), ctx["reg"], ctx["aud"], ctx["proj"], ctx["cfg"]
     brand, assets = opt(proj).get("brand") or {}, ctx["assets"]
     pal = brand.get("palette") or {}
     css = ((ASSETS / "page.css").read_text(encoding="utf-8").replace("__BRAND__", pal.get("brand", "#022851"))
@@ -1580,7 +1630,9 @@ def page_html(ctx: dict) -> str:
     if how.get("steps"):
         blocks["how"] = (f'<section class="how pad" data-block="how it works"><p class="kicker">How it works</p>'
                          + (f'<h2>{esc(how["title"])}</h2>' if how.get("title") else "")
-                         + f'<div class="flow">{flow_svg(how["steps"])}</div>'
+                         + f'<div class="flow">{flow_svg(how["steps"])}<ol class="steps">'
+                         + "".join(f'<li><strong>{esc(s.get("title"))}</strong> {esc(s.get("text"))}</li>' for s in how["steps"])
+                         + "</ol></div>"
                          + (f'<figure class="how-img">{img(how["image"])}</figure>' if how.get("image") else "") + "</section>")
     st = page.get("status") or {}
     if any(st.get(k) for k in ("shown", "underway", "next")):
@@ -1598,11 +1650,12 @@ def page_html(ctx: dict) -> str:
         blocks["cta"] = (f'<section class="cta-wrap pad" data-block="the ask"><p class="cta"><strong>{esc(cta["ask"])}</strong>'
                          + (f'<span>{esc(cta["detail"])}</span>' if cta.get("detail") else "") + "</p></section>")
     about = page.get("about") or {}
-    if about.get("items") or about.get("chart"):
+    hero_ch = (page.get("hero") or {}).get("chart")
+    if about.get("items") or about.get("chart") or hero_ch:
         blocks["about"] = (f'<section class="data pad" data-block="about the data"><details><summary>'
                            f'{esc(about.get("title") or "About the data")} <span>{esc(about.get("sub") or "Methods and sources")}</span>'
                            f'</summary>{visual(about)}<ul class="method">' + "".join(f"<li>{esc(x)}</li>" for x in about.get("items") or [])
-                           + "</ul></details></section>")
+                           + "</ul>" + (chart_table(hero_ch, reg) if hero_ch else "") + "</details></section>")
     foot = " · ".join(x for x in (brand.get("footer"), brand.get("award_line"), brand.get("result_class")) if x)
     blocks["footer"] = (f'<footer class="pad" data-block="footer"><p class="proj">{esc(proj.get("full_name") or proj["name"])}</p>'
                         + (f"<p>{esc(foot)}</p>" if foot else "") + "</footer>")
@@ -1650,6 +1703,10 @@ def figures_markdown(ctx: dict, e=str) -> str:
         L += ["## Before this goes outside the team", ""]
         L += [f"- {e(reason[0].upper() + reason[1:])} ({len(fids)}): {e(', '.join(fids))}." for reason, fids in open_groups(open_)]
         L += [f"- {e(n)}" for n in ctx["voice_note"] + ctx["asset_notes"]] + [""]
+        who = [c for c in opt(proj).get("clearances") or [] if isinstance(c, dict) and c.get("what")]
+        if who:
+            L += ["Who may release what (the project profile):", ""]
+            L += [f"- {e(c['what'])}: {e(c.get('who') or 'not named')}" for c in who] + [""]
     L += ["## Every number on the page", "", "| Figure | On the page | Class | Checked | Release | For these readers |",
           "|---|---|---|---|---|---|"]
     for x in figs:
@@ -1874,7 +1931,7 @@ def text_checks(ctx: dict, texts: dict[str, str], corpus: Path) -> list[str]:
 
 
 def banned_in(ctx: dict, html: str) -> list[str]:
-    seen = re.sub(r"<[^>]+>", " ", re.sub(r"(?s)<(style|script)\b.*?</\1>", " ", html)).lower()
+    seen = unescape(re.sub(r"<[^>]+>", " ", re.sub(r"(?s)<(style|script)\b.*?</\1>", " ", html))).replace("\u00a0", " ").lower()
     return [w for w in opt(ctx["aud"]).get("banned_words") or [] if re.search(r"\b" + re.escape(w.lower()) + r"\b", seen)]
 
 

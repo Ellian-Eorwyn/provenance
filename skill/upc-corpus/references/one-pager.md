@@ -127,7 +127,8 @@ Four kinds of answer, each a closed, single-label codebook made on first use:
 | an image not `may_publish` | listed | yes | yes |
 
 A draft (`build --draft`) is stamped "Internal draft, not for distribution" (or the project's
-`brand.draft_stamp`), as is any internal page, and its figures note opens with what is still open.
+`brand.draft_stamp`), as is any internal page, and its figures note opens with what is still open
+and, from the project's `clearances`, who may release what.
 
 ## A page
 
@@ -156,10 +157,20 @@ the page's audience, as an enum it cannot leave.
 ```
 
 - One to three **tiles**; a tile's `big` must be one of its own figure's forms.
-- Two to four **steps**, drawn as a numbered process flow.
+- Two to four **steps**, drawn as a numbered process flow (on a phone, a numbered list, since the
+  drawing would shrink its words too small to read).
 - **Charts** (`bars` with `groups`, or `lines` with `x`) plot figures only: every point is a
   figure id, drawn at its value and labelled with it. Axis ticks are the only numbers the chart
-  adds.
+  adds; on a log scale, label the ticks in the reader's units (`[2, "100"]`), not the logs.
+- A chart's **`refs`** (`[{"figure": "fda-5log", "label": "5-log target"}]`) draw a dashed line
+  at a figure's value, a target or a limit, keyed in the legend. The figure counts as cited and
+  the label is checked like the page's other words.
+- "About the data" ends with **the numbers behind the hero chart**, a table of the plotted
+  figures' own values (their unit in the caption when they share one), so a reader can read
+  exact values the chart only shows as shapes.
+- On the page, a number keeps its unit on one line ("55 °C", "28 days"), and so does a range
+  ("1 to 2") and a "5-log": the build adds no-break spaces and a word joiner, and the checks
+  read them as plain spaces.
 - **The number check:** every number in the page's words must be a value or display form of a
   figure the page cites, one of the project's `allow_numbers`, or a `plain_numbers` entry with a
   reason (listed in the note). Years (1900–2099) pass. A number inside a word (CO2, an award
@@ -190,7 +201,8 @@ wrote; a rebuild replaces only the files the last build made. It refuses, in thi
 `banned_words` only warns. The layout sets the order of the blocks: executive (headline, numbers,
 voice, how it works, the ask, where it stands), technical (headline, numbers, how it works, where
 it stands, the ask, voice), policy (headline, numbers, where it stands, the ask, how it works,
-voice). "About the data" shows on screen only.
+voice). "About the data" shows on screen only. On paper the type is small but not tiny: body
+text is 11.5 px (8.6 pt) or more, and only source lines and the footer go below it.
 
 An unchanged page rebuilds to the same bytes: the font is embedded, the PDF's dates are the
 page's date, and the Word file's parts carry it too.

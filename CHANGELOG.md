@@ -45,6 +45,9 @@ use the `x-` extension point.
     a number that is not one of its figures, a never-publish phrase, a local path, a voice
     quotation without recorded consent, or a PDF longer than one page. `--draft` builds
     anyway, stamped, and lists what is open. An unchanged page rebuilds to the same bytes.
+  - Charts plot figures only, with an optional dashed line at a figure's value (a target);
+    the numbers behind the hero chart are a table in "About the data". Steps are a drawn
+    flow, and a numbered list on a phone.
 - `references/profiles/one-pager.schema.json`: the optional fields a one-pager reads from
   the dossier profiles (what readers decide, their objections and numbers, the layout, the
   ask, how far the page travels; the project's brand, images, reviewers and own numbers).
