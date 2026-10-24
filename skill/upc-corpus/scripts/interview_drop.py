@@ -24,8 +24,9 @@ names), the site rebuilt and published. A folder is known by the sha256 of its r
 and its intake, so adding a missing intake later (the circle, say) brings the folder back
 round and the site up to date; dropping the same recording twice does nothing.
 
-A failure is retried on the next passes, three in all, then reported once. Passes never
-overlap (a lock), and a pass starts no new interview after 25 minutes.
+A failure is retried on the next passes, three in all, then reported once. A site that
+fails to build or publish is said so in the message and tried again on every pass until it
+works. Passes never overlap (a lock), and a pass starts no new interview after 25 minutes.
 """
 
 from __future__ import annotations
@@ -35,6 +36,7 @@ import fcntl
 import hashlib
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -102,7 +104,11 @@ def publish(corpus: Path, s: dict) -> str | None:
     site = s.get("site") or {}
     out = Path(os.path.expanduser(site.get("out") or "site"))
     out = out if out.is_absolute() else corpus / out
-    C.upc("export", str(corpus), "--format", "site", "-o", str(out))
+    try:
+        C.upc("export", str(corpus), "--format", "site", "-o", str(out))
+    except C.Unavailable as e:
+        detail = re.search(r'"detail":\s*"([^"]*)"', str(e))
+        return f"(publishing failed: the site didn't build: {detail.group(1) if detail else str(e)[-160:]})"
     url = None
     for cmd in site.get("publish") or []:
         code, text = step([str(x).replace("{out}", str(out)) for x in cmd])
@@ -191,8 +197,14 @@ def _pass(corpus: Path, s: dict) -> list[str]:
         C.save_json(state_file(corpus), seen)
         changed = True
         out.append(("", T.work_root(corpus) / slug, coded))
-    if changed:
+    # A site that failed to build or publish is tried again on every pass until it works.
+    if changed or seen.get("_publish_failed"):
         url = publish(corpus, s)
+        failed = bool(url and url.startswith("(publishing failed"))
+        if failed:
+            seen["_publish_failed"] = True
+        elif seen.pop("_publish_failed", None) and not changed:
+            out.append(f"The interviews site is up to date again{f': {url}' if url else ''}.")
         out = [message(x[1], x[2], url) if isinstance(x, tuple) else x for x in out]
     C.save_json(state_file(corpus), seen)
     return out

@@ -238,7 +238,7 @@ export function answersByQuestion(model) {
     if (p.type !== "quote" || p.status !== "active") continue;
     for (const code of qCodes(p)) {
       const list = out.get(code) || [];
-      if (list.some((x) => within(p, x.answer))) continue;
+      if (list.some((x) => x.answer && within(p, x.answer))) continue;   // a highlight of that answer
       const host = answers.find((a) => within(p, a));
       if (!out.has(code)) out.set(code, []);
       out.get(code).push({ s: model.sourceById.get(p.source_id), answer: null, also: p,

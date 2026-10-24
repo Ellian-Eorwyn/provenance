@@ -17,7 +17,7 @@ import {
   mintCbkId, mintCodId, codebookRevisionDigest, mintRepId, canonicalUrl as _cu,
   normalizeForRefind, refindSpan, timestampProblem, TIMINGS_MEDIA_TYPE,
 } from "../skill/universal-provenance/scripts/upc_common.mjs";
-import { speech, clock, paraTimes, namesOf } from "../skill/universal-provenance/scripts/interviews.mjs";
+import { speech, clock, paraTimes, namesOf, answersByQuestion } from "../skill/universal-provenance/scripts/interviews.mjs";
 import { buildRoCrateGraph, fragmentForLocator, selectorsForLocator, buildAnnotationTargets } from "../skill/universal-provenance/scripts/ro-crate.mjs";
 import { buildModel as buildBrowserModel } from "../skill/universal-provenance/scripts/build-index.mjs";
 import { buildProvGraph } from "../skill/universal-provenance/scripts/prov.mjs";
@@ -2928,6 +2928,17 @@ ok("filename rejects reserved", !checkFilename("sources/con/x.md").ok);
   const at = paraTimes([{ c0: 10, c1: 20, start: 3.5 }, { c0: 30, c1: 40, start: 9, left_out: true }]);
   ok("paraTimes: a turn starts where its first segment does", /data-t0="3.50"/.test(at(0, 25)));
   eq("paraTimes: a left-out stretch is marked, not playable", at(28, 45), ' class="gap"');
+  {
+    // Two quotes said while answering another question, both coded q2: each is "also said", side by side.
+    const qbook = { codebook_id: "cbk-q", ext: { "upc-interview": { role: "questions" } }, codes: [{ code: "q1" }, { code: "q2" }] };
+    const src = { id: "src-a", title: "A", interview: { date: "2026-11-03" } };
+    const P = (id, type, span, code) => ({ id, type, status: "active", source_id: "src-a", span,
+      codings: [{ codebook_ref: "cbk-q", code }] });
+    const by = answersByQuestion({ codebooks: [qbook], sourceById: new Map([["src-a", src]]),
+      passages: [P("a1", "x-answer", [0, 100], "q1"), P("h1", "quote", [10, 20], "q2"), P("h2", "quote", [30, 40], "q2")] });
+    eq("answersByQuestion: two quotes also said for q2", (by.get("q2") || []).map((x) => [x.answer, x.also.id, x.while]),
+      [[null, "h1", ["q1"]], [null, "h2", ["q1"]]]);
+  }
 
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "upc-audio-"));
   const dir = path.join(tmp, "corpus"), stage = path.join(tmp, "stage");

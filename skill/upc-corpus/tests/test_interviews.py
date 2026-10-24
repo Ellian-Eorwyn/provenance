@@ -22,6 +22,7 @@ sys.path.insert(0, str(HERE))
 import audio as A  # noqa: E402
 import common as C  # noqa: E402
 import glossary as G  # noqa: E402
+import interview_drop as D  # noqa: E402
 import interview_pass as IP  # noqa: E402
 import make_codebooks as MC  # noqa: E402
 import timecode as TC  # noqa: E402
@@ -228,6 +229,30 @@ class TranscriptAndTimesTest(unittest.TestCase):
         text = "We went to Oakland. Later, Oakland again, and Oakland once more with feeling."
         self.assertEqual(IP.first_mention(text, "Oakland", "Later, Oakland again"), "Oakland again,")
         self.assertEqual(IP.first_mention("only Dana here", "dana"), "Dana")
+
+
+class DropTest(unittest.TestCase):
+    def test_a_site_that_fails_to_build_is_said_and_tried_again(self):
+        tmp = Path(tempfile.mkdtemp())
+        try:
+            corpus, drop = tmp / "corpus", tmp / "drop"
+            (corpus / ".upc" / "upc-corpus").mkdir(parents=True)
+            (corpus / ".upc" / "upc-corpus" / "settings.json").write_text(json.dumps(
+                {"namespace": "t", "interviews": {"drop": str(drop)}}))
+            (drop / "2026-11-03 Robin Alvarez").mkdir(parents=True)
+            (drop / "2026-11-03 Robin Alvarez" / "memo.m4a").write_bytes(b"a recording's bytes")
+            steps = lambda argv: (0, "prepared 2026-11-03-robin-alvarez: memo.m4a\n" if "transcribe.py" in argv[1] else "")
+            broken = C.Unavailable('upc export exited 2: {\n  "status": "error",\n  "detail": "Cannot read properties of null"\n}')
+            with mock.patch.object(D, "settled", return_value=True), mock.patch.object(D, "step", side_effect=steps), \
+                    mock.patch.object(D.C, "upc", side_effect=[broken, {}, {}]):
+                first = D.one_pass(corpus)
+                again = D.one_pass(corpus)
+                quiet = D.one_pass(corpus)
+            self.assertIn("- Site: (publishing failed: the site didn't build: Cannot read properties of null)", first[0])
+            self.assertEqual(again, ["The interviews site is up to date again."])
+            self.assertEqual(quiet, [])
+        finally:
+            shutil.rmtree(tmp)
 
 
 class GuideTest(unittest.TestCase):
