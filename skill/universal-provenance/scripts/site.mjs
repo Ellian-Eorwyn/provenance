@@ -518,7 +518,8 @@ export function buildSiteModel(loaded, opts = {}) {
   return {
     title: (loaded.corpus && loaded.corpus.title) || "Research corpus",
     specVersion: loaded.corpus && loaded.corpus.upc_spec_version,
-    interviews: sources.some((s) => s.interview),
+    // An interview corpus is one with interviews, or with a guide waiting for its first (1.16.0).
+    interviews: sources.some((s) => s.interview) || !!IV.guideBooks({ codebooks }).qs,
     sources, sourceById, passages, passageById,
     codebooks, cbkById, codeIndex, syntheses, homeSummary, overviewByCode, homeCandidates: homes.length, hiddenById,
     about: typeof opts.about === "string" ? readAbout(opts.about) : (opts.about || null),
@@ -1858,6 +1859,7 @@ function passageHtml(p, model, base, { showSource = true, context = true, compac
 // --- pages ----------------------------------------------------------------
 
 function homePage(model) {
+  if (model.interviews) return page({ title: model.title, rel: "index.html", model, active: "home", body: IV.interviewHomeBody(model) });
   const hc = homeCard(model, folderLinks(""));
   const nPass = model.passages.filter((p) => p.quote).length;
   const nNote = model.passages.length - nPass;

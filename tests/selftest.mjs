@@ -3006,6 +3006,22 @@ ok("filename rejects reserved", !checkFilename("sources/con/x.md").ok);
   ok("site: the interview page has the recording and a playable transcript",
     /<audio id="upc-audio"/.test(page) && /class="reading transcript"/.test(page) && /data-t0="3\.00"/.test(page));
   ok("site: the player script ships", /data-play/.test(fs.readFileSync(path.join(out, "assets", "site.js"), "utf8")));
+  ok("site: an interview corpus's home starts at the questions",
+    /1 interview/.test(fs.readFileSync(path.join(out, "index.html"), "utf8")) && /href="questions\/"/.test(fs.readFileSync(path.join(out, "index.html"), "utf8")));
+  // A guide with no interview yet: the questions are there, and say so.
+  const empty = path.join(tmp, "empty"), eout = path.join(tmp, "empty-site");
+  fs.mkdirSync(path.join(empty, "codebooks"), { recursive: true });
+  fs.mkdirSync(path.join(empty, "provenance"));
+  fs.writeFileSync(path.join(empty, "provenance", "events.jsonl"), "");
+  fs.copyFileSync(path.join(dir, "corpus.json"), path.join(empty, "corpus.json"));
+  fs.writeFileSync(path.join(empty, "codebooks", qcb.codebook_id + ".json"), JSON.stringify(qcb));
+  clearRepCache();
+  ok("site model: a guide makes an interview corpus before its first interview", buildSiteModel(loadCorpus(empty)).interviews === true);
+  writeSite(empty, { out: eout });
+  ok("site: no interviews yet, said on the home page and the questions",
+    /No interviews yet/.test(fs.readFileSync(path.join(eout, "index.html"), "utf8"))
+    && /No interviews yet/.test(fs.readFileSync(path.join(eout, "questions", "index.html"), "utf8"))
+    && fs.existsSync(path.join(eout, "questions", "q2.html")));
   fs.rmSync(tmp, { recursive: true, force: true });
 }
 

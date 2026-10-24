@@ -300,6 +300,8 @@ ${a ? `<details><summary>The whole answer, as transcribed</summary><blockquote c
 }
 
 /** questions/index.html: each question, how many answered it, and a grid of who answered what. */
+const NO_INTERVIEWS = `<p class="muted">No interviews yet. Each one appears here once it has been transcribed and coded.</p>`;
+
 export function questionsIndexBody(model, base) {
   const { qs } = guideBooks(model);
   const by = answersByQuestion(model);
@@ -315,12 +317,40 @@ ${codes.map((c) => `<tr><td class="muted">${esc(c.code.toUpperCase())}</td>
   <td class="num">${new Set((by.get(c.code) || []).filter((x) => x.answer).map((x) => x.s.id)).size} of ${ivs.length}</td></tr>`).join("\n")}
 </tbody></table></div>
 <h2>Who answered what</h2>
-${filterBar(model, ivs, ["interview shown", "interviews shown"])}
+${ivs.length ? `${filterBar(model, ivs, ["interview shown", "interviews shown"])}
 <div class="wrap"><table class="qgrid"><thead><tr><th>Interview</th>${codes.map((c) => `<th title="${attr(c.label || c.code)}">${esc(c.code.toUpperCase())}</th>`).join("")}</tr></thead><tbody>
 ${ivs.map((s) => `<tr${rowAttrs(s)}><td>${ivHead(s, base)}</td>${codes.map((c) => `<td class="dot">${has(c.code, s)
   ? `<a href="${encodeURIComponent(c.code)}.html#iv=${encodeURIComponent(s.slug)}" title="${attr(`${s.interview.interviewee}: ${c.label || c.code}`)}">●</a>`
   : `<span title="Not asked, or no answer found">·</span>`}</td>`).join("")}</tr>`).join("\n")}
-</tbody></table></div>`;
+</tbody></table></div>` : NO_INTERVIEWS}`;
+}
+
+/** index.html for an interview corpus: what it holds, where to start, how to read it. */
+export function interviewHomeBody(model) {
+  const { qs, by } = guideBooks(model);
+  const ivs = model.sources.filter((s) => s.interview);
+  const nq = qs ? (qs.codes || []).filter((c) => !c.deprecated).length : 0;
+  const answers = model.passages.filter((p) => p.type === "x-answer" && p.status === "active").length;
+  const length = ivs.reduce((n, s) => n + (s.duration || 0), 0);
+  const people = model.passages.some((p) => p.names.length);
+  const tiles = [[ivs.length, "interviews", "sources/"], [nq, "questions", "questions/"], [answers, "answers", "questions/"]]
+    .filter(([n], i) => n || i === 0);
+  return `<h1>${esc(model.title)}</h1>
+<p class="lede">${ivs.length ? `${plural(ivs.length, "interview", "interviews")}${length ? `, ${clock(length)} of recording` : ""}.` : "No interviews yet."}
+${nq ? `Start with <a href="questions/">the questions</a>: each one has every answer to it, who gave it, a brief, and the key words to hear.` : ""}
+Open <a href="sources/">an interview</a> to hear it whole${people ? `, or see <a href="people/">who was mentioned</a> and who was suggested to talk to` : ""}.</p>
+<div class="grid cards">
+${tiles.map(([n, u, href]) => `<a class="card tile" href="${href}"><span class="n">${n}</span><br><span class="u">${esc(u)}</span></a>`).join("\n")}
+</div>
+<h2>How to read this</h2>
+<div class="card">
+<p class="small"><strong>A transcript</strong> is a machine's hearing of the recording, checked against a second machine's
+and cleaned up automatically, with every change logged. It can still mishear, so ▶ plays the words themselves.
+<strong>A quotation</strong> is copied exactly from the transcript, and was checked against it character by character when
+this site was built. <strong>A brief</strong> is ${by ? `${esc(by)}'s` : "a language model's"} summary of an answer, in its own
+words, never the interviewee's. <strong>Which question an answer answers</strong> was judged by a language model from
+what the interviewer asked: interviewers ask in their own order and their own words.</p>
+</div>`;
 }
 
 /** questions/<code>.html: every answer to one question. */
@@ -359,14 +389,14 @@ export function interviewsIndexBody(model, base) {
   const others = model.sources.filter((s) => !s.interview);
   return `<h1>Interviews</h1>
 <p class="lede">${plural(ivs.length, "interview", "interviews")}${ivs.some((s) => s.duration) ? `, ${clock(ivs.reduce((n, s) => n + (s.duration || 0), 0))} of recording` : ""}.</p>
-${filterBar(model, ivs, ["interview shown", "interviews shown"])}
+${ivs.length ? `${filterBar(model, ivs, ["interview shown", "interviews shown"])}
 <div class="wrap"><table><thead><tr><th>Interviewee</th><th>Circle</th><th>Asked by</th><th>Date</th><th class="num">Length</th>${qs ? `<th class="num">Questions answered</th>` : ""}</tr></thead><tbody>
 ${ivs.map((s) => `<tr${rowAttrs(s)}>
   <td><a href="${encodeURIComponent(s.slug)}.html"><strong>${esc(s.interview.interviewee || s.title)}</strong></a>${s.interview.affiliation ? `<div class="small muted">${esc(s.interview.affiliation)}</div>` : ""}</td>
   <td>${s.interview.circle ? `<span class="circle c${attr(s.interview.circle)}">${esc(s.interview.circle)}</span>` : ""}</td>
   <td>${esc(s.interview.interviewer || "")}</td><td>${esc(niceDate(s.interview.date))}</td>
   <td class="num">${s.duration ? clock(s.duration) : ""}</td>${qs ? `<td class="num">${nq(s)}</td>` : ""}</tr>`).join("\n")}
-</tbody></table></div>
+</tbody></table></div>` : NO_INTERVIEWS}
 ${others.length ? `<h2>Other sources</h2><ul>${others.map((s) => `<li><a href="${encodeURIComponent(s.slug)}.html">${esc(s.title)}</a></li>`).join("")}</ul>` : ""}`;
 }
 
