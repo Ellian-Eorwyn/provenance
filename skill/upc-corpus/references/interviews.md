@@ -124,7 +124,9 @@ brings it round again, and the site catches up.
    - its timings;
    - the recording as it came;
    - a web copy: mono AAC 48 kbps, loudness levelled, left-out stretches silenced, about 21 MB
-     an hour;
+     an hour. A web host takes files up to 25 MiB (Cloudflare Pages), so a recording over 67
+     minutes gets a lower bitrate to fit in 23 MiB: 35 kbps for 90 minutes, 24 kbps (the floor)
+     at 2 h 14 min. Longer than that, split the recording;
    - both engines' output;
    - the clean-up log;
    - the notes form.

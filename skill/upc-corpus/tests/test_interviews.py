@@ -19,6 +19,7 @@ from unittest import mock
 os.environ["UPC_CORPUS_CONFIG"] = str(Path(__file__).with_name("no-such-config.json"))  # never this machine's config
 HERE = Path(__file__).resolve().parents[1] / "scripts"
 sys.path.insert(0, str(HERE))
+import audio as A  # noqa: E402
 import common as C  # noqa: E402
 import glossary as G  # noqa: E402
 import interview_pass as IP  # noqa: E402
@@ -98,6 +99,11 @@ class GlossaryTest(unittest.TestCase):
 
 
 class CaptionsAndTracksTest(unittest.TestCase):
+    def test_a_long_recording_gets_a_web_copy_a_web_host_takes(self):
+        self.assertEqual([A.web_bitrate(m * 60) for m in (30, 60, 90, 120, 180)], [48, 48, 35, 26, 24])
+        for m in (60, 90, 120):
+            self.assertLess(A.web_bitrate(m * 60) * 1000 / 8 * m * 60, 25 * 1024 * 1024)
+
     def test_zoom_vtt_with_speakers(self):
         tmp = Path(tempfile.mkdtemp())
         f = tmp / "z.vtt"

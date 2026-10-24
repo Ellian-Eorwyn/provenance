@@ -30,6 +30,10 @@ MEDIA_TYPES = {".m4a": "audio/mp4", ".mp4": "video/mp4", ".mov": "video/quicktim
                ".aiff": "audio/aiff", ".aif": "audio/aiff", ".caf": "audio/x-caf", ".wma": "audio/x-ms-wma",
                ".webm": "audio/webm", ".mkv": "video/x-matroska"}
 WEB_BITRATE = "48k"   # mono speech: about 21 MB an hour, clear on a phone speaker
+# A web host's limit on one file (Cloudflare Pages refuses anything over 25 MiB), with room for
+# the encoder overshooting: a longer recording gets a lower bitrate, down to WEB_FLOOR_KBPS.
+WEB_MAX_BYTES = 23 * 1024 * 1024
+WEB_FLOOR_KBPS = 24
 
 
 class AudioError(RuntimeError):
@@ -90,14 +94,25 @@ def _silence(cuts: list[tuple[float, float]]) -> list[str]:
     return [f"volume=enable='between(t,{a:.2f},{b:.2f})':volume=0" for a, b in cuts]
 
 
+def web_bitrate(duration: float, bitrate: str = WEB_BITRATE, max_bytes: int = WEB_MAX_BYTES) -> int:
+    """kbit/s for a web copy of `duration` seconds: `bitrate`, or less so it fits in `max_bytes`
+    (48k holds about 67 minutes in 23 MiB; 32k, 100; the floor, 24k, about 2 h 14 min)."""
+    want = int(bitrate.rstrip("k"))
+    fits = int(max_bytes * 8 / max(duration, 1) / 1000)
+    return max(WEB_FLOOR_KBPS, min(want, fits))
+
+
 def web_copy(src: Path, dest: Path, cuts: list[tuple[float, float]] | None = None,
-             bitrate: str = WEB_BITRATE) -> Path:
+             bitrate: str = WEB_BITRATE, max_bytes: int = WEB_MAX_BYTES) -> Path:
     """Mono AAC for the site: levelled (EBU R128, so a quiet phone and a loud Zoom play
-    alike), every left-out stretch silenced, faststart so seeking works over HTTP ranges."""
+    alike), every left-out stretch silenced, faststart so seeking works over HTTP ranges,
+    and small enough for a web host (see web_bitrate)."""
     dest.parent.mkdir(parents=True, exist_ok=True)
+    kbps = web_bitrate(probe(src)["duration"], bitrate, max_bytes)
+    rate = "44100" if kbps >= 40 else "24000"   # at low bitrates AAC sounds better with less to code
     filters = ["loudnorm=I=-18:TP=-1.5:LRA=11"] + _silence(cuts or [])
-    _run([tool("ffmpeg"), "-nostdin", "-v", "error", "-y", "-i", str(src), "-vn", "-ac", "1", "-ar", "44100",
-          "-af", ",".join(filters), "-c:a", "aac", "-b:a", bitrate, "-movflags", "+faststart", str(dest)])
+    _run([tool("ffmpeg"), "-nostdin", "-v", "error", "-y", "-i", str(src), "-vn", "-ac", "1", "-ar", rate,
+          "-af", ",".join(filters), "-c:a", "aac", "-b:a", f"{kbps}k", "-movflags", "+faststart", str(dest)])
     return dest
 
 
