@@ -295,6 +295,14 @@ class EndToEndTest(unittest.TestCase):
             page = next((out / "sources").glob("2026-11-03*.html")).read_text()
             self.assertIn('data-t0="2.20"', page)       # the passage's ▶, from just before its first word
             self.assertTrue((out / "files" / reps["web"]["path"].split("/")[-1]).exists())
+            # A left-out stretch is in no published file, and the corpus files that hold it stay out of git.
+            self.assertFalse([p for p in out.rglob("*") if p.is_file() and b"Something personal" in p.read_bytes()])
+            held = [p for p in corpus.rglob("*") if p.is_file() and b"Something personal" in p.read_bytes()]
+            self.assertTrue(held)
+            subprocess.run(["git", "init", "-q", str(corpus)], check=True)
+            tracked = subprocess.run(["git", "-C", str(corpus), "ls-files", "--others", "--exclude-standard"],
+                                     capture_output=True, text=True, check=True).stdout.split()
+            self.assertFalse([p for p in held if str(p.relative_to(corpus)) in tracked])
             # Saving again with only the intake changed updates the record in place.
             w = T.load_work(work)
             w["intake"]["circle"] = "2"

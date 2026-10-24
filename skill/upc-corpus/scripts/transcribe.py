@@ -1023,10 +1023,18 @@ def ensure_corpus(corpus: Path, title: str | None = None) -> None:
         spec = C.check_compat()
         C.create_corpus(corpus, spec, title or C.corpus_settings(corpus).get("short_name") or corpus.name)
     gi = corpus / ".gitignore"
-    want = "# Recordings stay out of git; the corpus records their sha256.\n" \
-           + "".join(f"*{e}\n" for e in sorted(A.AUDIO_EXT)) + ".upc/upc-corpus/interviews/\n"
-    if not gi.exists():
+    want = ("# Recordings stay out of git; the corpus records their sha256.\n"
+            + "".join(f"*{e}\n" for e in sorted(A.AUDIO_EXT))
+            + "# The engines' output and the clean-up log hold left-out stretches word for word, the work\n"
+              "# folders hold everything, and index.html (upc regen) quotes every text file: they stay here.\n"
+              "sources/*/representations/*.engine-*.json\nsources/*/representations/*.clean-log.json\n"
+              "index.html\n/site/\n.upc/upc-corpus/interviews/\n.upc/upc-corpus/drop/\n")
+    have = gi.read_text(encoding="utf-8") if gi.exists() else ""
+    missing = [ln for ln in want.splitlines() if ln and not ln.startswith("#") and ln not in have.splitlines()]
+    if not have:
         gi.write_text(want, encoding="utf-8")
+    elif missing:
+        gi.write_text(have.rstrip("\n") + "\n" + "\n".join(missing) + "\n", encoding="utf-8")
 
 
 def main() -> int:
