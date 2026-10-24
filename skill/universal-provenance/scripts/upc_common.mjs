@@ -670,6 +670,24 @@ export function isTextualMedia(mt) {
   return /^text\//.test(mt || "") || mt === "application/json" || mt === "application/xml";
 }
 
+/** A transcript's timings (1.16.0, spec/05): a `metadata` representation whose parent is
+ *  the transcript, `{ segments: [{ start, end, speaker, c0, c1, left_out? }] }` with
+ *  times in seconds of the recording and c0/c1 codepoint offsets into the transcript. */
+export const TIMINGS_MEDIA_TYPE = "application/vnd.upc.timings+json";
+
+/** Rounding between tools (ffprobe's duration, an engine's last word) is allowed this
+ *  much past a recording's end before a time is called out of bounds. */
+export const TIME_GRACE_SECONDS = 0.5;
+
+/** What is wrong with a {start, end} time range against a recording's duration, or null. */
+export function timestampProblem(v, duration) {
+  if (!v || !Number.isFinite(v.start) || !Number.isFinite(v.end)) return "is not {start, end} in seconds";
+  if (v.start < 0) return `starts before 0 (${v.start}s)`;
+  if (v.end < v.start) return `ends before it starts (${v.start}s–${v.end}s)`;
+  if (Number.isFinite(duration) && v.end > duration + TIME_GRACE_SECONDS) return `ends at ${v.end}s, past the recording's ${duration}s`;
+  return null;
+}
+
 /** Is this representation role a DERIVED text (transcript / OCR) rather than the
  *  captured source text? Role-only check; prefer isDerivedText when the corpus is
  *  available, because the role name alone cannot see a text layer pulled out of a

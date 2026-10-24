@@ -2,6 +2,7 @@
 """Turn a plain codebook definition file into minted UPC codebooks.
 
     python3 make_codebooks.py --corpus <dir> --defs codebooks.json [--plan]
+    python3 make_codebooks.py --corpus <dir> --guide guide.yaml [--plan]
 
 The definition file is the thing a researcher actually edits — a list of
 codebooks, each a list of codes with a definition and an example or two:
@@ -20,6 +21,12 @@ codebooks, each a list of codes with a definition and an example or two:
 Ids are minted by the CLI, never here: a codebook's id is a hash of
 (namespace, slug) alone, so its codes can be edited freely afterwards without
 re-minting anything or dangling a single existing coding.
+
+An interview guide (`--guide`, see references/interviews.md) becomes two codebooks:
+`questions` (closed, multi-label, one code per question: its label, its words as the
+definition, its follow-ups and cues kept with the code) and `summary` (open: a brief of
+each answer in the assistant's words). Their `ext["upc-interview"].role` is how the
+coding pass and the reader's site find them.
 
 Editing an existing codebook is safe and expected: this rewrites the codes,
 bumps `revision`, and recomputes `revision_digest`. Codings already made keep
@@ -78,6 +85,8 @@ def build_codebook(corpus: Path, b: dict, namespace: str) -> tuple[dict, Path, s
             entry["examples"] = c["examples"]
         if c.get("parent"):
             entry["parent"] = c["parent"]
+        if c.get("ext"):
+            entry["ext"] = c["ext"]
         codes.append(entry)
 
     obj = {
@@ -117,6 +126,42 @@ def build_codebook(corpus: Path, b: dict, namespace: str) -> tuple[dict, Path, s
     return obj, dest, status, warnings
 
 
+def guide_defs(path: str | Path) -> list[dict]:
+    """An interview guide (YAML or JSON) -> the questions and summary codebook definitions."""
+    p = Path(path)
+    if p.suffix in (".yaml", ".yml"):
+        import yaml  # noqa: PLC0415
+        g = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
+    else:
+        g = C.load_json(p, {})
+    qs = g.get("questions") or []
+    if not qs:
+        C.die(f"{path} lists no questions")
+    circles = {}
+    for f in g.get("intake") or []:
+        if f.get("id") == "circle":
+            circles = {str(k): v for k, v in (f.get("options") or {}).items()}
+    codes = []
+    for i, q in enumerate(qs, 1):
+        code = str(q.get("id") or f"q{i}").lower()
+        codes.append({"code": code, "label": q.get("label") or f"Question {i}", "definition": q.get("text") or "",
+                      "ext": {"upc-interview": {k: q[k] for k in ("follow_ups", "cues") if q.get(k)}}})
+    by = C.AGENT_NAME if C.AGENT_NAME != "the assistant" else "the assistant"
+    return [
+        {"slug": "questions", "title": g.get("title") or "Interview questions", "closed": True, "multi_label": True,
+         "unit": "passage", "question": "Which question in the interview guide does this passage answer?",
+         "ext": {"upc-interview": {"role": "questions", "circles": circles,
+                                   "probes": [x.get("text") for x in g.get("probes") or [] if x.get("text")]}},
+         "codes": codes},
+        {"slug": "summary", "title": "In brief", "closed": False, "multi_label": False, "unit": "passage",
+         "question": "What did the interviewee say, in a sentence or two?",
+         "ext": {"upc-interview": {"role": "summary", "by": by}},
+         "codes": [{"code": "brief", "label": "Brief",
+                    "definition": f"One or two sentences, in {by}'s words, of what the interviewee said in this answer. "
+                                  "Never the interviewee's words, and never shown as them."}]},
+    ]
+
+
 def write_codebooks(corpus: Path, rows: list[tuple[dict, Path, str]]) -> dict:
     """Save minted codebooks, then regenerate and validate the corpus."""
     (corpus / "codebooks").mkdir(parents=True, exist_ok=True)
@@ -130,15 +175,16 @@ def write_codebooks(corpus: Path, rows: list[tuple[dict, Path, str]]) -> dict:
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--corpus", required=True)
-    ap.add_argument("--defs", required=True)
+    ap.add_argument("--defs")
+    ap.add_argument("--guide", help="an interview guide (YAML/JSON): the questions and summary codebooks")
     ap.add_argument("--namespace", default="", help="required for a new corpus; default: the corpus's own")
     ap.add_argument("--plan", action="store_true")
     args = ap.parse_args()
 
     corpus = Path(args.corpus).expanduser()
-    defs = C.load_json(args.defs)
+    defs = guide_defs(args.guide) if args.guide else C.load_json(args.defs)
     if not defs:
-        C.die(f"{args.defs} is missing or not JSON")
+        C.die(f"{args.defs or args.guide} is missing or not JSON")
     try:
         C.check_compat()
     except C.Unavailable as e:

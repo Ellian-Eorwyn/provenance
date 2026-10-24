@@ -280,6 +280,7 @@ function idFormatOk(id) {
   return re ? re.test(id) : false;
 }
 const TEXTUAL = U_TEXTUAL; // shared predicate (upc_common), kept as a local alias
+const { TIMINGS_MEDIA_TYPE, timestampProblem } = U;
 const BAND = { high: [0.67, 1.0], medium: [0.34, 0.66], low: [0.0, 0.33] };
 
 export function validateCorpus(root, opts = {}) {
@@ -893,6 +894,39 @@ export function validateCorpus(root, opts = {}) {
             }
           }
         }
+        if (loc.type === "timestamp_range") {
+          const bad = timestampProblem(loc.value, rep.obj.duration_seconds);
+          if (bad) warn("timestamp_out_of_bounds", o.extraction_id, `timestamp_range ${bad} on ${ref}`);
+        }
+      }
+    }
+  }
+
+  // --- timings (1.16.0): a transcript's segment times and character ranges (spec/05) ---
+  // Advisory throughout: timings are navigation, never evidence. A segment past the
+  // transcript's last character or the recording's end would send a reader (or a
+  // player) to the wrong place.
+  {
+    for (const r of loaded.representations) {
+      if (r.obj.media_type !== TIMINGS_MEDIA_TYPE || !r.contained || !fs.existsSync(r.abs)) continue;
+      const id = r.obj.representation_id;
+      let doc;
+      try { doc = JSON.parse(fs.readFileSync(r.abs, "utf8")); } catch { warn("timings_unreadable", id, "timings file is not JSON"); continue; }
+      const segs = Array.isArray(doc && doc.segments) ? doc.segments : null;
+      if (!segs) { warn("timings_unreadable", id, "timings file has no segments[]"); continue; }
+      const parent = r.obj.parent_representation_ref ? model.repById.get(r.obj.parent_representation_ref) : null;
+      const chars = parent && parent.obj.char_count;
+      const media = parent && parent.obj.parent_representation_ref ? model.repById.get(parent.obj.parent_representation_ref) : null;
+      const duration = media && media.obj.duration_seconds;
+      let lastC = 0, shown = 0;
+      for (const s of segs) {
+        if (!(Number.isInteger(s.c0) && Number.isInteger(s.c1) && s.c0 <= s.c1 && s.c0 >= lastC && (!Number.isInteger(chars) || s.c1 <= chars))) {
+          if (shown++ < 3) warn("timings_char_mismatch", id, `segment at ${s.start}s covers characters ${s.c0}–${s.c1}` +
+            (Number.isInteger(chars) ? ` of ${chars}` : "") + " (out of order, or past the transcript's end)");
+        }
+        if (Number.isInteger(s.c1)) lastC = s.c1;
+        const bad = timestampProblem({ start: s.start, end: s.end }, duration);
+        if (bad && shown++ < 3) warn("timestamp_out_of_bounds", id, `segment ${bad}`);
       }
     }
   }
@@ -1910,6 +1944,10 @@ function anchorCmd(root, repId, candidates, opts = {}) {
     if (c.note) ext.rationale = c.note;
     if (c.interpretation) ext.interpretation = c.interpretation;
     if (c.confidence) ext.confidence = c.confidence;
+    // Secondary locators and tool data are outside the id recipe (spec/03), so a
+    // producer may attach a passage's time and speaker as it anchors (1.16.0).
+    if (Array.isArray(c.secondary_locators) && c.secondary_locators.length) ext.secondary_locators = c.secondary_locators;
+    if (c.ext && typeof c.ext === "object") ext.ext = c.ext;
     if (anchoring) ext.anchoring = anchoring;
     ext.extraction_id = U.mintExtId(ext);
     const dup = existing.has(ext.extraction_id);

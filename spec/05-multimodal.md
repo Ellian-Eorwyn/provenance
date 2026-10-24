@@ -145,6 +145,41 @@ to the media start) into the audio/video representation.
 { "representation_id": "rep-…", "role": "transcript", "media_type": "text/plain", "path": ".../transcripts/talk.txt", "sha256": "…", "parent_representation_ref": "rep-video-id" }
 ```
 
+### Timings (1.16.0)
+
+A transcript says what was said; its **timings** say when, and by whom. They are a
+`metadata` representation with media type `application/vnd.upc.timings+json` whose
+`parent_representation_ref` is the transcript:
+
+```json
+{ "segments": [
+  { "start": 20.4, "end": 27.1, "speaker": "Robin Alvarez", "c0": 112, "c1": 205,
+    "words": [["Honestly,", 20.4, 20.9], ["the", 20.9, 21.0]] },
+  { "start": 41.0, "end": 41.6, "speaker": "Morgan", "c0": 380, "c1": 389, "aside": true },
+  { "start": 598.0, "end": 609.6, "speaker": null, "c0": 2210, "c1": 2224, "left_out": true }
+] }
+```
+
+- `start`/`end` are seconds from the start of the recording; `c0`/`c1` are codepoint
+  offsets into the transcript (the same unit as `char_range`, §03), in order and never
+  past its `char_count`.
+- `speaker` is a name as the transcript writes it. `aside` marks a short interjection
+  ("mm-hm") kept inside another speaker's turn; `left_out` marks a stretch removed from
+  the transcript (its words are written nowhere; the transcript holds a marker).
+- `words` are a speech engine's own word times, optional, used to place a passage
+  more closely than its segment.
+
+A passage anchored in the transcript (`char_range`, gated as usual) MAY carry a
+secondary `timestamp_range` on the recording: where in the audio its words were said,
+and `ext["upc-audio"].speakers`. Both are outside the `ext-` identity recipe (§03),
+so working out times later re-mints nothing. They are navigation, never evidence: a
+quotation is verified to the transcript (below), and a time says only where to listen.
+
+**Left-out stretches.** A recording published for listening (a "web copy": a
+`conversion` of the original, `parent_representation_ref` to it) SHOULD be silenced over
+every `left_out` stretch rather than cut, so that every time in the timings and on every
+passage stays valid for both copies.
+
 ## The trust boundary: what "verified" means for non-text media
 
 The quote gate is byte-exact, and bytes only exist for text. So UPC draws an

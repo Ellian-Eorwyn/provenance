@@ -66,9 +66,13 @@ def main() -> int:
         return True, f"upc {v} satisfies {C.REQUIRES}", ""
 
     def tools():
-        missing = [t for t in ("pdftotext", "pdfinfo", "node") if not shutil.which(t)]
-        return (not missing, "pdftotext, pdfinfo, node" if not missing else f"missing {', '.join(missing)}",
-                "brew install poppler node")
+        want = ["pdftotext", "pdfinfo", "node"]
+        # An interview corpus also cuts and converts recordings (references/interviews.md).
+        if args.corpus and C.corpus_settings(Path(args.corpus).expanduser()).get("interviews"):
+            want += ["ffmpeg", "ffprobe"]
+        missing = [t for t in want if not shutil.which(t)]
+        return (not missing, ", ".join(want) if not missing else f"missing {', '.join(missing)}",
+                "brew install poppler node ffmpeg")
 
     def model(url: str, label: str):
         def go():

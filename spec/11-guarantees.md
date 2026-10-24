@@ -53,7 +53,7 @@ it, and — where applicable — the §08 rule code and gate hop that enforce it
 | The source is authoritative or relevant | No | — |
 | A quotation is fair in its original context | No | — |
 | OCR text correctly represents the scanned image | No — inference (§05) | recorded via `produced_by.method` |
-| A presentation locator (`line_range`, `page`, `bbox`, `timestamp_range`) points where it claims | No — advisory, never verified (§03) | shape only: `bbox_out_of_bounds`, `line_range_out_of_bounds` (advisory) |
+| A presentation locator (`line_range`, `page`, `bbox`, `timestamp_range`) points where it claims | No — advisory, never verified (§03) | shape only: `bbox_out_of_bounds`, `line_range_out_of_bounds`, `timestamp_out_of_bounds` (advisory) |
 | A highlighted image region corresponds to the quoted OCR text | No — inference (§05); recorded, not gated | labelling required by §09 |
 | An exported Web Annotation selector resolves identically in another tool | No — interop projection only | flagged `upc:interopOnly`, `upc:unit` |
 | A transcript correctly represents the speech/audio | No — inference (§05) | recorded via `produced_by.method` |

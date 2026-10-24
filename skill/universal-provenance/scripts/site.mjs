@@ -29,6 +29,7 @@ import fs from "node:fs";
 import path from "node:path";
 import * as U from "./upc_common.mjs";
 import { textBlocks, contextWindow, windowText, utf16Offsets } from "./context.mjs";
+import * as IV from "./interviews.mjs";
 
 const INLINE_TEXT_MAX = 2_000_000;   // a reading copy embedded straight into its page
 const SIDECAR_TEXT_MAX = 8_000_000;  // ... or loaded from data/text/<rep>.js
@@ -104,6 +105,8 @@ function yearOf(bib) {
   return (dp && dp[0] && dp[0][0]) || "";
 }
 function shortCite(src) {
+  const iv = IV.interviewOf(src);
+  if (iv && iv.interviewee) return iv.date ? `${iv.interviewee}, ${IV.niceDate(iv.date)}` : iv.interviewee;
   const b = src.bibliographic || {};
   const a = (b.authors || [])[0];
   const fam = a ? (typeof a === "string" ? a.split(",")[0] : a.family) : (src.title || "Source").slice(0, 24);
@@ -233,8 +236,11 @@ export function buildSiteModel(loaded, opts = {}) {
   const hiddenTags = new Set((loaded.extractionSets || []).filter((x) => x.obj && siteExt(x.obj).hidden)
     .map((x) => "set:" + String(x.dirRel).split("/").pop()));
   const hiddenById = new Map();
+  // An interview saved again (1.16.0) is a new source; the revision it supersedes steps aside.
+  const retired = new Set(loaded.sources.filter((s) => IV.isSuperseded(s.obj)).map((s) => s.obj.source_id));
   for (const e of loaded.extractions) {
     const o = e.obj;
+    if (retired.has(o.source_id)) continue;
     const repEntry = repById.get(o.representation_ref);
     if (hiddenTags.has(e.tag)) {
       let rec = null;
@@ -280,6 +286,7 @@ export function buildSiteModel(loaded, opts = {}) {
       }
     }
     const secondaryPage = (o.secondary_locators || []).find((s) => s.type === "page");
+    const { time, speakers } = IV.timeOf(o);
     passages.push({
       id: o.extraction_id,
       source_id: o.source_id,
@@ -295,13 +302,14 @@ export function buildSiteModel(loaded, opts = {}) {
       actual, span, context, cx,
       line_range: lineRange,
       page: secondaryPage ? secondaryPage.value : null,
+      time, speakers, names: IV.namesOf(o),
       codings: codingsByTarget.get(`extraction:${o.extraction_id}`) || [],
     });
   }
   const passageById = new Map(passages.map((p) => [p.id, p]));
 
   // sources
-  const sources = loaded.sources.map((s) => {
+  const sources = loaded.sources.filter((s) => !retired.has(s.obj.source_id)).map((s) => {
     const o = s.obj;
     const mine = passages.filter((p) => p.source_id === o.source_id);
     const texts = (o.representations || []).filter((r) => U.isTextualMedia(r.media_type));
@@ -322,6 +330,12 @@ export function buildSiteModel(loaded, opts = {}) {
       textRep: texts[0] || null,
       pdfRep: pdfs[0] || null,
       codings: codingsByTarget.get(`source:${o.source_id}`) || [],
+      // Recordings (1.16.0): the copy a page plays, its timings, an interview's record.
+      interview: IV.interviewOf(o),
+      audioRep: IV.playableAudio(o.representations),
+      duration: (IV.playableAudio(o.representations) || {}).duration_seconds || 0,
+      timingsRep: (o.representations || []).find((r) => r.media_type === U.TIMINGS_MEDIA_TYPE) || null,
+      notesRep: IV.interviewOf(o) ? (o.representations || []).find((r) => r.role === "original" && r.produced_by === "import") || null : null,
     };
   });
   const sourceById = new Map(sources.map((s) => [s.id, s]));
@@ -504,6 +518,7 @@ export function buildSiteModel(loaded, opts = {}) {
   return {
     title: (loaded.corpus && loaded.corpus.title) || "Research corpus",
     specVersion: loaded.corpus && loaded.corpus.upc_spec_version,
+    interviews: sources.some((s) => s.interview),
     sources, sourceById, passages, passageById,
     codebooks, cbkById, codeIndex, syntheses, homeSummary, overviewByCode, homeCandidates: homes.length, hiddenById,
     about: typeof opts.about === "string" ? readAbout(opts.about) : (opts.about || null),
@@ -816,7 +831,7 @@ const JS = `
     function browseInit(B,base){
       UPCB.init({
         sources:B.sources, codebooks:B.codebooks, badges:B.badges, coderKind:B.ck,
-        files:B.files?base+B.files:null,
+        files:B.files?base+B.files:null, base:base,
         hrefSource:function(p){
           var src=B.sources[p.s]||{};
           return base+"sources/"+encodeURIComponent(src.sl||"")+".html#ex="+encodeURIComponent(p.id);
@@ -982,6 +997,16 @@ const BROWSE_JS = String.raw`
     return (who?"Codes were assigned by "+who+". ":"Codes are judgements, not checks. ")+
       "Hover a code to see who assigned it, how sure they were, and why.";
   }
+  // Recordings (1.16.0): a transcript's speaker headings, and ▶ for a passage with a time.
+  function SP(h){ return h.replace(/\*\*([^*<>\n]{1,80})\*\* \[(\d{2}:\d{2}:\d{2})\]\n?/g,
+    function(m,w,t){ return '<span class="who">'+w+'</span> <span class="ts">'+t+"</span> "; }); }
+  function CLK(x){ x=Math.max(0,Math.floor(x)); var h=Math.floor(x/3600),m=Math.floor(x%3600/60),s=x%60;
+    return (h?h+":"+(m<10?"0":"")+m:m)+":"+(s<10?"0":"")+s; }
+  function PLAY(p,s){
+    if(!p.tm||!s.au||!X.base) return "";
+    return '<button type="button" class="play" data-play data-src="'+E(X.base+s.au)+'" data-t0="'+Math.max(0,p.tm[0]-0.4).toFixed(2)+
+      '" data-t1="'+(p.tm[1]+0.6).toFixed(2)+'" aria-pressed="false" title="Listen"><span class="i" aria-hidden="true">▶</span> '+CLK(p.tm[0])+"</button>";
+  }
   // An evidence scheme's code (1.15.0): shown where the passage is opened, not on the list.
   function isEv(g){ var d=codeDef[g[0]+":"+g[1]]; return !!(d&&d.cb.ev); }
   function card(p,opts){
@@ -991,7 +1016,7 @@ const BROWSE_JS = String.raw`
     var cx=!!(p.q&&(p.w||p.cx||p.cw));      // its sentences can be shown ("In context")
     var body;
     if(p.q){
-      body="<blockquote"+(cx?" "+QT(s.p):"")+"><mark>"+E(p.q)+"</mark></blockquote>";
+      body="<blockquote"+(cx?" "+QT(s.p):"")+"><mark>"+SP(E(p.q))+"</mark></blockquote>";
       if(bad&&p.act) body+='<p class="small" style="color:var(--warn)">The source now reads: “'+E(p.act.slice(0,240))+'”</p>';
     } else { body='<p class="note">'+E(p.n)+"</p>"; }
     var where=p.l?"line "+p.l:"";
@@ -1009,7 +1034,8 @@ const BROWSE_JS = String.raw`
       (p.st?'<span class="badge plain">'+E(p.st)+"</span>":"")+
       top.map(function(g){return chip(g,bad);}).join(" ")+
       (ev.length?' <span class="evchips">'+ev.map(function(g){return chip(g,bad);}).join(" ")+"</span>":"")+
-      '<span class="spacer"></span><span class="go"><a class="muted" href="'+E(href)+'">'+
+      (p.sp?'<span class="speaker">'+E(p.sp.join(", "))+"</span>":"")+
+      '<span class="spacer"></span>'+PLAY(p,s)+'<span class="go"><a class="muted" href="'+E(href)+'">'+
       (opts.showSource===false?E(where||"in context"):E(s.k||"")+(where?" · "+E(where):""))+" →</a>"+original(p,s)+
       "</span></div></article>";
   }
@@ -1647,7 +1673,11 @@ const FINDINGS_JS = String.raw`
 function page({ title, rel, body, model, active, extraHead = "", data = false }) {
   const up = rel.split("/").length - 1;
   const base = up ? "../".repeat(up) : "";
-  const library = [["codes/", "Codes", "codes"], ["sources/", "Sources", "sources"], ["passages/", "Passages", "passages"]];
+  const library = model.interviews
+    ? [...(IV.guideBooks(model).qs ? [["questions/", "Questions", "questions"]] : []), ["sources/", "Interviews", "sources"],
+       ...(model.passages.some((p) => p.names.length) ? [["people/", "People", "people"]] : []),
+       ["passages/", "Passages", "passages"], ["codes/", "Codes", "codes"]]
+    : [["codes/", "Codes", "codes"], ["sources/", "Sources", "sources"], ["passages/", "Passages", "passages"]];
   const reviews = model.syntheses.length ? [["overviews/", "Overviews", "overviews"]] : [];
   const nav = [
     // Not "": on a top-level page (the matrix) an empty link is *this* page.
@@ -1683,7 +1713,8 @@ ${data === "findings" ? `<script src="${base}data/findings.js" defer></script>` 
 <main>${banner}${body}</main>
 <footer>
   Built from a Universal Provenance Corpus (spec ${esc(model.specVersion || "")}).
-  Every quotation here was compared with the source text character by character when this page was built.
+  Every quotation here was compared with the source text character by character when this page was built${
+  model.interviews ? " (for an interview, with its transcript: a machine's hearing of the recording, not the recording itself)" : ""}.
   A <em>code</em> is somebody's judgement about a passage — hover it to see who made it — and is never a check mark.
 </footer>
 </body></html>
@@ -1756,7 +1787,7 @@ function passageHtml(p, model, base, { showSource = true, context = true, compac
   const src = model.sourceById.get(p.source_id);
   let body;
   if (p.quote) {
-    const q = `<mark>${esc(p.quote)}</mark>`;
+    const q = `<mark>${IV.speech(esc(p.quote))}</mark>`;
     if (context && p.cx) {
       // Where there is no script to open it (the code pages' <noscript> list), shown open.
       const [t, a, b] = p.cx;
@@ -1815,7 +1846,9 @@ function passageHtml(p, model, base, { showSource = true, context = true, compac
     ${badgeHtml(p.badge, compact)}
     ${status ? `<span class="badge plain">${esc(status)}</span>` : ""}
     ${chips}
+    ${p.speakers && p.speakers.length ? `<span class="speaker">${esc(p.speakers.join(", "))}</span>` : ""}
     <span class="spacer"></span>
+    ${IV.passagePlay(p, src && src.audioHref ? base + src.audioHref : null)}
     <span class="go">${showSource ? `<a class="muted" href="${textHref}">${esc(p.cite)}${where ? ` · ${esc(where)}` : ""} →</a>`
                  : `<a class="muted" href="${textHref}">${esc(where || "in context")} →</a>`}${pdfLink}</span>
   </div>
@@ -1932,6 +1965,10 @@ ${passages.length
 }
 
 function sourcesIndexPage(model) {
+  if (model.interviews) {
+    return page({ title: `Interviews — ${model.title}`, rel: "sources/index.html", model, active: "sources",
+                  body: IV.interviewsIndexBody(model, "../") });
+  }
   const rows = [...model.sources].sort((a, b) => String(a.cite).localeCompare(String(b.cite)));
   return page({
     title: `Sources — ${model.title}`, rel: "sources/index.html", model, active: "sources",
@@ -1962,6 +1999,7 @@ function sourcePage(model, s, textInfo) {
   const pdfHref = model.filesDir && s.pdfRep
     ? `${base}${model.filesDir}/${encodeURIComponent(path.basename(s.pdfRep.path))}` : null;
   const marks = s.passages.filter((p) => p.quote && p.line_range).sort((a, b2) => (a.line_range.start - b2.line_range.start));
+  if (s.interview || s.timingsRep) return recordingPage(model, s, textInfo, marks);
   return page({
     title: `${s.cite} — ${s.title}`, rel: `sources/${s.slug}.html`, model, active: "sources",
     extraHead: textInfo && textInfo.sidecar ? `<script src="${base}data/text/${encodeURIComponent(textInfo.sidecar)}" defer></script>` : "",
@@ -1993,6 +2031,39 @@ ${marks.length ? `<p class="small muted">${plural(marks.length, "highlight", "hi
   });
 }
 
+/** A recording's page (1.16.0): who and when, the recording, the answers by question,
+ *  every passage, and the transcript with each turn ready to play. */
+function recordingPage(model, s, textInfo, marks) {
+  const base = "../";
+  const reading = textInfo && textInfo.inline != null
+    ? `<div class="reading transcript" id="reading">${textInfo.inline}</div>`
+    : textInfo && textInfo.sidecar
+      ? `<div class="reading transcript" id="reading">Loading…</div>
+       <script>document.addEventListener("DOMContentLoaded",function(){
+         var el=document.getElementById("reading");
+         if(window.__UPC_TEXT)el.innerHTML=window.__UPC_TEXT; else el.textContent="The text could not be loaded.";});</script>`
+      : `<p class="muted">Not available.</p>`;
+  const answers = new Set(s.passages.filter((p) => p.type === "x-answer").map((p) => p.id));
+  const others = s.passages.filter((p) => !answers.has(p.id));
+  return page({
+    title: `${s.cite} — ${model.title}`, rel: `sources/${s.slug}.html`, model, active: "sources",
+    extraHead: textInfo && textInfo.sidecar ? `<script src="${base}data/text/${encodeURIComponent(textInfo.sidecar)}" defer></script>` : "",
+    body: `<p class="small muted"><a href="${base}sources/">${model.interviews ? "Interviews" : "Sources"}</a></p>
+<h1>${esc(s.interview ? s.interview.interviewee || s.title : s.title)}</h1>
+${s.interview ? IV.interviewTopHtml(model, s, base) : (s.audioHref ? `<div class="player"><audio id="upc-audio" controls preload="metadata" src="${attr(base + s.audioHref)}"></audio></div>` : "")}
+${s.codings.some((c) => !c.ev) ? `<div class="card"><div class="small muted">Judgements about this ${s.interview ? "interview" : "source"} as a whole</div>
+  <div class="meta" style="margin-top:.4rem">${s.codings.filter((c) => !c.ev).map((c) => chipHtml(c, base, false)).join(" ")}</div></div>` : ""}
+${others.length ? `<h2>Passages (${others.length})</h2>
+<p class="small muted">${esc(codeNote(model))}</p>
+<div class="evshow">${others.map((p) => passageHtml(p, model, base, { showSource: false, context: false })).join("\n")}</div>` : ""}
+<h2>Transcript</h2>
+<p class="small muted">A machine's transcription of the recording, cleaned as described above; the quotations on this site are
+checked against it character by character. Highlighted spans are passages.${s.audioHref ? " Click a turn to hear it." : ""}</p>
+${reading}
+${marks.length ? `<p class="small muted">${plural(marks.length, "highlight", "highlights")} in the transcript above.</p>` : ""}`,
+  });
+}
+
 /** A paper's evidence: its evidence-group codes, then each card (a rating, say),
  *  each in its own box — an impact figure and an evidence grade are never one. */
 function sourceCardsHtml(model, s, links) {
@@ -2014,7 +2085,7 @@ ${renderOverviewMarkdown(c.md, model, links)}</details>`).join("\n");
  *  Offsets are recomputed from the stored quote rather than trusted from the
  *  locator, so a drifted locator cannot smear a highlight across the wrong text.
  */
-function renderReading(text, passages) {
+function renderReading(text, passages, paraAttr = null) {
   const cps = Array.from(text);
   const marks = [];
   for (const p of passages) {
@@ -2068,7 +2139,7 @@ function renderReading(text, passages) {
       at = b;
     }
     html += esc(cps.slice(at, pe).join(""));
-    out.push(`<p>${html}</p>`);
+    out.push(paraAttr ? `<p${paraAttr(ps, pe)}>${IV.speech(html)}</p>` : `<p>${html}</p>`);
   }
   return out.join("\n");
 }
@@ -2645,9 +2716,21 @@ export function writeSite(root, opts = {}) {
   };
 
   fs.mkdirSync(outDir, { recursive: true });
-  w("assets/site.css", CSS);
-  // The browse engine first, then the page script that mounts it.
-  w("assets/site.js", BROWSE_JS + "\n" + FINDINGS_JS + "\n" + JS);
+  w("assets/site.css", CSS + IV.AUDIO_CSS);
+  // The browse engine first, then the page script that mounts it, then the player.
+  w("assets/site.js", BROWSE_JS + "\n" + FINDINGS_JS + "\n" + JS + "\n" + IV.AUDIO_JS);
+  // Recordings travel with the site (1.16.0): only the web copy a page plays, never the
+  // recording as it was handed over; and an interviewer's notes form.
+  const audioCopies = [];
+  for (const s of model.sources) {
+    for (const [r, key] of [[s.audioRep, "audioHref"], [s.notesRep, "notesHref"]]) {
+      if (!r) continue;
+      const entry = (loaded.representations || []).find((x) => x.obj.representation_id === r.representation_id);
+      if (!entry || !entry.contained || !fs.existsSync(entry.abs)) continue;
+      s[key] = `files/${encodeURIComponent(path.basename(r.path))}`;
+      audioCopies.push([entry.abs, path.join(outDir, "files", path.basename(r.path))]);
+    }
+  }
 
   // The same compact records the single file carries, as a plain script the
   // browsing pages load with <script src> — no fetch, so `file://` still works.
@@ -2692,11 +2775,17 @@ export function writeSite(root, opts = {}) {
         const rec = U.getRepFile(entry.abs);
         if (rec.utf8ok) {
           const bytes = Buffer.byteLength(rec.text, "utf8");
+          // A transcript's turns know when they were said (its timings), so a click plays from there.
+          let times = null;
+          if (s.timingsRep) {
+            const te = (loaded.representations || []).find((r) => r.obj.representation_id === s.timingsRep.representation_id);
+            try { times = IV.paraTimes(JSON.parse(fs.readFileSync(te.abs, "utf8")).segments); } catch { times = null; }
+          }
           if (bytes <= INLINE_TEXT_MAX) {
-            info = { inline: renderReading(rec.text, s.passages) };
+            info = { inline: renderReading(rec.text, s.passages, times) };
           } else if (bytes <= SIDECAR_TEXT_MAX) {
             const name = `${s.textRep.representation_id}.js`;
-            w(`data/text/${name}`, `window.__UPC_TEXT=${j(renderReading(rec.text, s.passages))};\n`);
+            w(`data/text/${name}`, `window.__UPC_TEXT=${j(renderReading(rec.text, s.passages, times))};\n`);
             info = { sidecar: name };
           } else {
             // Never a truncated copy: half a document shown as if it were whole
@@ -2710,6 +2799,22 @@ export function writeSite(root, opts = {}) {
   }
 
   w("passages/index.html", passagesPage(model));
+
+  // Interviews (1.16.0): everyone and everything named, and who was suggested.
+  if (model.interviews && model.passages.some((p) => p.names.length)) {
+    w("people/index.html", page({ title: `People — ${model.title}`, rel: "people/index.html", model, active: "people",
+                                  body: IV.peopleBody(model, "../") }));
+  }
+  // Interviews (1.16.0): a page per guide question, every answer to it.
+  const guide = model.interviews ? IV.guideBooks(model).qs : null;
+  if (guide) {
+    w("questions/index.html", page({ title: `Questions — ${model.title}`, rel: "questions/index.html", model, active: "questions",
+                                     body: IV.questionsIndexBody(model, "../") }));
+    for (const code of guide.codes || []) {
+      w(`questions/${code.code}.html`, page({ title: `${code.label || code.code} — ${model.title}`, rel: `questions/${code.code}.html`,
+                                              model, active: "questions", body: IV.questionBody(model, code, "../") }));
+    }
+  }
 
   if (model.syntheses.length) {
     w("overviews/index.html", overviewsIndexPage(model));
@@ -2725,8 +2830,14 @@ export function writeSite(root, opts = {}) {
     if (m) w("matrix.html", m);
   }
 
-  // Optional: carry the actual files, so the folder is self-contained.
   let copied = 0;
+  for (const [from, to] of audioCopies) {
+    fs.mkdirSync(path.dirname(to), { recursive: true });
+    const same = fs.existsSync(to) && fs.statSync(to).size === fs.statSync(from).size;
+    if (!same) fs.copyFileSync(from, to);
+    copied++;
+  }
+  // Optional: carry the actual files, so the folder is self-contained.
   if (opts.bundle) {
     for (const s of model.sources) {
       for (const r of [s.pdfRep, s.textRep].filter(Boolean)) {
@@ -3241,6 +3352,7 @@ function browsePayload(model) {
     return {
       i, t: s.title, a: s.authors, y: s.year, d: s.doi, c: s.container, k: s.cite, sl: s.slug,
       p: s.pdfRep ? path.basename(s.pdfRep.path) : "",
+      ...(s.audioHref ? { au: s.audioHref } : {}),
       g: s.codings.map((c) => [c.codebook_slug, c.code != null ? c.code : c.value, c.coder, c.confidence, c.rationale || ""]),
     };
   });
@@ -3253,6 +3365,8 @@ function browsePayload(model) {
     st: p.status === "active" ? "" : p.status,
     l: p.line_range ? p.line_range.start : 0,
     pg: p.page || 0,
+    ...(p.time ? { tm: [p.time.start, p.time.end] } : {}),
+    ...(p.speakers && p.speakers.length ? { sp: p.speakers } : {}),
     act: p.badge === "failed" ? p.actual : null,
     g: p.codings.map((c) => [c.codebook_slug, c.code != null ? c.code : c.value, c.coder, c.confidence, c.rationale || ""]),
     dis: p.disagreements.length ? 1 : 0,

@@ -15,8 +15,9 @@ import {
   charToLine, lineRangeForCharRange, textLines, resolveLocator, isTranscriptRole,
   isDerivedText, isTextualMedia, isModelRewrittenText,
   mintCbkId, mintCodId, codebookRevisionDigest, mintRepId, canonicalUrl as _cu,
-  normalizeForRefind, refindSpan,
+  normalizeForRefind, refindSpan, timestampProblem, TIMINGS_MEDIA_TYPE,
 } from "../skill/universal-provenance/scripts/upc_common.mjs";
+import { speech, clock, paraTimes, namesOf } from "../skill/universal-provenance/scripts/interviews.mjs";
 import { buildRoCrateGraph, fragmentForLocator, selectorsForLocator, buildAnnotationTargets } from "../skill/universal-provenance/scripts/ro-crate.mjs";
 import { buildModel as buildBrowserModel } from "../skill/universal-provenance/scripts/build-index.mjs";
 import { buildProvGraph } from "../skill/universal-provenance/scripts/prov.mjs";
@@ -2913,6 +2914,100 @@ ok("filename rejects reserved", !checkFilename("sources/con/x.md").ok);
   try { anchorCmd(dir, shRep, [{ quote: "customers leave" }], { tool: "selftest", source: "src-000000000000", dryRun: true }); } catch (e) { refused = String(e.message); }
   ok("shared rep: --source must be a source that records it", /does not record representation/.test(refused));
   }
+
+// --- recordings (1.16.0): timings, times on passages, the player, interviews ---
+{
+  eq("timestampProblem: fine inside the recording", timestampProblem({ start: 1, end: 9.9 }, 10), null);
+  eq("timestampProblem: half a second's grace", timestampProblem({ start: 1, end: 10.4 }, 10), null);
+  ok("timestampProblem: past the end", /past the recording/.test(timestampProblem({ start: 1, end: 12 }, 10)));
+  ok("timestampProblem: backwards", /ends before it starts/.test(timestampProblem({ start: 5, end: 4 }, 10)));
+  eq("clock: m:ss and h:mm:ss", [clock(75.4), clock(3725)], ["1:15", "1:02:05"]);
+  eq("speech: a transcript heading shown as a name and a time",
+    speech("**Robin** [00:00:20]\nHello"), '<span class="who">Robin</span> <span class="ts">00:00:20</span> Hello');
+  eq("namesOf: names riding together on one passage", namesOf({ ext: { "upc-interview": { names: [{ name: "A" }, { name: "B" }] } } }).length, 2);
+  const at = paraTimes([{ c0: 10, c1: 20, start: 3.5 }, { c0: 30, c1: 40, start: 9, left_out: true }]);
+  ok("paraTimes: a turn starts where its first segment does", /data-t0="3.50"/.test(at(0, 25)));
+  eq("paraTimes: a left-out stretch is marked, not playable", at(28, 45), ' class="gap"');
+
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "upc-audio-"));
+  const dir = path.join(tmp, "corpus"), stage = path.join(tmp, "stage");
+  fs.mkdirSync(stage);
+  fs.mkdirSync(path.join(dir, "provenance"), { recursive: true });
+  fs.writeFileSync(path.join(dir, "provenance", "events.jsonl"), "");
+  fs.writeFileSync(path.join(dir, "corpus.json"), JSON.stringify({ upc_spec_version: specVersion(), corpus_id: "cor-0123456789ab",
+    title: "Interviews", sections: { sources: "sources/", extractions: "extractions/", codebooks: "codebooks/", codings: "codings/",
+      provenance: "provenance/events.jsonl" } }));
+  const text = "**Morgan** [00:00:00]\nWhat comes to mind?\n\n**Robin** [00:00:03]\nHollenbeck Hall on a Sunday afternoon. The musicians live here.\n";
+  const c0 = text.indexOf("Hollenbeck"), c1 = text.length - 1;
+  fs.writeFileSync(path.join(stage, "t.md"), text);
+  fs.writeFileSync(path.join(stage, "t.timings.json"), JSON.stringify({ segments: [
+    { start: 0, end: 2.5, speaker: "Morgan", c0: text.indexOf("What"), c1: text.indexOf("?") + 1 },
+    { start: 3, end: 8, speaker: "Robin", c0, c1 }] }));
+  fs.writeFileSync(path.join(stage, "web.m4a"), Buffer.from("not really audio, a test's bytes"));
+  const added = addSourceCmd(dir, [{ title: "Robin, 3 Nov 2026", source_kind: "audio",
+    ext: { "upc-interview": { slug: "robin", interviewee: "Robin", interviewer: "Morgan", date: "2026-11-03", circle: "1" } },
+    files: [
+      { path: path.join(stage, "t.md"), role: "transcript", media_type: "text/markdown", produced_by: "model", parent: 2 },
+      { path: path.join(stage, "t.timings.json"), role: "metadata", media_type: TIMINGS_MEDIA_TYPE, produced_by: "conversion", parent: 0 },
+      { path: path.join(stage, "web.m4a"), role: "audio", media_type: "audio/mp4", produced_by: "conversion", duration_seconds: 10 },
+    ] }], { tool: "selftest" });
+  const reps = added.results[0].representation_ids;
+  const [trRep, , audioRep] = reps;
+  clearRepCache();
+  const tsl = (start, end) => [{ type: "timestamp_range", representation_ref: audioRep, value: { start, end }, unit: "s" }];
+  const res = anchorCmd(dir, trRep, [
+    { quote: "Hollenbeck Hall on a Sunday afternoon.", type: "quote", secondary_locators: tsl(3, 5.5), ext: { "upc-audio": { speakers: ["Robin"] } } },
+    { quote: "The musicians live here.", type: "quote", secondary_locators: tsl(6, 30) },
+  ], { tool: "selftest" });
+  eq("anchor: secondary locators ride on a candidate", res.tally.anchored, 2);
+  const onDisk = fs.readFileSync(path.join(dir, "sources", added.results[0].slug, "extractions.jsonl"), "utf8").trim().split("\n").map((l) => JSON.parse(l));
+  eq("anchor: the time is stored", onDisk[0].secondary_locators[0].value, { start: 3, end: 5.5 });
+  const bare = mintExtId({ ...onDisk[0], secondary_locators: undefined, ext: undefined });
+  eq("anchor: a time and speaker change no id (spec/03)", onDisk[0].extraction_id, bare);
+  clearRepCache();
+  let rep = validateCorpus(dir);
+  eq("timestamp: one passage past the recording's end", rep.warnings.filter((w) => w.code === "timestamp_out_of_bounds").length, 1);
+  eq("timestamp: advisories only", rep.errors.length, 0);
+  // A timings file pointing past its transcript.
+  const tf = path.join(dir, "sources", added.results[0].slug, "representations", "t.timings.json");
+  const tbytes = fs.readFileSync(tf);
+  fs.writeFileSync(tf, JSON.stringify({ segments: [{ start: 0, end: 1, speaker: "x", c0: 0, c1: 99999 }] }));
+  clearRepCache();
+  rep = validateCorpus(dir);
+  ok("timings: a segment past the transcript is reported", rep.warnings.some((w) => w.code === "timings_char_mismatch"));
+  fs.writeFileSync(tf, tbytes);
+
+  // The site: a ▶ on the passage, the recording travels, and question pages from the guide's codebook.
+  const qcb = { codebook_id: "", namespace: "t", slug: "questions", title: "Questions", closed: true, multi_label: true,
+    ext: { "upc-interview": { role: "questions" } },
+    codes: [{ code: "q1", label: "What comes to mind", definition: "When you think of the orchestra, what comes to mind?" },
+            { code: "q2", label: "If it didn't exist", definition: "What would be lost?" }] };
+  qcb.codebook_id = mintCbkId(qcb);
+  fs.mkdirSync(path.join(dir, "codebooks"), { recursive: true });
+  fs.writeFileSync(path.join(dir, "codebooks", qcb.codebook_id + ".json"), JSON.stringify(qcb));
+  clearRepCache();
+  const ans = anchorCmd(dir, trRep, [{ quote: text.slice(c0, c1), type: "x-answer", secondary_locators: tsl(3, 8) }],
+    { tool: "selftest", set: "exs-interview-answers" });
+  clearRepCache();
+  codeCmd(dir, "cds-selftest", [{ codebook_ref: qcb.codebook_id, code: "q1", target: { kind: "extraction", id: ans.results[0].extraction_id }, coder: "selftest" }], { tool: "selftest" });
+  clearRepCache();
+  const model = buildSiteModel(loadCorpus(dir));
+  const p0 = model.passages.find((p) => p.quote.startsWith("Hollenbeck"));
+  eq("site model: a passage's time and speakers", [p0.time.start, p0.time.end, p0.speakers], [3, 5.5, ["Robin"]]);
+  ok("site model: an interview corpus", model.interviews === true);
+  eq("site model: an interview is cited by who and when", model.sources[0].cite, "Robin, 3 Nov 2026");
+  const out = path.join(tmp, "site");
+  writeSite(dir, { out });
+  const q1 = fs.readFileSync(path.join(out, "questions", "q1.html"), "utf8");
+  ok("site: a question page plays the whole answer", /data-play[^>]*data-t0="2\.60"[^>]*data-t1="8\.60"/.test(q1) && /Whole answer/.test(q1));
+  ok("site: an unanswered interview is listed as such", /Not asked, or no answer found/.test(fs.readFileSync(path.join(out, "questions", "q2.html"), "utf8")));
+  ok("site: the web copy travels with the site", fs.existsSync(path.join(out, "files", "web.m4a")));
+  const page = fs.readFileSync(path.join(out, "sources", `${model.sources[0].slug}.html`), "utf8");
+  ok("site: the interview page has the recording and a playable transcript",
+    /<audio id="upc-audio"/.test(page) && /class="reading transcript"/.test(page) && /data-t0="3\.00"/.test(page));
+  ok("site: the player script ships", /data-play/.test(fs.readFileSync(path.join(out, "assets", "site.js"), "utf8")));
+  fs.rmSync(tmp, { recursive: true, force: true });
+}
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

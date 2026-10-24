@@ -668,6 +668,53 @@ owner's go.
    questions go to the engineers.
 10. **Out of the team, only on the owner's go**, each time.
 
+## Task 15: Interviews from recordings
+
+Interviews someone records (on Zoom, a phone, a recorder) become a site where a reader picks a
+question and reads and hears every answer to it: who answered, a brief, the key words verbatim
+with ▶, ▶ for the whole answer, and who wasn't asked. Formats, settings and what is automatic
+are in `references/interviews.md`.
+
+**Who decides:** the owner writes the guide and the glossary, and says what is left out of a
+recording (times only, in the intake's `left_out`). Transcription, clean-up and coding are
+automatic. The briefs and highlights are the model's choices, and the site labels them so.
+Quotations are verbatim to the cleaned transcript. A person's recode (`upc code --coder-kind
+human`) stands beside the model's.
+
+1. **Settings, guide, glossary** (once):
+   - Write `<corpus>/.upc/upc-corpus/settings.json` with an `interviews` block, plus
+     `guide.yaml` and `glossary.yaml` (shapes in the reference).
+   - Then make the codebooks:
+     ```
+     <python> <skill>/scripts/make_codebooks.py --corpus <corpus> --guide <corpus>/guide.yaml --namespace <ns>
+     ```
+     Expect two codebooks, `questions` and `summary`.
+2. **One interview by hand** (the first, to see each step):
+   ```
+   <python> <skill>/scripts/transcribe.py all "<interview folder>" --corpus <corpus>
+   <python> <skill>/scripts/interview_pass.py --corpus <corpus>
+   node <upc> export <corpus> --format site -o <corpus>/site
+   ```
+   - Expect, in order:
+     - `prepared <slug>: …`;
+     - `primary: …` and `second: …`;
+     - `cleaned: …` (glossary fixes and the stretches settled or refused);
+     - `speakers: …` (how each was named);
+     - `saved <slug> revision 1: src-…`;
+     - one line per interview: answers to which questions, highlights, names, referrals.
+   - A `Speaker N` means a voice wasn't placed: name it in the intake and run `transcribe.py
+     clean` and `save` again.
+3. **The drop folder** (every later interview): a cron job, every 15 minutes:
+   ```
+   <python> <skill>/scripts/interview_drop.py --corpus <corpus>
+   ```
+   - It prints one message per interview that became ready, and nothing otherwise.
+   - `status` lists each folder. `retry [FOLDER]` tries a failed one again.
+4. **A new code** (a theme): `make_codebooks.py --defs`, then `code_pass.py`, or a person's
+   `upc code`. Rebuild the site.
+5. **Choosing an engine**: `transcribe.py bench` on a corrected stretch (reference, "Checking
+   an engine"). Change `transcribe.second` in the machine config only on that evidence.
+
 ## Known failures
 
 | What you see | What it means | What to do |

@@ -16,5 +16,11 @@
   "notify": ["/usr/local/bin/notify-me", "--channel", "research", "{text}"],
   "agent_name": "the assistant",
   "contact": "you@example.org",
-  "overnight_window": ["22:00", "06:00"]
+  "overnight_window": ["22:00", "06:00"],
+  "transcribe": {
+    "url": "http://127.0.0.1:8014",
+    "second": {"kind": "mlx-audio", "name": "whisper-large-v3-turbo", "model": "~/.cache/whisper-mlx/large-v3-turbo"},
+    "clean_model": "chat",
+    "code_model": "chat"
+  }
 }

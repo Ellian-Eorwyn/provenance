@@ -23,6 +23,25 @@ this machine, so it is the same for every corpus. `../config.example.json` has e
 | `contact` | An address put in the user agent of `digest.py`'s page reads | none |
 | `overnight_window` | `[not before, stop at]` for `appraise.py overnight`, as `HH:MM` | `["22:00", "06:00"]` |
 
+`transcribe` (interviews, `references/interviews.md`):
+
+```json
+"transcribe": {
+  "url": "http://127.0.0.1:8014",
+  "second": {"kind": "mlx-audio", "name": "whisper-large-v3-turbo", "model": "~/.cache/whisper-mlx/large-v3-turbo"},
+  "mlx_bin": "~/path/to/mlx-runtime-venv/bin",
+  "clean_model": "chat",
+  "code_model": "chat"
+}
+```
+
+| Key | What | Default |
+|---|---|---|
+| `url` | A transcription server with the OpenAI `/v1/audio/transcriptions` API; `diarize=true` and word timestamps are asked for | `http://127.0.0.1:8014` (or `TRANSCRIPT_URL`) |
+| `second` | The second, independent engine: `{"kind": "mlx-audio", "model": <path>}` for any mlx-audio speech model, or `{"kind": "openai", "url": …, "model": …}`. `name` is how logs and pages name it | Whisper large-v3-turbo through mlx-audio |
+| `mlx_bin` | Where `mlx_audio.stt.generate` lives | the llm-stack's runtime venv |
+| `clean_model`, `code_model` | The model names sent for the clean-up and the interview coding | `chat` |
+
 Environment variables win over the file: `UPC_CHAT_URL`, `UPC_TASK_URL`, `UPC_EMBED_URL`.
 Two more say where the other tools are: `UPC_CLI` (the `upc` command, for example
 `node /path/to/upc.mjs`) and `AUTHORITY_CLI` (the ASR CLI).

@@ -104,6 +104,9 @@ closed forms.
 | A `secondary_locators[]` entry addresses a representation of a *different source* | `secondary_locator_cross_source` | Advis | crossing *representations* within one source is legitimate and expected (§03, §05); crossing sources is not |
 | A secondary `bbox` falls outside its reference frame | `bbox_out_of_bounds` | Advis | checked against the locator's `reference`, else the target image's `dimensions`; skipped when neither is recorded (§05) |
 | A secondary `line_range` starts below 1 or ends past the representation's last line | `line_range_out_of_bounds` | Advis | line numbers are 1-based and inclusive (§03) |
+| A `timestamp_range` ends before it starts, or past its recording's `duration_seconds` | `timestamp_out_of_bounds` | Advis | half a second's grace past the end for rounding between tools; also checked on a transcript's timings segments (§05, 1.16.0) |
+| A transcript's timings segment covers characters out of order or past the transcript's end | `timings_char_mismatch` | Advis | checked against the parent transcript's `char_count`; at most three reported per file (§05, 1.16.0) |
+| A timings file can't be read | `timings_unreadable` | Advis | not JSON, or no `segments[]` (§05, 1.16.0) |
 | The same bytes are recorded as a representation by more than one source or role | `representation_shared` | Advis | rule 1.1's exception; legitimate content-addressed convergence, not a defect (§12) |
 | A coding targets an extraction that fails hop B, or is not `active` | `coding_targets_failed_gate` | Advis | **never an error**: the coding remains a faithful record of a judgement; the *span* is what broke. Repair belongs to the extraction (§12) |
 | A coding records a codebook revision that no longer matches | `coding_codebook_drift` | Advis | the codebook was edited after the judgement; the same shape as `stale_input` (§12) |

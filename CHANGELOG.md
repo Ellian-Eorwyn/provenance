@@ -3,6 +3,53 @@
 All notable changes to the Universal Provenance Corpus (UPC) standard.
 Versioning is semantic (§00 Versioning policy).
 
+## Unreleased — 1.16.0: interviews and recordings
+
+**Minor release: recordings you can hear, and interviews coded by their questions.** Three
+advisory rules are added (spec/08); no closed vocabulary, schema or id recipe changes, so a
+1.15 corpus is a valid 1.16 corpus and renders as before. A transcript's timings use the
+existing `metadata` role with their own media type.
+
+### Added
+
+- **Timings** (spec/05): `application/vnd.upc.timings+json`, a transcript's segments with
+  their times, speakers and character ranges; asides ("mm-hm") and left-out stretches marked.
+  `upc validate` reports `timestamp_out_of_bounds`, `timings_char_mismatch` and
+  `timings_unreadable` (advisory).
+- **`upc anchor` takes `secondary_locators` and `ext` on a candidate**, so a producer can
+  attach a passage's time and speaker as it anchors; neither is in the id recipe.
+- **The reader's site plays recordings.** A passage with a `timestamp_range` gets ▶ and its
+  time (one shared player; a passage plays from its first word to its last and stops). A
+  recording's page has the whole recording and a transcript whose turns play from where they
+  were said, the turn being heard marked. Only the web copy (an `audio` representation made
+  by `conversion`) is copied into `files/`, never the recording as handed over.
+- **Interviews in the site** (`interviews.mjs`), for sources with `ext["upc-interview"]`:
+  interview wording and citation (who, when), a table of interviews with circle and
+  interviewer filters, **Questions** (a page per guide question: every answer, who gave it,
+  a brief labelled as the assistant's, the key words verbatim with ▶, ▶ for the whole answer,
+  and who wasn't asked), a grid of who answered what, and **People** (every name heard, in
+  context with ▶, and who the interviewees suggested talking to).
+- **upc-corpus: interviews from recordings** (`references/interviews.md`):
+  - `transcribe.py`: any recording (phone memo, Zoom audio, Zoom's per-participant tracks)
+    transcribed by the configured engine with speakers, checked word by word against a
+    second engine primed with the project's glossary (or Zoom's own transcript), cleaned
+    automatically (the glossary's known misrecognitions, then only the disputed words, by a
+    model inside fixed limits, every change logged), speakers named (track, enrolled voice,
+    Zoom label, intake), and saved as a source with its timings, the raw engine output, the
+    clean-up log and a web copy. Saving again is a new revision; passages and codings carry
+    over. `bench` measures each engine's word error rate against a corrected stretch.
+  - `glossary.py`: a project's terms and their known misrecognitions; near-misses suggested,
+    never applied.
+  - `timecode.py`: every transcript passage gets its time and speakers (like `paginate.py`).
+  - `make_codebooks.py --guide`: an interview guide becomes the `questions` and `summary`
+    codebooks.
+  - `interview_pass.py`: the interviewer's turns labelled by guide question (paraphrased,
+    out of order, merged or skipped), answers cut from those labels and coded, a brief and
+    up to three verbatim highlights per answer, every name anchored where first said, with
+    referrals marked.
+  - `interview_drop.py`: a drop folder watched (a cron job): each settled interview folder
+    transcribed, coded, the site rebuilt and published, one message per interview.
+
 ## Unreleased — toolkit 1.2.0: one-pagers
 
 **No schema or specification change.** Corpora and the site are as in 1.15.1. The new objects
