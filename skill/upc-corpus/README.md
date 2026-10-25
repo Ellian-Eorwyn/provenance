@@ -25,6 +25,7 @@ is the overview.
 | Write overviews | `synthesize.py`, `claim_groups.py`, `place_summary.mjs` |
 | Rate the evidence | `appraise.py`, `ctx_windows.mjs`, `citations.py`, `methods.py` |
 | Publish and check | `paginate.py`, `publish.py`, `compare_site.py`, `digest.py` |
+| Annotate each paper, then list them all (Word, spreadsheet) | `annotate.py`, `sources_table.py` |
 | A dossier for an audience and a project (site, Word, spreadsheet) | `dossier.py`, with profiles in `references/profiles/` |
 | Shared | `common.py`, `llm_pool.py`, `pdftext.py`, `corpus_view.py` |
 
@@ -44,6 +45,20 @@ rated evidence are in `references/criteria-v2.md`.
 
 Ratings are advisory and model-made, and the pages say so, with run-to-run agreement and
 agreement against a blind second coder (`spotcheck.py --blind`).
+
+### Annotations and the annotated list
+
+`annotate.py` writes one annotation per paper from a field spec you supply (a JSON list:
+each field a code from one of the corpus's codebooks, or a sentence or two), reading the
+paper's opening and the passages already coded in it. Codes outside their codebook,
+citations of passages the model wasn't shown and quotations the tool can't find in the
+paper are dropped and counted. Each annotation is a generation, shown as an "Annotation"
+card on the paper's page and labelled as a model's work.
+
+`sources_table.py` lists every paper (citation, DOI, its page on the site, its codes, its
+annotation) as a spreadsheet and a Word file with your front matter. It reads both back
+before keeping them: every quotation must match its stored passage and appear word for
+word, and no local path may appear.
 
 ## Install
 

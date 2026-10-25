@@ -2241,6 +2241,24 @@ ok("filename rejects reserved", !checkFilename("sources/con/x.md").ok);
     ok("source page: line N opens the passage where it sits in the paper's text, not its own card",
        /#text=ext-[0-9a-f]{12}">line \d+ →<\/a>/.test(srcB) && /<mark id="t-ext-[0-9a-f]{12}"/.test(srcB));
     ok("source page: and the PDF it opens travels with the site", fs.existsSync(path.join(outB, "files", "paper.pdf")));
+    // A PDF over the host's per-file limit stays out of the bundle, unlinked, and the page says why.
+    clearRepCache();
+    const outL = fs.mkdtempSync(path.join(os.tmpdir(), "upc-big-"));
+    const resL = writeSite(dir, { out: outL, bundle: true, maxFileBytes: 4 });
+    const srcL = fs.readFileSync(path.join(outL, "sources", slug + ".html"), "utf8");
+    ok("bundle: a PDF over --max-file-bytes is left out, listed, and never linked",
+       !fs.existsSync(path.join(outL, "files", "paper.pdf")) && resL.left_out.length === 1 &&
+       resL.left_out[0].file === "paper.pdf" && resL.left_out[0].bytes === pdfBuf.length && !srcL.includes("files/paper.pdf"));
+    ok("bundle: and its paper's page says it is too large to include", /the PDF \([0-9.]+ MB\) is over the [0-9.]+ MB a file can be here/.test(srcL));
+    clearRepCache();
+    const oneL = path.join(outL, "one.html");
+    const resOne = writeSingleFile(dir, { out: oneL, files: "one_files", maxFileBytes: 4 });
+    ok("bundle: the single file leaves it out too", resOne.pdfs_bundled === 0 && resOne.left_out.length === 1 &&
+       !fs.existsSync(path.join(outL, "one_files", "paper.pdf")) && fs.readFileSync(oneL, "utf8").includes('"po":"0.0 MB"'));
+    clearRepCache();
+    ok("bundle: under the limit, the PDF travels as before",
+       writeSite(dir, { out: fs.mkdtempSync(path.join(os.tmpdir(), "upc-small-")), bundle: true, maxFileBytes: 1 << 20 }).left_out.length === 0);
+    fs.rmSync(outL, { recursive: true, force: true });
     clearRepCache();
     const outU = fs.mkdtempSync(path.join(os.tmpdir(), "upc-nopdf-"));
     writeSite(dir, { out: outU });

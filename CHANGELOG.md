@@ -100,10 +100,11 @@ use the `x-` extension point.
   ask, how far the page travels; the project's brand, images, reviewers and own numbers).
 - `assets/one-pager/`: the page's stylesheet and an embedded OFL font (Figtree).
 
-## Unreleased — toolkit 1.1.0: dossiers
+## Unreleased — toolkit 1.1.0: dossiers, annotations and an annotated list
 
-**No schema or specification change.** Corpora and the site are as in 1.15.1; the CLI
-gains one option. The new objects use the `x-` extension point.
+**No schema or specification change.** Corpora are as in 1.15.1; the CLI gains two
+options (`anchor --source`, `export --max-file-bytes`). The new objects use the `x-`
+extension point.
 
 ### Fixed
 
@@ -118,6 +119,30 @@ gains one option. The new objects use the `x-` extension point.
 
 ### Added
 
+- **Annotations** (`skill/upc-corpus/scripts/annotate.py`, the SKILL's Task 16): a few
+  fields per paper from a field spec the team writes (a code from one of the corpus's
+  codebooks with a note, or a sentence or two), written by a local model from the paper's
+  opening and its coded passages. The answer's shape allows only the codebook's codes and
+  the passages the model was shown; a quotation is kept only when `upc anchor` finds it
+  (into a hidden set, after a dry run, so a quotation a card can't show leaves nothing
+  behind). Each is an `x-annotation` generation shown as an "Annotation" card on the
+  paper's page (`ext["upc-site"].card`, no renderer change) and labelled as a model's work.
+- **An annotated list** (`sources_table.py`): one row per paper (citation, DOI or URL, its
+  page on the site, its paper-level codes per scheme and coder, its newest annotation) as a
+  spreadsheet and a Word file with the team's front matter, made with pandoc and the
+  dossier's reference document. Both are read back before they are kept: every quotation
+  must equal its stored passage, be found at its place in the paper and appear in the Word
+  file word for word, and no local path may appear.
+- **`upc export --max-file-bytes <n>`** (site and site-one with `--bundle`): a PDF over the
+  limit is left out of the bundle and not linked, the paper's page says why, and the result
+  lists it (`left_out`). `publish.py --max-pdf-mib` (default 25, a common host's per-file
+  limit) passes it to both bundles, prints what it left out and records it in
+  `<name>-left-out.json`.
+- **`ingest.py` keeps a PDF's fetch record:** a pdf-harvest sidecar beside the PDF
+  (`<file>.acq.json`, already in UPC's field names) becomes the source's `retrieval` when
+  its sha256 is the PDF's; one that describes other bytes is noted and not attached. A row
+  already in the corpus keeps the retrieval it was added with, so a re-ingest never
+  re-addresses a source.
 - **Dossiers** (`skill/upc-corpus/scripts/dossier.py`, `references/dossier.md`, the
   SKILL's Task 13): what a set of documents says that matters to one project, written for
   one audience. Each document gets an `x-dossier-entry` generation: the writer's summary,

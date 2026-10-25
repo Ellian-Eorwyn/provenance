@@ -26,6 +26,10 @@ publishes, with the previous dropdown filters.
 
 `paginate.py` should have run first, or the PDF links will point at a file rather
 than a page. This says so rather than quietly producing weaker links.
+
+A PDF over `--max-pdf-mib` (default 25: Cloudflare Pages takes no file larger) stays
+out of both bundles, unlinked, and its paper's page says so. They are listed here and
+in `<name>-left-out.json` beside the outputs.
 """
 
 from __future__ import annotations
@@ -77,6 +81,8 @@ def main() -> int:
     ap.add_argument("--findings", default="",
                     help="starting points and wording for the Findings pages (JSON; UPC 1.15.0). "
                          "Default: <corpus>/.upc/upc-corpus/site/findings.json when it exists")
+    ap.add_argument("--max-pdf-mib", type=float, default=25,
+                    help="leave out of the bundles any PDF larger than this (MiB; 0 = no limit)")
     ap.add_argument("--plan", action="store_true")
     args = ap.parse_args()
 
@@ -134,9 +140,10 @@ def main() -> int:
     elif args.findings:
         C.die(f"no such file: {findings}")
 
+    cap = ["--max-file-bytes", str(int(args.max_pdf_mib * 1048576))] if args.max_pdf_mib > 0 else []
     full = out / f"{args.name}.html"
     r = C.upc("export", str(corpus), "--format", "site-one", "-o", str(full), *mx,
-              *(["--bundle"] if args.pdfs else []))
+              *(["--bundle", *cap] if args.pdfs else []))
     made.append((full, r if isinstance(r, dict) else {}))
 
     light = out / f"{args.name}-light.html"
@@ -145,8 +152,19 @@ def main() -> int:
 
     if args.folder_site:
         site = out / f"{args.name}-site"
-        C.upc("export", str(corpus), "--format", "site", "-o", str(site), *mx, "--bundle")
-        made.append((site, {}))
+        rs = C.upc("export", str(corpus), "--format", "site", "-o", str(site), *mx, "--bundle", *cap)
+        made.append((site, rs if isinstance(rs, dict) else {}))
+
+    # PDFs too large for the host: left out of every bundle, recorded once.
+    left = {x["file"]: x for _, meta in made for x in meta.get("left_out") or []}
+    left_rec = out / f"{args.name}-left-out.json"
+    if left:
+        C.save_json(left_rec, {"max_bytes": int(args.max_pdf_mib * 1048576),
+                               "why": "larger than the host takes in one file; not copied and not linked, "
+                                      "and the paper's page says so",
+                               "files": sorted(left.values(), key=lambda x: x["source"])})
+    else:
+        left_rec.unlink(missing_ok=True)
 
     files_dir = out / f"{args.name}_files"
     if args.do_zip:
@@ -174,6 +192,10 @@ def main() -> int:
         size = sum(f.stat().st_size for f in files_dir.rglob("*") if f.is_file())
         rows.append((files_dir.name + "/", human(size), "the original PDFs"))
 
+    if left:
+        print(f"Left out {len(left)} PDFs over {args.max_pdf_mib:g} MiB (listed in {left_rec.name}):")
+        for x in sorted(left.values(), key=lambda x: x["source"]):
+            print(f"  {x['file']}  {human(x['bytes'])}  ({x['source']})")
     print("Written:")
     w = max(len(r[0]) for r in rows)
     for name, size, note in rows:
