@@ -29,6 +29,7 @@ import fs from "node:fs";
 import path from "node:path";
 import * as U from "./upc_common.mjs";
 import { textBlocks, contextWindow, windowText, utf16Offsets } from "./context.mjs";
+import { checkStructure, blocksU16, sectionsCompact, readingHtml, READING_JS, READING_CSS } from "./reading.mjs";
 import * as IV from "./interviews.mjs";
 
 const INLINE_TEXT_MAX = 2_000_000;   // a reading copy embedded straight into its page
@@ -226,9 +227,16 @@ export function buildSiteModel(loaded, opts = {}) {
   const passages = [];
   let failures = 0;
   // Per text, computed once: its blocks (context.mjs) and the codepoint → UTF-16 map.
+  // A text with a structure map (a full-text XML's reading copy) knows what each block
+  // is, so "In context" stops at a real heading and steps over a real caption.
   const perText = new Map();
-  const textInfo = (rec) => {
-    if (!perText.has(rec)) perText.set(rec, { blocks: textBlocks(rec.text), u16: utf16Offsets(rec.text) });
+  const textInfo = (rec, repId) => {
+    if (!perText.has(rec)) {
+      const blocks = textBlocks(rec.text), u16 = utf16Offsets(rec.text);
+      const st = structureOf(loaded, repId, rec);
+      if (st) structuredContext(blocks, st, u16);
+      perText.set(rec, { blocks, u16 });
+    }
     return perText.get(rec);
   };
   // Hidden sets (1.15.0): quotations that back a judgement (a rating's evidence),
@@ -272,7 +280,7 @@ export function buildSiteModel(loaded, opts = {}) {
         // "In context": the whole sentences around it, sliced from the same bytes
         // at build time — and only around a quotation this build has just checked.
         if (U.VERIFIED_BADGES.has(badge) && v.start < v.end) {
-          const ti = textInfo(repRec);
+          const ti = textInfo(repRec, o.representation_ref);
           const qa = ti.u16(v.start), qb = ti.u16(v.end);
           const win = contextWindow(repRec.text, qa, qb, { blocks: ti.blocks });
           const t = win && windowText(repRec.text, win, qa, qb);
@@ -286,6 +294,7 @@ export function buildSiteModel(loaded, opts = {}) {
       }
     }
     const secondaryPage = (o.secondary_locators || []).find((s) => s.type === "page");
+    const place = (o.secondary_locators || []).some((s) => s.type === "section" && s.block) ? U.placeOf(o) : "";
     const { time, speakers } = IV.timeOf(o);
     passages.push({
       id: o.extraction_id,
@@ -302,6 +311,7 @@ export function buildSiteModel(loaded, opts = {}) {
       actual, span, context, cx,
       line_range: lineRange,
       page: secondaryPage ? secondaryPage.value : null,
+      place,                   // "§3.2 ¶4": a full-text XML's section and paragraph (paginate.py)
       time, speakers, names: IV.namesOf(o),
       codings: codingsByTarget.get(`extraction:${o.extraction_id}`) || [],
     });
@@ -312,8 +322,15 @@ export function buildSiteModel(loaded, opts = {}) {
   const sources = loaded.sources.filter((s) => !retired.has(s.obj.source_id)).map((s) => {
     const o = s.obj;
     const mine = passages.filter((p) => p.source_id === o.source_id);
-    const texts = (o.representations || []).filter((r) => U.isTextualMedia(r.media_type));
     const pdfs = (o.representations || []).filter((r) => /pdf$/.test(r.media_type));
+    // The text read on the paper's page: the one its passages are anchored in (never a
+    // publisher's XML original over the reading copy made from it).
+    const anchored = new Map();
+    for (const p of mine) anchored.set(p.rep, (anchored.get(p.rep) || 0) + 1);
+    const textRep = U.readingCopyOf(o.representations, anchored);
+    const parent = textRep && textRep.parent_representation_ref
+      ? (o.representations || []).find((r) => r.representation_id === textRep.parent_representation_ref) : null;
+    const xmlRep = parent && /^(text|application)\/xml$/.test(parent.media_type || "") ? parent : null;
     return {
       id: o.source_id,
       slug: String(s.dirRel).split("/").pop(),
@@ -327,8 +344,11 @@ export function buildSiteModel(loaded, opts = {}) {
       aliases: o.aliases || {},
       cite: shortCite(o),
       passages: mine,
-      textRep: texts[0] || null,
+      textRep: textRep || null,
       pdfRep: pdfs[0] || null,
+      xmlRep,                  // a publisher's full-text XML the reading copy was converted from
+      structureRep: textRep ? (o.representations || []).find((r) => r.media_type === U.STRUCTURE_MEDIA_TYPE &&
+        r.parent_representation_ref === textRep.representation_id) || null : null,
       codings: codingsByTarget.get(`source:${o.source_id}`) || [],
       // Recordings (1.16.0): the copy a page plays, its timings, an interview's record.
       interview: IV.interviewOf(o),
@@ -769,7 +789,7 @@ footer{max-width:var(--maxw);margin:0 auto;padding:1.5rem 1rem 3rem;color:var(--
   .reading{max-height:none;overflow:visible}
   a{color:inherit;text-decoration:none}
 }
-`;
+${READING_CSS}`;
 
 const JS = `
 (function(){
@@ -1020,7 +1040,7 @@ const BROWSE_JS = String.raw`
       body="<blockquote"+(cx?" "+QT(s.p):"")+"><mark>"+SP(E(p.q))+"</mark></blockquote>";
       if(bad&&p.act) body+='<p class="small" style="color:var(--warn)">The source now reads: “'+E(p.act.slice(0,240))+'”</p>';
     } else { body='<p class="note">'+E(p.n)+"</p>"; }
-    var where=p.l?"line "+p.l:"";
+    var where=p.l?p.sc||"line "+p.l:"";
     // "line N →" opens the passage where it sits in the paper's text.
     var href=where&&X.hrefText?X.hrefText(p):X.hrefSource(p);
     return '<article class="passage'+(bad?" bad":"")+'" id="'+E(p.id)+'"'+
@@ -1342,10 +1362,10 @@ const BROWSE_JS = String.raw`
       q.value=""; terms=[]; apply();
     });
     host.querySelector("#pcsv").addEventListener("click",function(){
-      var head=["quote","source","year","doi","page","codes","coders","checked"],out=[head.join(",")];
+      var head=["quote","source","year","doi","page","section","codes","coders","checked"],out=[head.join(",")];
       matches.forEach(function(p){
         var s=X.sources[p.s]||{};
-        var f=[p.q||p.n, (s.k||"")+" — "+(s.t||""), s.y||"", s.d||"", p.pg||"",
+        var f=[p.q||p.n, (s.k||"")+" — "+(s.t||""), s.y||"", s.d||"", p.pg||"", p.sc||"",
                p.g.map(function(g){return g[0]+":"+g[1];}).join("; "),
                p.g.map(function(g){return g[2];}).join("; "),
                (X.badges[p.b]||[])[1]||""];
@@ -1813,7 +1833,7 @@ function passageHtml(p, model, base, { showSource = true, context = true, compac
   // "line N →" opens the passage where it sits in the paper's text (#text=, the
   // highlight), not the card it is written on; "See in original, p. N ↗" opens
   // the original — the same pair the passages page shows.
-  const where = p.line_range ? `line ${p.line_range.start}` : "";
+  const where = p.line_range ? p.place || `line ${p.line_range.start}` : "";
   const textHref = where
     ? `${base}sources/${encodeURIComponent(p.source_slug)}.html#text=${encodeURIComponent(p.id)}` : srcHref;
   const pdfName = src && src.pdfRep && !src.pdfOff ? path.basename(src.pdfRep.path) : "";
@@ -2000,6 +2020,8 @@ function sourcePage(model, s, textInfo) {
     b.page ? `pp. ${b.page}` : ""].filter(Boolean).join(" · ");
   const pdfHref = model.filesDir && s.pdfRep && !s.pdfOff
     ? `${base}${model.filesDir}/${encodeURIComponent(path.basename(s.pdfRep.path))}` : null;
+  const xmlHref = model.filesDir && s.xmlRep && !s.xmlOff
+    ? `${base}${model.filesDir}/${encodeURIComponent(path.basename(s.xmlRep.path))}` : null;
   const marks = s.passages.filter((p) => p.quote && p.line_range).sort((a, b2) => (a.line_range.start - b2.line_range.start));
   if (s.interview || s.timingsRep) return recordingPage(model, s, textInfo, marks);
   return page({
@@ -2019,19 +2041,33 @@ ${s.passages.length ? `<div class="evshow">${s.passages.map((p) => passageHtml(p
   : `<p class="muted">No passages have been coded from this paper yet.</p>`}
 
 <h2>The text this was checked against</h2>
-<p class="small muted">Extracted from the PDF${pdfHref ? ` — <a href="${pdfHref}">open the PDF</a>`
-  : model.filesDir && s.pdfOff ? ` — the PDF (${mib(s.pdfOff.bytes)}) is over the ${mib(s.pdfOff.max)} a file can be here, so it is not included` : ""}.
+<p class="small muted">${s.xmlRep ? xmlNote(s, xmlHref, textInfo, model) : `Extracted from the PDF${pdfHref ? ` — <a href="${pdfHref}">open the PDF</a>`
+  : model.filesDir && s.pdfOff ? ` — the PDF (${mib(s.pdfOff.bytes)}) is over the ${mib(s.pdfOff.max)} a file can be here, so it is not included` : ""}.`}
 Highlighted spans are the passages above.${textInfo && textInfo.omitted ? " The full text is too large to show here." : ""}</p>
 ${textInfo && textInfo.inline != null
-  ? `<div class="reading" id="reading">${textInfo.inline}</div>`
+  ? `<div class="reading${textInfo.structured ? " structured" : ""}" id="reading">${textInfo.inline}</div>`
   : textInfo && textInfo.sidecar
-    ? `<div class="reading" id="reading">Loading…</div>
+    ? `<div class="reading${textInfo.structured ? " structured" : ""}" id="reading">Loading…</div>
        <script>document.addEventListener("DOMContentLoaded",function(){
          var el=document.getElementById("reading");
          if(window.__UPC_TEXT)el.innerHTML=window.__UPC_TEXT; else el.textContent="The text could not be loaded.";});</script>`
     : `<p class="muted">Not available.</p>`}
 ${marks.length ? `<p class="small muted">${plural(marks.length, "highlight", "highlights")} in the text above.</p>` : ""}`,
   });
+}
+
+/** "Converted from the publisher's full-text XML …": a full-text XML's reading copy is a
+ *  deterministic text-to-text conversion (badged plain verified, spec/09), with no page
+ *  numbers, so its passages are cited by the paper's own sections. */
+function xmlNote(s, xmlHref, textInfo, model) {
+  const by = textInfo && textInfo.madeBy ? ` by ${esc(textInfo.madeBy)}` : "";
+  const links = [xmlHref ? `<a href="${xmlHref}">open the XML</a>` : "",
+    model.filesDir && s.xmlOff ? `the XML (${mib(s.xmlOff.bytes)}) is over the ${mib(s.xmlOff.max)} a file can be here, so it is not included` : "",
+    s.doi ? `<a href="https://doi.org/${encodeURIComponent(s.doi)}" target="_blank" rel="noopener">the article at doi.org ↗</a>` : ""]
+    .filter(Boolean).join(" · ");
+  return `Converted from the publisher's full-text XML${by}, word for word in reading order. It has no page numbers, so a ` +
+    `passage is cited by the paper's own section and paragraph${textInfo && textInfo.structured ? " (¶ in the margin)" : ""}` +
+    `${links ? ` — ${links}` : ""}.`;
 }
 
 /** A recording's page (1.16.0): who and when, the recording, the answers by question,
@@ -2078,6 +2114,45 @@ function sourceCardsHtml(model, s, links) {
 ${renderOverviewMarkdown(c.md, model, links)}</details>`).join("\n");
 }
 
+const structureCache = new WeakMap();
+
+/** A reading copy's structure map (1.16.0, spec/02), when one is stored for it and fits
+ *  it (reading.mjs checkStructure); else null, and the text reads as paragraphs. */
+function structureOf(loaded, repId, rec) {
+  if (!repId || !rec) return null;
+  let byRep = structureCache.get(loaded);
+  if (!byRep) structureCache.set(loaded, byRep = new Map());
+  if (byRep.has(repId)) return byRep.get(repId);
+  let st = null;
+  const entry = (loaded.representations || []).find((r) => r.obj.media_type === U.STRUCTURE_MEDIA_TYPE &&
+    r.obj.parent_representation_ref === repId && r.contained && fs.existsSync(r.abs));
+  if (entry) {
+    try {
+      const doc = JSON.parse(fs.readFileSync(entry.abs, "utf8"));
+      const got = checkStructure(doc, rec.cps);
+      if (got.ok) st = { sections: got.sections, blocks: got.blocks, made_by: doc.made_by || "" };
+    } catch { st = null; }
+  }
+  byRep.set(repId, st);
+  return st;
+}
+
+// What each kind of block is to "In context" (context.mjs): a map says it outright,
+// so its guesses (a heading glued to a paragraph, a caption at its end) are dropped.
+const CONTEXT_KIND = { paragraph: "prose", list_item: "prose", formula: "prose", heading: "heading", title: "heading",
+  keywords: "heading", caption: "caption", table_note: "caption", box: "caption", row: "label", note: "footnote",
+  reference: "end" };
+
+function structuredContext(blocks, st, u16) {
+  const kindAt = new Map(st.blocks.map((b) => [u16(b.c0), CONTEXT_KIND[b.kind] || "prose"]));
+  for (const b of blocks) {
+    const k = kindAt.get(b.a);
+    if (!k) continue;
+    b.kind = k;
+    delete b.cut; delete b.cutKind; delete b.headLead;
+  }
+}
+
 /** Render the reading copy as paragraphs, with every passage highlighted.
  *
  *  Paragraph elements rather than one `pre-wrap` block: a 78,000-character text
@@ -2088,7 +2163,7 @@ ${renderOverviewMarkdown(c.md, model, links)}</details>`).join("\n");
  *  Offsets are recomputed from the stored quote rather than trusted from the
  *  locator, so a drifted locator cannot smear a highlight across the wrong text.
  */
-function renderReading(text, passages, paraAttr = null) {
+function renderReading(text, passages, paraAttr = null, repId = null, st = null) {
   const cps = Array.from(text);
   const marks = [];
   for (const p of passages) {
@@ -2098,7 +2173,7 @@ function renderReading(text, passages, paraAttr = null) {
     // passage actually is, not at its first occurrence. A quotation that did not
     // verify is looked for by its words instead, so a drifted locator cannot
     // smear a highlight across the wrong text.
-    if (p.span && U.VERIFIED_BADGES.has(p.badge)) {
+    if (p.span && U.VERIFIED_BADGES.has(p.badge) && (!repId || p.rep === repId)) {
       marks.push({ start: p.span[0], end: p.span[1], id: p.id, bad: false });
       continue;
     }
@@ -2108,6 +2183,14 @@ function renderReading(text, passages, paraAttr = null) {
     marks.push({ start, end: start + U.codepointLength(p.quote), id: p.id, bad: p.badge === "failed" });
   }
   marks.sort((a, b) => a.start - b.start || b.end - a.end);
+
+  // A full-text XML's reading copy, by its structure map: headings, tables and
+  // captions as they are, each paragraph's number in the margin (reading.mjs).
+  if (st) {
+    const u = utf16Offsets(text);
+    return readingHtml(text, blocksU16(text, st.blocks), sectionsCompact(st.sections),
+      marks.map((m) => ({ a: u(m.start), b: u(m.end), id: m.id, bad: m.bad })), esc);
+  }
 
   // Paragraph boundaries, in codepoints.
   const paras = [];
@@ -2704,20 +2787,23 @@ export function readAbout(file) {
 
 // --- writer ---------------------------------------------------------------
 
-/** A PDF over `maxBytes` (a host's per-file limit) stays out of a bundle: it is
- *  not copied and not linked, and its paper's page says why, so no link is dead.
- *  Marks those sources (`pdfOff`) and returns [{source, file, bytes}]. */
+/** A PDF (or a publisher's full-text XML) over `maxBytes` (a host's per-file limit)
+ *  stays out of a bundle: it is not copied and not linked, and its paper's page says
+ *  why, so no link is dead. Marks those sources (`pdfOff`, `xmlOff`) and returns
+ *  [{source, file, bytes}]. */
 function leaveOutLarge(loaded, model, maxBytes) {
   const out = [];
   if (!(maxBytes > 0)) return out;
   for (const s of model.sources) {
-    if (!s.pdfRep) continue;
-    const entry = (loaded.representations || []).find((r) => r.obj.representation_id === s.pdfRep.representation_id);
-    if (!entry || !entry.contained || !fs.existsSync(entry.abs)) continue;
-    const bytes = fs.statSync(entry.abs).size;
-    if (bytes > maxBytes) {
-      s.pdfOff = { bytes, max: maxBytes };
-      out.push({ source: s.slug, file: path.basename(s.pdfRep.path), bytes });
+    for (const [rep, off] of [[s.pdfRep, "pdfOff"], [s.xmlRep, "xmlOff"]]) {
+      if (!rep) continue;
+      const entry = (loaded.representations || []).find((r) => r.obj.representation_id === rep.representation_id);
+      if (!entry || !entry.contained || !fs.existsSync(entry.abs)) continue;
+      const bytes = fs.statSync(entry.abs).size;
+      if (bytes > maxBytes) {
+        s[off] = { bytes, max: maxBytes };
+        out.push({ source: s.slug, file: path.basename(rep.path), bytes });
+      }
     }
   }
   return out;
@@ -2806,12 +2892,14 @@ export function writeSite(root, opts = {}) {
             const te = (loaded.representations || []).find((r) => r.obj.representation_id === s.timingsRep.representation_id);
             try { times = IV.paraTimes(JSON.parse(fs.readFileSync(te.abs, "utf8")).segments); } catch { times = null; }
           }
+          const st = structureOf(loaded, s.textRep.representation_id, rec);
+          const read = () => renderReading(rec.text, s.passages, times, s.textRep.representation_id, st);
           if (bytes <= INLINE_TEXT_MAX) {
-            info = { inline: renderReading(rec.text, s.passages, times) };
+            info = { inline: read(), structured: !!st, madeBy: st ? st.made_by : "" };
           } else if (bytes <= SIDECAR_TEXT_MAX) {
             const name = `${s.textRep.representation_id}.js`;
-            w(`data/text/${name}`, `window.__UPC_TEXT=${j(renderReading(rec.text, s.passages, times))};\n`);
-            info = { sidecar: name };
+            w(`data/text/${name}`, `window.__UPC_TEXT=${j(read())};\n`);
+            info = { sidecar: name, structured: !!st, madeBy: st ? st.made_by : "" };
           } else {
             // Never a truncated copy: half a document shown as if it were whole
             // is exactly the kind of lie this projection exists to prevent.
@@ -2865,7 +2953,7 @@ export function writeSite(root, opts = {}) {
   // Optional: carry the actual files, so the folder is self-contained.
   if (opts.bundle) {
     for (const s of model.sources) {
-      for (const r of [s.pdfOff ? null : s.pdfRep, s.textRep].filter(Boolean)) {
+      for (const r of [s.pdfOff ? null : s.pdfRep, s.xmlOff ? null : s.xmlRep, s.textRep].filter(Boolean)) {
         const entry = (loaded.representations || []).find((x) => x.obj.representation_id === r.representation_id);
         if (!entry || !entry.contained || !fs.existsSync(entry.abs)) continue;
         const dest = path.join(outDir, "files", path.basename(r.path));
@@ -3089,6 +3177,10 @@ const CLIENT_ONE = String.raw`
         var i=text.indexOf(p.q);
         if(i>=0) marks.push({a:i,b:i+p.q.length,id:p.id,bad:p.b==="failed"}); });
       marks.sort(function(x,y){return x.a-y.a||y.b-x.b;});
+      // A full-text XML's reading copy, by its structure map (reading.mjs).
+      if(s.st){
+        reading='<div class="reading structured" id="reading">'+upcReadingHtml(text,s.st[0],s.st[1],marks,E)+"</div>";
+      } else {
       // Paragraph by paragraph, so a quotation running over a break is
       // highlighted in each paragraph it covers (only the first piece is the
       // target a link jumps to).
@@ -3110,10 +3202,12 @@ const CLIENT_ONE = String.raw`
         html.push("<p>"+h+E(text.slice(at,pe))+"</p>");
       });
       reading='<div class="reading" id="reading">'+html.join("")+"</div>";
+      }
     }
     return '<p class="small muted" id="crumb"><a href="#/sources">Sources</a></p><h1>'+E(s.t)+"</h1>"+
       '<p class="lede">'+E(bits)+(s.d?' · <a href="https://doi.org/'+encodeURIComponent(s.d)+'">doi:'+E(s.d)+"</a>":"")+
         ((D.files&&s.p)?' · <a href="'+E(D.files+"/"+encodeURIComponent(s.p))+'" target="_blank" rel="noopener">open the PDF ↗</a>':"")+
+        ((D.files&&s.x)?' · <a href="'+E(D.files+"/"+encodeURIComponent(s.x))+'" target="_blank" rel="noopener">open the XML ↗</a>':"")+
         ((D.files&&s.po)?' · the PDF ('+E(s.po)+') is too large to include':"")+"</p>"+
       ((s.g.length||mine.some(function(p){return p.g.length;}))?'<p class="small muted">'+E(UPCB.codeNote())+"</p>":"")+
       (s.cb||"")+
@@ -3124,7 +3218,9 @@ const CLIENT_ONE = String.raw`
       (s.cd||[]).map(function(c){ return '<details class="card evcard"><summary><strong>'+E(c[0])+"</strong></summary>"+c[1]+"</details>"; }).join("")+
       "<h2>Passages ("+mine.length+")</h2>"+
       (mine.length?'<div class="evshow">'+mine.map(function(p){return passageCard(p,{showSource:false,context:false});}).join("")+"</div>":'<p class="muted">No passages from this paper yet.</p>')+
-      (reading?'<h2>The text this was checked against</h2><p class="small muted">Extracted from the PDF. Highlighted spans are the passages above.</p>'+reading:"");
+      (reading?'<h2>The text this was checked against</h2><p class="small muted">'+(s.mf==="xml"?
+        "Converted from the publisher's full-text XML, word for word in reading order. It has no page numbers, so a passage is cited by the paper's own section and paragraph"+(s.st?" (¶ in the margin)":"")+".":
+        "Extracted from the PDF.")+" Highlighted spans are the passages above.</p>"+reading:"");
   };
   V.passages=function(){
     return "<h1>Passages</h1><p class=\"lede\">Every coded passage in the corpus — "+
@@ -3380,6 +3476,7 @@ function browsePayload(model) {
       i, t: s.title, a: s.authors, y: s.year, d: s.doi, c: s.container, k: s.cite, sl: s.slug,
       p: s.pdfRep && !s.pdfOff ? path.basename(s.pdfRep.path) : "",
       ...(s.pdfOff ? { po: mib(s.pdfOff.bytes) } : {}),
+      ...(s.xmlRep ? { mf: "xml", ...(s.xmlOff ? {} : { x: path.basename(s.xmlRep.path) }) } : {}),
       ...(s.audioHref ? { au: s.audioHref } : {}),
       g: s.codings.map((c) => [c.codebook_slug, c.code != null ? c.code : c.value, c.coder, c.confidence, c.rationale || ""]),
     };
@@ -3393,6 +3490,7 @@ function browsePayload(model) {
     st: p.status === "active" ? "" : p.status,
     l: p.line_range ? p.line_range.start : 0,
     pg: p.page || 0,
+    ...(p.place ? { sc: p.place } : {}),
     ...(p.time ? { tm: [p.time.start, p.time.end] } : {}),
     ...(p.speakers && p.speakers.length ? { sp: p.speakers } : {}),
     act: p.badge === "failed" ? p.actual : null,
@@ -3452,17 +3550,21 @@ export function writeSingleFile(root, opts = {}) {
 
   const texts = [];
   if (withText) {
-    for (const s of model.sources) {
+    model.sources.forEach((s, i) => {
       let body = "";
       if (s.textRep) {
         const entry = (loaded.representations || []).find((r) => r.obj.representation_id === s.textRep.representation_id);
         if (entry && entry.contained && fs.existsSync(entry.abs)) {
           const rec = U.getRepFile(entry.abs);
-          if (rec.utf8ok) body = rec.text;
+          if (rec.utf8ok) {
+            body = rec.text;
+            const st = structureOf(loaded, s.textRep.representation_id, rec);
+            if (st) sources[i].st = [blocksU16(body, st.blocks), sectionsCompact(st.sections)];
+          }
         }
       }
       texts.push(body);
-    }
+    });
   }
 
   // Where each verified quotation sits in the text the file carries, so the
@@ -3569,6 +3671,7 @@ nav a{cursor:pointer}
 ${textIslands}
 <script>${BROWSE_JS}</script>
 <script>${FINDINGS_JS}</script>
+<script>var upcReadingHtml=${READING_JS};</script>
 <script>${CLIENT_ONE}</script>
 </body></html>
 `;
@@ -3586,14 +3689,16 @@ ${textIslands}
     const dir = path.join(path.dirname(out), opts.files);
     fs.mkdirSync(dir, { recursive: true });
     for (const s of model.sources) {
-      if (!s.pdfRep || s.pdfOff) continue;
-      const entry = (loaded.representations || []).find((r) => r.obj.representation_id === s.pdfRep.representation_id);
-      if (!entry || !entry.contained || !fs.existsSync(entry.abs)) continue;
-      const dest = path.join(dir, path.basename(s.pdfRep.path));
-      if (!fs.existsSync(dest) || fs.statSync(dest).size !== fs.statSync(entry.abs).size) {
-        fs.copyFileSync(entry.abs, dest);
+      for (const rep of [s.pdfOff ? null : s.pdfRep, s.xmlOff ? null : s.xmlRep]) {
+        if (!rep) continue;
+        const entry = (loaded.representations || []).find((r) => r.obj.representation_id === rep.representation_id);
+        if (!entry || !entry.contained || !fs.existsSync(entry.abs)) continue;
+        const dest = path.join(dir, path.basename(rep.path));
+        if (!fs.existsSync(dest) || fs.statSync(dest).size !== fs.statSync(entry.abs).size) {
+          fs.copyFileSync(entry.abs, dest);
+        }
+        copied++;
       }
-      copied++;
     }
   }
 

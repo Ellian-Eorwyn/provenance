@@ -15,7 +15,7 @@ import {
   charToLine, lineRangeForCharRange, textLines, resolveLocator, isTranscriptRole,
   isDerivedText, isTextualMedia, isModelRewrittenText,
   mintCbkId, mintCodId, codebookRevisionDigest, mintRepId, canonicalUrl as _cu,
-  normalizeForRefind, refindSpan, timestampProblem, TIMINGS_MEDIA_TYPE,
+  normalizeForRefind, refindSpan, timestampProblem, TIMINGS_MEDIA_TYPE, placeOf,
 } from "../skill/universal-provenance/scripts/upc_common.mjs";
 import { speech, clock, paraTimes, namesOf, answersByQuestion } from "../skill/universal-provenance/scripts/interviews.mjs";
 import { buildRoCrateGraph, fragmentForLocator, selectorsForLocator, buildAnnotationTargets } from "../skill/universal-provenance/scripts/ro-crate.mjs";
@@ -26,6 +26,7 @@ import { buildVaultPlan, writeVault, loadProfile, renderCallout, serializeFrontm
 import { validateCorpus, anchorCmd, codeCmd, codebookCmd, batchCmd, mintBatchCmd, locateCmd, satisfiesRequirement, specVersion, addSourceCmd, addSynthesisCmd, addGenerationCmd } from "../skill/universal-provenance/scripts/upc.mjs";
 import { buildSiteModel, writeSite, writeSingleFile, renderOverviewMarkdown } from "../skill/universal-provenance/scripts/site.mjs";
 import { textBlocks, contextWindow, windowText, utf16Offsets, CONTEXT_CAP } from "../skill/universal-provenance/scripts/context.mjs";
+import { checkStructure, readingHtml, READING_JS, blocksU16, sectionsCompact, STRUCTURE_MEDIA_TYPE } from "../skill/universal-provenance/scripts/reading.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
@@ -3051,6 +3052,126 @@ ok("filename rejects reserved", !checkFilename("sources/con/x.md").ok);
     /No interviews yet/.test(fs.readFileSync(path.join(eout, "index.html"), "utf8"))
     && /No interviews yet/.test(fs.readFileSync(path.join(eout, "questions", "index.html"), "utf8"))
     && fs.existsSync(path.join(eout, "questions", "q2.html")));
+  fs.rmSync(tmp, { recursive: true, force: true });
+}
+
+// --- full text as XML (1.16.0): the reading copy, its structure map, § ¶ ---
+{
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "upc-xml-"));
+  const dir = path.join(tmp, "corpus"), stage = path.join(tmp, "stage");
+  fs.mkdirSync(stage);
+  fs.mkdirSync(path.join(dir, "provenance"), { recursive: true });
+  fs.writeFileSync(path.join(dir, "provenance", "events.jsonl"), "");
+  fs.writeFileSync(path.join(dir, "corpus.json"), JSON.stringify({ upc_spec_version: specVersion(), corpus_id: "cor-0123456789ac",
+    title: "Full text as XML", sections: { sources: "sources/", extractions: "extractions/", codebooks: "codebooks/",
+      codings: "codings/", provenance: "provenance/events.jsonl" } }));
+  // A reading copy as xmltext.py writes it, and the map it makes beside it.
+  const parts = [
+    ["# Panels everywhere", "title"], ["## Abstract", "heading", 0], ["We study panels.", "paragraph", 0, 1],
+    ["## 1 Introduction", "heading", 1], ["Fig. 1 shows the homes.", "paragraph", 1, 1],
+    ["Fig. 1. Homes by panel size.", "caption", 1, 1, { label: "Fig. 1" }], ["Table 1. Costs.", "caption", 1, 1, { label: "Table 1" }],
+    ["Panel | Cost", "row", 1, 1, { label: "Table 1", t: 0, head: true }], ["100 A | $2,000", "row", 1, 1, { label: "Table 1", t: 0 }],
+    ["Costs vary by size. They vary a lot.", "paragraph", 1, 2], ["We thank the homeowners.", "paragraph", 2, 1],
+  ];
+  const text = parts.map((x) => x[0]).join("\n\n") + "\n";
+  let at = 0;
+  const blocks = parts.map(([t, kind, sx, px, extra]) => {
+    const b = { kind, c0: at, c1: at + t.length, ...(sx != null ? { s: sx } : {}), ...(px ? { p: px } : {}), ...(extra || {}) };
+    if (kind === "row") { const i = t.indexOf(" | "); b.cells = [[at, at + i], [at + i + 3, at + t.length]]; }
+    at += t.length + 2;
+    return b;
+  });
+  const map = { upc_structure: 1, made_by: "xmltext 1.2.0", format: "elsevier-ce", chars: text.length, blocks, sections: [
+    { label: "", title: "Abstract", depth: 2, heading: true, parent: null },
+    { label: "1", title: "Introduction", depth: 2, heading: true, parent: null },
+    { label: "", title: "Acknowledgments", depth: 2, heading: false, parent: null }] };
+  fs.writeFileSync(path.join(stage, "paper.xml"), "<full-text-retrieval-response>the publisher's XML</full-text-retrieval-response>\n");
+  fs.writeFileSync(path.join(stage, "paper.txt"), text);
+  fs.writeFileSync(path.join(stage, "paper.structure.json"), JSON.stringify(map) + "\n");
+  const added = addSourceCmd(dir, [{ title: "Panels everywhere", source_kind: "document",
+    bibliographic: { title: "Panels everywhere", doi: "10.1016/j.test.2024.000001" },
+    files: [
+      { path: path.join(stage, "paper.xml"), role: "original", media_type: "text/xml", produced_by: "import" },
+      { path: path.join(stage, "paper.txt"), role: "text", media_type: "text/plain", produced_by: "conversion", parent: 0 },
+      { path: path.join(stage, "paper.structure.json"), role: "metadata", media_type: STRUCTURE_MEDIA_TYPE, produced_by: "conversion", parent: 1 },
+    ] }], { tool: "selftest" });
+  const [xmlRep, textRep] = added.results[0].representation_ids;
+  clearRepCache();
+  const sec = (extra) => [{ type: "section", representation_ref: textRep, ...extra }];
+  const res = anchorCmd(dir, textRep, [
+    { quote: "Costs vary by size.", type: "quote",
+      secondary_locators: sec({ value: "1 Introduction", block: "paragraph", label: "1", title: "Introduction", paragraph: 2 }) },
+    { quote: "100 A | $2,000", type: "quote",
+      secondary_locators: sec({ value: "1 Introduction", block: "row", label: "1", title: "Introduction", item: "Table 1" }) },
+    { quote: "We thank the homeowners.", type: "quote",
+      secondary_locators: sec({ value: "Acknowledgments", block: "paragraph", title: "Acknowledgments", paragraph: 1 }) },
+  ], { tool: "selftest" });
+  eq("xml: three passages anchored in the reading copy", res.tally.anchored, 3);
+  clearRepCache();
+  const rep0 = validateCorpus(dir);
+  eq("xml: the corpus validates, the map with it", [rep0.errors.length, rep0.warnings.filter((w) => /^structure_/.test(w.code)).length], [0, 0]);
+
+  // The cite rule, the same cases the toolkit's common.place_of passes.
+  for (const c of JSON.parse(fs.readFileSync(path.join(HERE, "section-cites.json"), "utf8")).cases) {
+    eq(`placeOf: ${c.cite || "(none)"}`, placeOf({ secondary_locators: c.locators }), c.cite);
+  }
+  eq("checkStructure: a map that fits its text", checkStructure(map, Array.from(text)).ok, true);
+  ok("checkStructure: text between blocks is caught",
+    /text between blocks/.test(checkStructure({ ...map, chars: undefined, blocks: [{ ...blocks[0], c1: blocks[0].c1 - 2 }, blocks[1]] }, Array.from(text)).problem));
+  // The page carries the renderer's own source: the same HTML either way.
+  const u16 = blocksU16(text, blocks), secs = sectionsCompact(map.sections);
+  const E = (x) => String(x).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  const marks = [{ a: text.indexOf("Costs vary"), b: text.indexOf("Costs vary") + 19, id: "ext-x" }];
+  eq("readingHtml: the page's copy renders as the build's", new Function(`return (${READING_JS})`)()(text, u16, secs, marks, E),
+    readingHtml(text, u16, secs, marks, E));
+
+  const model = buildSiteModel(loadCorpus(dir));
+  const s = model.sources[0];
+  eq("xml: the reading copy is the text, never the XML original", [s.textRep.representation_id, s.xmlRep.representation_id], [textRep, xmlRep]);
+  eq("xml: a text converted from XML is plain verified (spec/09)", [...new Set(model.passages.map((p) => p.badge))], ["verified"]);
+  eq("xml: passages cite their section and paragraph", model.passages.map((p) => p.place).sort(), ["Acknowledgments ¶1", "Table 1", "§1 ¶2"]);
+
+  const out = path.join(tmp, "site");
+  writeSite(dir, { out, bundle: true });
+  const page = fs.readFileSync(path.join(out, "sources", `${s.slug}.html`), "utf8");
+  ok("xml site: the text is shown by its structure", /class="reading structured"/.test(page));
+  ok("xml site: headings as headings", /<h3 class="r-h">1 Introduction<\/h3>/.test(page) && !/## 1 Introduction/.test(page));
+  ok("xml site: each paragraph's number in the margin", /<p class="r-p" data-p="2"><mark id="t-[^"]+">Costs vary by size\.<\/mark> They vary a lot\.<\/p>/.test(page));
+  ok("xml site: a table as a table, its passage marked in its cell",
+    /<table><tr><th>Panel<\/th><th>Cost<\/th><\/tr><tr><td><mark id="t-[^"]+">100 A<\/mark><\/td><td><mark data-for="t-[^"]+">\$2,000<\/mark><\/td><\/tr><\/table>/.test(page));
+  ok("xml site: captions as captions, body text that names the figure as body text",
+    /<p class="r-cap">Fig\. 1\. Homes by panel size\.<\/p>/.test(page) && /<p class="r-p" data-p="1">Fig\. 1 shows the homes\.<\/p>/.test(page));
+  ok("xml site: a section the text has no heading for is named outside it", /<div class="r-part" data-label="Acknowledgments"><\/div>/.test(page));
+  ok("xml site: says it was converted from the publisher's XML, not extracted from a PDF",
+    /Converted from the publisher's full-text XML by xmltext 1\.2\.0/.test(page) && !/Extracted from the PDF/.test(page));
+  ok("xml site: links the XML and the DOI", /href="\.\.\/files\/paper\.xml">open the XML/.test(page) &&
+    /href="https:\/\/doi\.org\/10\.1016%2Fj\.test\.2024\.000001"/.test(page) && fs.existsSync(path.join(out, "files", "paper.xml")));
+  ok("xml site: a passage's card says § ¶ where a PDF's says the line", />§1 ¶2 →<\/a>/.test(page) && />Acknowledgments ¶1 →<\/a>/.test(page));
+  ok("xml site: the browse data carries the cite", /"sc":"§1 ¶2"/.test(fs.readFileSync(path.join(out, "data", "browse.js"), "utf8")));
+
+  const one = path.join(tmp, "one.html");
+  writeSingleFile(dir, { out: one, files: "one_files" });
+  const oneHtml = fs.readFileSync(one, "utf8");
+  ok("xml single file: carries the renderer and each text's map", /var upcReadingHtml=function readingHtml/.test(oneHtml) && /"st":\[\[\["title",0,/.test(oneHtml));
+  ok("xml single file: the XML travels beside it", fs.existsSync(path.join(tmp, "one_files", "paper.xml")) && /"x":"paper\.xml"/.test(oneHtml));
+
+  const bm = buildBrowserModel(loadCorpus(dir));
+  ok("xml browser: the text is embedded with its map", Array.isArray(bm.reps[textRep].structure) && bm.reps[textRep].structure[0].length === blocks.length);
+  ok("xml browser: the section chip cites § ¶", bm.extractions.some((e) => e.anchors.some((a) => a.cite === "§1 ¶2")));
+
+  // A map that does not fit is reported, and not used.
+  const mapPath = path.join(dir, "sources", s.slug, "representations", "paper.structure.json");
+  const good = fs.readFileSync(mapPath);
+  fs.writeFileSync(mapPath, JSON.stringify({ ...map, blocks: [{ ...blocks[0], c1: 99999 }] }));
+  clearRepCache();
+  ok("structure: a block past its text is reported", validateCorpus(dir).warnings.some((w) => w.code === "structure_char_mismatch"));
+  writeSite(dir, { out: path.join(tmp, "site2") });
+  ok("structure: a map that does not fit is not used", !/class="reading structured"/.test(
+    fs.readFileSync(path.join(tmp, "site2", "sources", `${s.slug}.html`), "utf8")));
+  fs.writeFileSync(mapPath, "not json");
+  clearRepCache();
+  ok("structure: an unreadable map is reported", validateCorpus(dir).warnings.some((w) => w.code === "structure_unreadable"));
+  fs.writeFileSync(mapPath, good);
   fs.rmSync(tmp, { recursive: true, force: true });
 }
 

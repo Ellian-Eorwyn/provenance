@@ -19,7 +19,9 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadCorpus, getRepFile, bareHash, atomicWriteFile, badgeForExtraction, VERIFIED_BADGES,
-  resolveLocator, lineRangeForCharRange, textLines, isTextualMedia as U_TEXTUAL } from "./upc_common.mjs";
+  resolveLocator, lineRangeForCharRange, textLines, isTextualMedia as U_TEXTUAL, sectionCite,
+  STRUCTURE_MEDIA_TYPE } from "./upc_common.mjs";
+import { checkStructure, blocksU16, sectionsCompact, READING_JS, READING_CSS } from "./reading.mjs";
 
 const TEXTUAL = U_TEXTUAL; // shared predicate (upc_common), kept as a local alias
 const CTX = 90; // codepoints of context on each side
@@ -119,6 +121,8 @@ export function buildModel(loaded) {
     for (const sec of o.secondary_locators || []) {
       const r = slim(resolveLocator(loaded, sec, { context: 0 }), false);
       if (sec && sec.representation_ref && sec.representation_ref !== o.representation_ref) r.cross_representation = true;
+      // A full-text XML's section and paragraph (paginate.py): "§3.2 ¶4", opening the text at the passage.
+      if (sec && sec.type === "section" && sec.block) r.cite = sectionCite(sec);
       anchors.push(r);
     }
     let lineRange = null;
@@ -181,6 +185,13 @@ export function buildModel(loaded) {
   }
   let spent = 0, embedded = 0, skipped = 0;
   const reps = {};
+  // A reading copy's structure map (1.16.0): the viewer shows the text by it, when it fits.
+  const structureOf = new Map();
+  for (const r of loaded.representations) {
+    if (r.obj.media_type === STRUCTURE_MEDIA_TYPE && r.obj.parent_representation_ref && r.contained && fs.existsSync(r.abs)) {
+      structureOf.set(r.obj.parent_representation_ref, r);
+    }
+  }
   // Representations an extraction actually points into get the budget first.
   const ordered = loaded.representations.slice().sort((a, b) =>
     (targeted.has(b.obj.representation_id) ? 1 : 0) - (targeted.has(a.obj.representation_id) ? 1 : 0));
@@ -203,7 +214,16 @@ export function buildModel(loaded) {
       if (size > EMBED_MAX_REP || spent + size > EMBED_BUDGET) { rec.tooLarge = true; skipped++; }
       else {
         const rr = getRepFile(r.abs);
-        if (rr.utf8ok) { rec.text = rr.text; rec.lineCount = textLines(rr.text).length; spent += size; embedded++; }
+        if (rr.utf8ok) {
+          rec.text = rr.text; rec.lineCount = textLines(rr.text).length; spent += size; embedded++;
+          const st = structureOf.get(o.representation_id);
+          if (st) {
+            try {
+              const got = checkStructure(JSON.parse(fs.readFileSync(st.abs, "utf8")), rr.cps);
+              if (got.ok) rec.structure = [blocksU16(rr.text, got.blocks), sectionsCompact(got.sections)];
+            } catch { /* not JSON: upc validate says so; the text shows by lines */ }
+          }
+        }
         else rec.notUtf8 = true;
       }
     }
@@ -257,6 +277,7 @@ function renderHtml(model) {
 <div id="banner"></div>
 <main id="app"></main>
 <footer>Read-only projection of the structured objects. Regenerate with <code>upc regen</code>. Quotations verified byte-for-byte at build time (spec/03).</footer>
+<script>var upcReadingHtml=${READING_JS};</script>
 <script>${CLIENT}</script>
 </body>
 </html>
@@ -266,6 +287,11 @@ function renderHtml(model) {
 const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
 const CSS = `
+.vbody .reading{padding:6px 18px 14px 14px;font-size:14.5px;line-height:1.65;max-width:52rem}
+.vbody .reading p{margin:.55rem 0}
+.vbody .reading mark{background:#f6e0b6;color:inherit;padding:0 2px;border-radius:3px}
+:root[data-theme=dark] .vbody .reading mark{background:#5a4a1e}
+${READING_CSS}
 :root{--bg:#faf6f0;--panel:#fff;--ink:#2a2320;--muted:#7a6f66;--line:#e4d9cc;--copper:#a4552b;--ember:#c6712f;--ok:#2f7d4f;--bad:#b23b2e;--warn:#9a6a12;--chip:#f0e7db;--serif:"Iowan Old Style",Palatino,"EB Garamond",Georgia,serif;--mono:"SF Mono",ui-monospace,Menlo,Consolas,monospace}
 :root[data-theme=dark],:root:not([data-theme=light]) @media (prefers-color-scheme:dark){}
 @media (prefers-color-scheme:dark){:root:not([data-theme=light]){--bg:#1b1613;--panel:#241d18;--ink:#ece3d8;--muted:#a99a8c;--line:#3a2f27;--copper:#d98a52;--ember:#e0975a;--chip:#2c231d}}
@@ -394,6 +420,8 @@ function anchorChips(e){
       chip(r.start===r.end?("line "+r.start):("lines "+r.start+"\u2013"+r.end),
         a.representation_ref,{kind:"line_range",start:r.start,end:r.end},key,true);}
     else if(a.kind==="timestamp_range")wrap.append(el("span",{class:"anchor adv"},"time "+(a.fragment||"")));
+    else if(a.cite){const p=(e.anchors||[])[0]||{},cr=p.char_range||{start:0,end:0};
+      chip(a.cite,e.representation_ref,{kind:"char_range",start:cr.start,end:cr.end,line:e.lineRange},key,true);}
     else if(a.value!=null)wrap.append(el("span",{class:"anchor adv"},a.kind+": "+String(a.value).slice(0,60)));
     if(a.cross_representation&&a.representation)wrap.append(el("span",{class:"anchor adv"},"\u2192 "+a.representation.role+" "+a.representation.id));
   });
@@ -466,6 +494,17 @@ function paintText(body,r,focus){
   if(r.tooLarge){body.append(el("div",{class:"vempty"},"This representation is too large to embed in the browser. Nothing is shown rather than a truncated document \u2014 use \u201copen externally\u201d."));return;}
   if(r.notUtf8){body.append(el("div",{class:"vempty"},"This representation is not valid UTF-8, so it has no text rendering."));return;}
   if(r.text==null){body.append(el("div",{class:"vempty"},"This representation was not embedded \u2014 use \u201copen externally\u201d."));return;}
+  // A full-text XML's reading copy, by its structure map (reading.mjs): headings,
+  // tables and captions as they are, each paragraph's number in the margin.
+  if(r.structure){
+    const u16=cp=>{if(!/[\\uD800-\\uDFFF]/.test(r.text))return cp;let u=0,i=0;for(const ch of r.text){if(i===cp)return u;u+=ch.length;i++;}return u;};
+    const marks=focus&&focus.kind==="char_range"&&focus.end>focus.start?[{a:u16(focus.start),b:u16(focus.end)}]:[];
+    const div=el("div",{class:"reading structured",html:upcReadingHtml(r.text,r.structure[0],r.structure[1],marks,esc)});
+    body.append(div);
+    const m=div.querySelector("mark");
+    if(m)setTimeout(()=>{m.scrollIntoView({block:"center"});},0);
+    return;
+  }
   const cps=Array.from(r.text);
   const lines=[];let st=0;
   for(let i=0;i<cps.length;i++)if(cps[i]==="\\n"){lines.push([st,i]);st=i+1;}
