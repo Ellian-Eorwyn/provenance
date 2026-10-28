@@ -258,6 +258,7 @@ def llm_chat(system: str, user: str, *, url: str = CHAT_URL, model: str = DEFAUL
         "prompt_tokens": usage.get("prompt_tokens"),
         "completion_tokens": usage.get("completion_tokens"),
         "finish_reason": (j["choices"][0] or {}).get("finish_reason"),
+        "headers": r.headers,  # case-insensitive; llm_pool.is_relayed reads them: did a proxy answer from another server?
     }
 
 

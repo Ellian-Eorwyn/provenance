@@ -34,6 +34,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 import common as C  # noqa: E402
+import llm_pool  # noqa: E402
 
 MIN_QUOTE = 24
 MAX_QUOTE = 380
@@ -193,6 +194,9 @@ def main() -> int:
     ap.add_argument("--coder", default="", help="the coder's handle (default: settings coders.code)")
     ap.add_argument("--model", default=C.DEFAULT_MODEL)
     ap.add_argument("--url", default=C.CHAT_URL)
+    ap.add_argument("--pool", action="store_true",
+                    help="read papers on every server in the machine's pool at once (one worker each; the same model "
+                         "on each), writing the corpus one paper at a time")
     ap.add_argument("--set", dest="cds", default=None, help="coding set id (default cds-<coder>)")
     ap.add_argument("--extraction-set", dest="exs", default=None)
     ap.add_argument("--prompt-version", default="code_pass.v3")
@@ -239,6 +243,7 @@ def main() -> int:
         todo = todo[:args.limit]
 
     prompt = system_prompt(books)
+    endpoints = dict(llm_pool.ENDPOINTS) if args.pool else {}
     calls = [len(split_for_model(Path(info["text_path"]).read_text(encoding="utf-8"), args.max_chars))
              for _alias, info in todo]
     C.counts_header("Coding plan", [
@@ -249,7 +254,8 @@ def main() -> int:
                                   f"({sum(calls)} model calls in all, at most {args.max_chars:,} characters each)"),
         ("codebooks", f"{len(books)} ({', '.join(b['slug'] for b in books)})"),
         ("coder", args.coder),
-        ("model", f"{args.model} at {args.url}"),
+        ("model", f"{args.model} on " + ", ".join(f"{k} ({v})" for k, v in endpoints.items()) if endpoints
+                  else f"{args.model} at {args.url}"),
         ("prompt", f"{args.prompt_version} ({len(prompt)} chars)"),
         ("upc", spec),
     ])
@@ -268,11 +274,11 @@ def main() -> int:
     t_start = time.time()
 
     pause = st_dir.parent / "PAUSE"  # touch it to stop after the paper in hand; the same command resumes
-    for n, (alias, info) in enumerate(todo, 1):
-        if pause.exists():
-            print(f"  paused before paper {n} of {len(todo)} ({pause} exists): delete it and run the same command to go on",
-                  flush=True)
-            break
+    done_n = [0]
+
+    def read_paper(alias: str, info: dict, url: str, pooled: bool = False) -> dict:
+        """The model's passages for one paper, every part through one server. Pooled, a server that doesn't answer
+        (or a proxy that answers from another server) raises, so the pool gives the paper to another worker."""
         t0 = time.time()
         text = Path(info["text_path"]).read_text(encoding="utf-8")
         parts = split_for_model(text, args.max_chars)
@@ -293,12 +299,16 @@ def main() -> int:
                      "and at most 14 passages in total. A complete short answer beats a long one "
                      "that gets cut off."))):
                 try:
-                    res = C.llm_chat(prompt + extra, user, url=args.url, model=args.model,
+                    res = C.llm_chat(prompt + extra, user, url=url, model=args.model,
                                      max_tokens=cap, schema=SCHEMA)
                 except C.Unavailable as e:
+                    if pooled:
+                        raise llm_pool.Unavailable(str(e)) from None
                     print(f"  UNAVAILABLE {alias}: {e}")
                     res = None
                     break
+                if pooled and llm_pool.is_relayed(res.get("headers") or {}, url):
+                    raise llm_pool.Relayed(url)
                 parsed = C.parse_json_loose(res["content"])
                 if parsed and "passages" in parsed:
                     if attempt:
@@ -313,11 +323,20 @@ def main() -> int:
             proposed.extend(parsed["passages"])
             for key in usage:
                 usage[key] += (res or {}).get(key) or 0
+        return {"t0": t0, "text": text, "parts": parts, "proposed": proposed, "res": res, "failed": failed,
+                "usage": usage}
+
+    def write_paper(alias: str, info: dict, got: dict, server: str = "") -> None:
+        """Anchor and code one paper's passages and record it. Pooled, the pool runs this under its lock, so the
+        corpus is written by one paper at a time."""
+        done_n[0] += 1
+        n = done_n[0]
+        text, parts, proposed, res, failed, usage = (got[k] for k in ("text", "parts", "proposed", "res", "failed", "usage"))
         if failed:
             part_label = f"part {failed[0]} of {len(parts)}: " if len(parts) > 1 else ""
             print(f"  UNAVAILABLE {alias}: {part_label}the model did not return usable JSON (finish: {failed[1]})")
             totals["failed_papers"] += 1
-            continue
+            return
         if len(parts) > 1:
             totals["multi_part"] += 1
         kept, drops = clean_passages(proposed, books_by_slug)
@@ -370,9 +389,10 @@ def main() -> int:
             "alias": alias, "source_id": info["source_id"],
             "proposed": len(proposed), "kept": len(kept), "drops": drops,
             "anchor": at, "code": ct, "parts": len(parts),
-            "seconds": round(time.time() - t0, 1),
+            "seconds": round(time.time() - got["t0"], 1),
             "prompt_tokens": usage["prompt_tokens"], "completion_tokens": usage["completion_tokens"],
             "finish_reason": (res or {}).get("finish_reason"),
+            **({"server": server} if server else {}),  # which server in the pool read it (same model, its own engine)
         }
         C.save_json(st_dir / f"{alias}.json", rec)
         C.log_timing(corpus, {"stage": "code_pass", **rec})
@@ -389,8 +409,32 @@ def main() -> int:
         left = int(rate * (len(todo) - n))
         print(f"  [{n}/{len(todo)}] {alias}: {len(proposed)} proposed, "
               f"{at.get('anchored', 0)}+{at.get('refound', 0)} anchored, "
-              f"{ct.get('coded', 0)} codings, {rec['seconds']}s"
-              f"  (~{left // 60}m {left % 60}s left)")
+              f"{ct.get('coded', 0)} codings, {rec['seconds']}s{f' on {server}' if server else ''}"
+              f"  (~{left // 60}m {left % 60}s left)", flush=True)
+
+    if endpoints:
+        def work(item, name, url):
+            if pause.exists():
+                raise llm_pool.Unavailable("paused")
+            return read_paper(item[0], item[1], url, pooled=True)
+
+        problems, left_over = llm_pool.run_all(todo, work, lambda item, got, name, _s: write_paper(*item, got, name),
+                                               endpoints)
+        if pause.exists():
+            print(f"  paused with {len(left_over)} of {len(todo)} papers left ({pause} exists): "
+                  f"delete it and run the same command to go on", flush=True)
+        for prob in problems:
+            if not prob.endswith("paused; the rest ran on the other servers only"):
+                print(f"  POOL {prob}", flush=True)
+        if left_over and not pause.exists():
+            print(f"  {len(left_over)} papers left: no server could take them; run the same command again", flush=True)
+    else:
+        for n, (alias, info) in enumerate(todo, 1):
+            if pause.exists():
+                print(f"  paused before paper {n} of {len(todo)} ({pause} exists): delete it and run the same command to go on",
+                      flush=True)
+                break
+            write_paper(alias, info, read_paper(alias, info, args.url))
 
     C.upc("regen", str(corpus))
     rep = C.upc("validate", str(corpus))

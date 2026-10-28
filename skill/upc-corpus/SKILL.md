@@ -164,6 +164,13 @@ task, embeddings, or several chat servers in a `pool`) may run at once.
    should be above about 90%; if it isn't, see Known failures.
 5. **Full pass**, only when the owner says so: the same command without `--limit`, in the
    background (179 papers took 2 h 20).
+   - `--pool` reads papers on every chat server in the machine's `pool` at once, one each,
+     and writes the corpus one paper at a time: with two servers, about twice as fast. Each
+     paper's record (`code_pass/<coder>/<id>.json`) says which server read it. A server that
+     stops answering, or whose proxy relays to another, drops out and the others go on.
+   - To pause, create `<corpus>/.upc/upc-corpus/code_pass/PAUSE`: the pass stops after the
+     paper (or, pooled, the papers) in hand and validates. Delete the file and run the same
+     command to go on.
 6. **Screen whole papers** (relevance, kind of study; about 2 s each on a 9B model):
    ```
    <python> -u <skill>/scripts/screen.py --corpus <corpus> --coder <ns>-<model>-screen-v1 --context "<what the team is studying>"
