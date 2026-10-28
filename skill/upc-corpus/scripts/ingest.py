@@ -16,6 +16,9 @@ The config names where things are and how the manifest's columns map:
                   "status":"status","note":"source"}
     }
 
+Optional columns: "journal" (container title), and "type" (a CSL item type: report, chapter, …; default
+article-journal) and "publisher", read only when the map names them.
+
 A manifest row may name a publisher's full-text XML (`.xml`) instead of a PDF, where the publisher serves the version
 of record's full text only as XML (Elsevier). It is kept as the source's original and xmltext.py makes its reading
 copy, which has no page numbers; an XML that is metadata only is refused.
@@ -121,7 +124,10 @@ def build_record(row: dict, cols: dict, cfg: dict, pdf: Path, txt: Path, info: d
     first = authors[0]["family"].lower() if authors else "anon"
     slug_bits = [rid, re.sub(r"[^a-z0-9]+", "-", first).strip("-"), str(year or "")]
 
-    bib = {"item_type": "article-journal", "title": title}
+    # A manifest may say what each item is (CSL type) and who published it; only when its column map
+    # names them, so an unrelated "type" column in an older manifest changes nothing.
+    item_type = get("type") if "type" in cols else ""
+    bib = {"item_type": item_type or "article-journal", "title": title}
     if authors:
         bib["authors"] = authors
     if year:
@@ -130,6 +136,8 @@ def build_record(row: dict, cols: dict, cfg: dict, pdf: Path, txt: Path, info: d
         bib["doi"] = doi
     if get("journal"):
         bib["container_title"] = get("journal")
+    if "publisher" in cols and get("publisher"):
+        bib["publisher"] = get("publisher")
 
     # Where each bibliographic field came from, and whether the document agrees.
     manifest_name = Path(cfg["manifest"]).name

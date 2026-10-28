@@ -49,6 +49,27 @@ def sidecar(pdf: Path, sha: str) -> dict:
             "tool": "pdf-harvest", "route": "open access copy"}
 
 
+class Record(unittest.TestCase):
+    ROW = {"id": "r0001", "title": "A pilot", "authors": "Ann Lee", "year": "2025", "doc_type": "report",
+           "org": "CalMTA", "file": "r0001.pdf"}
+
+    def record(self, cols):
+        with tempfile.TemporaryDirectory() as d:
+            pdf, txt = Path(d) / "r0001.pdf", Path(d) / "r0001.txt"
+            return ingest.build_record(self.ROW, cols, {"manifest": "m.csv", "namespace": "t"}, pdf, txt,
+                                       {"pages": 3}, None)["bibliographic"]
+
+    def test_type_and_publisher_come_from_the_columns_the_map_names(self):
+        bib = self.record({"id": "id", "title": "title", "authors": "authors", "year": "year",
+                           "type": "doc_type", "publisher": "org"})
+        self.assertEqual((bib["item_type"], bib["publisher"]), ("report", "CalMTA"))
+
+    def test_without_them_an_item_is_a_journal_article_as_before(self):
+        bib = self.record({"id": "id", "title": "title", "authors": "authors", "year": "year"})
+        self.assertEqual(bib["item_type"], "article-journal")
+        self.assertNotIn("publisher", bib)
+
+
 class Sidecar(unittest.TestCase):
     def test_a_sidecar_becomes_retrieval_only_when_it_matches(self):
         with tempfile.TemporaryDirectory() as d:

@@ -19,6 +19,10 @@ existing `metadata` role with their own media type.
   only as XML; its PDF is the first page. `add_acquired.py` takes kind `xml` and `ingest.py` an
   `.xml` manifest row: the XML is the `original`, its reading copy the `text`, and a
   metadata-only response is refused. No standard change.
+- **Manifest types and project ids** (upc-corpus toolkit): `ingest.py` reads a CSL item type
+  and a publisher when the column map names `type` and `publisher` (reports stop being filed
+  as journal articles); an `add_acquired.py` item may carry `aliases`, so a web page keeps the
+  project's own id beside its key.
 - **Timings** (spec/05): `application/vnd.upc.timings+json`, a transcript's segments with
   their times, speakers and character ranges; asides ("mm-hm") and left-out stretches marked.
   `upc validate` reports `timestamp_out_of_bounds`, `timings_char_mismatch` and

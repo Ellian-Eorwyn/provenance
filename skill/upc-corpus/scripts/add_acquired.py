@@ -13,7 +13,8 @@ what the research pipeline fetched, one JSON object per line:
      "provenance": {…},                               web: page-reader's record; data: ASR's fetch retrieval
      "title": "…", "doi": "…", "bibliographic": {…CSL…},
      "asr": {"registry_id", "source_id", "access_id", "endpoint_id"?, "fetch_id"?} | null,
-     "discovery": {"query": "…", "discovered_from": "…"}}
+     "discovery": {"query": "…", "discovered_from": "…"},
+     "aliases": {"<namespace>": "<id>"}}               optional: the project's own ids, beside "hermes": key
 
 An `xml` item is a publisher's full-text XML, the version of record where the publisher serves full text only as
 XML (Elsevier's Article Retrieval API: an entitled PDF request gets the first page only). The XML is kept as the
@@ -164,7 +165,7 @@ def build(item: dict, text_dir: Path) -> dict:
         raise ValueError(f"only {chars} characters of text — a scan needing OCR, or a page that did not render")
 
     ext: dict = {"hermes": {"acquisition": extras, "key": item["key"]}}
-    aliases = {"hermes": item["key"]}
+    aliases = {**(item.get("aliases") or {}), "hermes": item["key"]}
     discovery = dict(item.get("discovery") or {})
     asr = item.get("asr")
     if asr:

@@ -87,7 +87,7 @@ class AddAcquired(unittest.TestCase):
              "discovery": {"query": "electrical panel capacity heat pump", "discovered_from": "authority:asc-000000000001"}},
             {"key": "url:https://www.example.gov/electrify", "kind": "web", "file": str(raw), "reading_copy": str(md),
              "title": "Power-efficient electrification", "provenance": web_prov, "asr": None,
-             "discovery": {"query": "120V heat pump water heater"}},
+             "discovery": {"query": "120V heat pump water heater"}, "aliases": {"proj": "r0042"}},
         ]) + "\n")
 
     def run_script(self, *extra):
@@ -123,6 +123,8 @@ class AddAcquired(unittest.TestCase):
         self.assertEqual(web["retrieval"]["extraction_method"], "readability")
         self.assertEqual(web["ext"]["hermes"]["asr"], "unregistered")
         self.assertEqual(web["ext"]["hermes"]["host"], "www.example.gov")
+        # A project's own id rides beside the key, so its outputs can name the page as they name a PDF.
+        self.assertEqual(web["aliases"], {"proj": "r0042", "hermes": "url:https://www.example.gov/electrify"})
         self.assertNotIn("canonical_url", web["retrieval"])  # add would mint from it; the validator would not
 
         # Valid, but L0 until something is quoted.
