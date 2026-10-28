@@ -229,6 +229,19 @@ class Cites(unittest.TestCase):
         for c in cases:
             self.assertEqual(C.place_of({"secondary_locators": c["locators"]}), c["cite"], c)
 
+    def test_the_annotated_list_and_the_dossier_cite_the_place(self):
+        import dossier as D  # noqa: PLC0415
+        import sources_table as T  # noqa: PLC0415
+        sec = {"secondary_locators": [{"type": "section", "representation_ref": "rep-a", "value": "3.2 Directions",
+                                       "block": "paragraph", "label": "3.2", "title": "Directions", "paragraph": 4}]}
+        self.assertEqual(T.place_of(sec), "§3.2 ¶4")
+        self.assertEqual(D.where({"page": 12}), "p. 12")            # an item recorded before places
+        self.assertEqual(D.where({"page": None, "place": "§3.2 ¶4"}), "§3.2 ¶4")
+        d = {"short_title": "Köhler 2019"}
+        self.assertEqual(D.cite_text("q", d, "§3.2 ¶4"), "“q” (Köhler 2019, §3.2 ¶4)")
+        self.assertEqual(D.cite_text("q", d, "p. 12"), "“q” (Köhler 2019, p. 12)")
+        self.assertEqual(D.cite_text("q", d, ""), "“q” (Köhler 2019)")
+
 
 def upc_available():
     try:

@@ -111,8 +111,9 @@ def annotations(corpus: Path, coder: str | None) -> dict[str, dict]:
     return {g["_source_id"]: g for g in V.latest_per_source(gens)}
 
 
-def page_of(e: dict) -> str:
-    return str(next((x.get("value") for x in e.get("secondary_locators") or [] if x.get("type") == "page"), "") or "")
+def place_of(e: dict) -> str:
+    """Where the quotation is: "p. 12" in a PDF, "§3.2 ¶4" in a full-text XML (paginate.py), else ""."""
+    return C.place_of(e)
 
 
 def plain(text: str) -> str:
@@ -146,7 +147,7 @@ def build_rows(corpus: Path, args, books: dict, exts: dict) -> tuple[list[dict],
                     e = V.check_extraction(corpus, q["extraction_id"], exts)  # found at its place, or SystemExit
                     if e["direct_quote"] != q["text"]:
                         raise SystemExit(f"{row['slug']}: the {f['label']} quotation differs from its passage {q['extraction_id']}")
-                    q = {**q, "page": page_of(e)}
+                    q = {**q, "place": place_of(e)}
                 body = ("; ".join(f.get("code_labels") or []) or "Not reported") + "." + (
                     f" {f['note']}" if f.get("note") else "") if f["kind"] == "code" else f.get("text") or ""
                 row["fields"][f["key"]] = {"label": f["label"], "body": body, "quote": q}
@@ -178,7 +179,7 @@ def write_xlsx(rows: list[dict], cols: list, fields: list[dict], dest: Path, tit
             fr = r["fields"].get(f["key"])
             q = (fr or {}).get("quote")
             cells.append("" if not fr else plain(fr["body"]) + (
-                f" “{q['text']}”" + (f" (p. {q['page']})" if q.get("page") else "") if q else ""))
+                f" “{q['text']}”" + (f" ({q['place']})" if q.get("place") else "") if q else ""))
         cells.append(r.get("by", ""))
         cells = [D._ILLEGAL.sub("", v)[:32000] if isinstance(v, str) else v for v in cells]
         ws.append(cells)
@@ -228,7 +229,7 @@ def entry_markdown(n: int, r: dict, fields: list[dict]) -> list[str]:
             body += f" [\\[{k}\\]]({r['site']}#ex={xid})" + esc(rest)
         q = fr.get("quote")
         if q:
-            body += f" “{esc(q['text'])}”" + (f" (p. {esc(q['page'])})" if q.get("page") else "")
+            body += f" “{esc(q['text'])}”" + (f" ({esc(q['place'])})" if q.get("place") else "")
         L += [f"**{esc(fr['label'])}:** {body.strip()}", ""]
     return L + [f"*{esc('Annotation by ' + r['by'])}.*", ""]
 
