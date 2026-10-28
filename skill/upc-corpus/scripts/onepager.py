@@ -1589,6 +1589,13 @@ def asset_path(cfg: dict, a: dict) -> Path:
     return p if p.is_absolute() else Path(cfg["project"]).parent / p
 
 
+def page_line(page: dict, aud: dict, draft: bool) -> str:
+    """The page's one line for link previews and indexes (<meta name="description">): the subhead, who it's
+    for, and a draft's stamp. The first paragraph on the page is the funder line, not what the page says."""
+    return " ".join(x for x in (page.get("subhead") or "", f"For {aud['name']}." if aud.get("name") else "",
+                                "Internal draft." if draft else "") if x)
+
+
 def page_html(ctx: dict) -> str:
     page, reg, aud, proj, cfg = keep_units(ctx["page"]), ctx["reg"], ctx["aud"], ctx["proj"], ctx["cfg"]
     brand, assets = opt(proj).get("brand") or {}, ctx["assets"]
@@ -1675,6 +1682,7 @@ def page_html(ctx: dict) -> str:
 <!-- One-pager {esc(cfg['slug'])}, revision {ctx['revision']} ({esc(ctx['synthesis_id'])}), built by {TOOL['tool']} {TOOL['tool_version']}.
      Every number on it is listed, with its passage and who checked it, in {esc(cfg['slug'])}-figures.md. -->
 <title>{esc(page['headline'])}</title>
+<meta name="description" content="{esc(page_line(page, aud, ctx['draft']))}">
 <style>{font}
 {css}</style>
 </head>

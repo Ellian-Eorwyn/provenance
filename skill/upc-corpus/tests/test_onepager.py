@@ -173,6 +173,11 @@ class OnePager(unittest.TestCase):
         cls.html = (cls.out / "index.html").read_text()
         cls.note = (cls.out / "proc-figures.md").read_text()
 
+    def test_the_page_says_what_it_is_in_one_line(self):
+        # link previews and Hermes's demos index read it; the first paragraph is the funder line
+        self.assertIn('<meta name="description" content="Treated juice kept for a week at a lower temperature, with heat a '
+                      'plant already throws away. For Beverage processors. Internal draft.">', self.html)
+
     def fresh(self, name):
         dest = self.root / name
         shutil.copytree(self.corpus, dest)
