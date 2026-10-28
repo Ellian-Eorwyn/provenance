@@ -1,0 +1,21 @@
+{
+  "about": "How a passage's place reads (spec/09): common.place_of (Python) and placeOf (upc_common.mjs) must agree on every case.",
+  "cases": [
+    {"locators": [{"type": "page", "representation_ref": "rep-a", "value": 12}], "cite": "p. 12"},
+    {"locators": [{"type": "section", "representation_ref": "rep-a", "value": "3.2 Research directions", "block": "paragraph", "label": "3.2", "title": "Research directions", "paragraph": 4}], "cite": "§3.2 ¶4"},
+    {"locators": [{"type": "section", "representation_ref": "rep-a", "value": "A.1 Data", "block": "list_item", "label": "A.1", "title": "Data", "paragraph": 2}], "cite": "§A.1 ¶2"},
+    {"locators": [{"type": "section", "representation_ref": "rep-a", "value": "3.2 Research directions", "block": "heading", "label": "3.2", "title": "Research directions"}], "cite": "§3.2"},
+    {"locators": [{"type": "section", "representation_ref": "rep-a", "value": "Abstract", "block": "paragraph", "title": "Abstract", "paragraph": 1}], "cite": "Abstract ¶1"},
+    {"locators": [{"type": "section", "representation_ref": "rep-a", "value": "Appendix A Mapped coefficients of the compressor model.", "block": "paragraph", "label": "Appendix A", "title": "Mapped coefficients of the compressor model.", "paragraph": 2}], "cite": "Appendix A ¶2"},
+    {"locators": [{"type": "section", "representation_ref": "rep-a", "value": "Quantification of annual heating delivered in fully centralized and fully decentralized systems", "block": "paragraph", "title": "Quantification of annual heating delivered in fully centralized and fully decentralized systems", "paragraph": 3}], "cite": "Quantification of annual heating… ¶3"},
+    {"locators": [{"type": "section", "representation_ref": "rep-a", "value": "3.1 Building models", "block": "row", "label": "3.1", "title": "Building models", "item": "Table 1"}], "cite": "Table 1"},
+    {"locators": [{"type": "section", "representation_ref": "rep-a", "value": "1 Introduction", "block": "caption", "label": "1", "title": "Introduction", "item": "Fig. 1"}], "cite": "Fig. 1"},
+    {"locators": [{"type": "section", "representation_ref": "rep-a", "value": "1 Introduction", "block": "caption", "label": "1", "title": "Introduction"}], "cite": "§1"},
+    {"locators": [{"type": "section", "representation_ref": "rep-a", "value": "Notes", "block": "note", "title": "Notes", "item": "3"}], "cite": "n. 3"},
+    {"locators": [{"type": "section", "representation_ref": "rep-a", "value": "References", "block": "reference", "title": "References", "item": "[12]"}], "cite": "References"},
+    {"locators": [{"type": "section", "representation_ref": "rep-a", "value": "Keywords", "block": "keywords", "item": "Keywords"}], "cite": "Keywords"},
+    {"locators": [{"type": "section", "representation_ref": "rep-a", "value": "Acknowledgments", "block": "paragraph", "title": "Acknowledgments", "paragraph": 1}], "cite": "Acknowledgments ¶1"},
+    {"locators": [{"type": "section", "representation_ref": "rep-a", "value": "Cutover"}], "cite": ""},
+    {"locators": [], "cite": ""}
+  ]
+}
