@@ -107,6 +107,8 @@ closed forms.
 | A `timestamp_range` ends before it starts, or past its recording's `duration_seconds` | `timestamp_out_of_bounds` | Advis | half a second's grace past the end for rounding between tools; also checked on a transcript's timings segments (§05, 1.16.0) |
 | A transcript's timings segment covers characters out of order or past the transcript's end | `timings_char_mismatch` | Advis | checked against the parent transcript's `char_count`; at most three reported per file (§05, 1.16.0) |
 | A timings file can't be read | `timings_unreadable` | Advis | not JSON, or no `segments[]` (§05, 1.16.0) |
+| A structure map can't be read | `structure_unreadable` | Advis | not JSON, not `upc_structure: 1` with `blocks[]`, or its parent is not a textual representation of the corpus (§02, 1.16.0) |
+| A structure map does not fit its text | `structure_char_mismatch` | Advis | `chars` differs from the text, a block is out of order or past the end, text lies between blocks, a section index or a cell is out of range; readers then show the text without the map (§02, 1.16.0) |
 | The same bytes are recorded as a representation by more than one source or role | `representation_shared` | Advis | rule 1.1's exception; legitimate content-addressed convergence, not a defect (§12) |
 | A coding targets an extraction that fails hop B, or is not `active` | `coding_targets_failed_gate` | Advis | **never an error**: the coding remains a faithful record of a judgement; the *span* is what broke. Repair belongs to the extraction (§12) |
 | A coding records a codebook revision that no longer matches | `coding_codebook_drift` | Advis | the codebook was edited after the judgement; the same shape as `stale_input` (§12) |
