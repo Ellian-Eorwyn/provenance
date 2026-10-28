@@ -121,7 +121,9 @@ def build_record(row: dict, cols: dict, cfg: dict, pdf: Path, txt: Path, info: d
     year_raw = get("year")
     year = int(year_raw[:4]) if year_raw[:4].isdigit() else None
     authors = parse_authors(get("authors"))
-    first = authors[0]["family"].lower() if authors else "anon"
+    if "publisher" in cols and get("authors") and get("authors") == get("publisher"):
+        authors = [{"literal": get("authors")}]  # a report by its own organisation: one name, not "given family"
+    first = (authors[0].get("family") or authors[0].get("literal", "")).lower() if authors else "anon"
     slug_bits = [rid, re.sub(r"[^a-z0-9]+", "-", first).strip("-"), str(year or "")]
 
     # A manifest may say what each item is (CSL type) and who published it; only when its column map

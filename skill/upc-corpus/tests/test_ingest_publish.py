@@ -64,6 +64,16 @@ class Record(unittest.TestCase):
                            "type": "doc_type", "publisher": "org"})
         self.assertEqual((bib["item_type"], bib["publisher"]), ("report", "CalMTA"))
 
+    def test_an_organisation_that_wrote_its_own_report_stays_one_name(self):
+        row = {**self.ROW, "authors": "Efficiency Canada", "org": "Efficiency Canada"}
+        with tempfile.TemporaryDirectory() as d:
+            rec = ingest.build_record(row, {"id": "id", "title": "title", "authors": "authors", "year": "year",
+                                            "type": "doc_type", "publisher": "org"},
+                                      {"manifest": "m.csv", "namespace": "t"}, Path(d) / "a.pdf", Path(d) / "a.txt",
+                                      {"pages": 3}, None)
+        self.assertEqual(rec["bibliographic"]["authors"], [{"literal": "Efficiency Canada"}])
+        self.assertEqual(rec["slug"], "r0001-efficiency-canada-2025")
+
     def test_without_them_an_item_is_a_journal_article_as_before(self):
         bib = self.record({"id": "id", "title": "title", "authors": "authors", "year": "year"})
         self.assertEqual(bib["item_type"], "article-journal")
