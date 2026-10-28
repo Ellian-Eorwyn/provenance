@@ -40,6 +40,18 @@ FULL = f"""<full-text-retrieval-response {NS}>{CORE}<originalText><xocs:doc><xoc
 <ce:source-text>[1] A. Smith, Panels, Energy Policy 1 (2024) 1-2.</ce:source-text></ce:bib-reference></ce:bibliography-sec></ce:bibliography></ja:tail>
 </ja:article></xocs:serial-item></xocs:doc></originalText></full-text-retrieval-response>"""
 META_ONLY = f"<full-text-retrieval-response {NS}>{CORE}</full-text-retrieval-response>"
+BK = 'xmlns:bk="http://www.elsevier.com/xml/bk/dtd"'
+CHAPTER = f"""<full-text-retrieval-response {NS} {BK}>{CORE}<originalText><xocs:doc><xocs:nonserial-item><bk:chapter>
+<ce:floats><ce:table id="t1"><ce:label>Table 1</ce:label><ce:caption><ce:simple-para>Fuels.</ce:simple-para></ce:caption></ce:table></ce:floats>
+<ce:label>3</ce:label><ce:title>Energy security</ce:title><ce:abstract><ce:abstract-sec><ce:simple-para>A chapter on supply.</ce:simple-para></ce:abstract-sec></ce:abstract>
+<ce:sections><ce:section><ce:section-title>History</ce:section-title>{PARAS}</ce:section></ce:sections>
+<ce:bibliography><ce:bibliography-sec><ce:bib-reference id="r1"><ce:label>1</ce:label><ce:other-ref><ce:textref>IEA, 2020.</ce:textref></ce:other-ref></ce:bib-reference></ce:bibliography-sec></ce:bibliography>
+</bk:chapter></xocs:nonserial-item></xocs:doc></originalText></full-text-retrieval-response>"""
+RAW = "1. Introduction The energy trilemma remains a pivotal challenge. " * 120
+NO_BODY = f"""<full-text-retrieval-response {NS}>{CORE}<originalText><xocs:doc><xocs:rawtext>{RAW}</xocs:rawtext>
+<xocs:serial-item><ja:article><ja:head><ce:title>Coalfields</ce:title><ce:abstract><ce:abstract-sec><ce:simple-para>Short.</ce:simple-para>
+</ce:abstract-sec></ce:abstract></ja:head><ja:tail><ce:bibliography/></ja:tail></ja:article></xocs:serial-item></xocs:doc></originalText>
+</full-text-retrieval-response>"""
 
 
 def upc_available():
@@ -74,6 +86,24 @@ class Convert(unittest.TestCase):
         self.assertIn("[1] A. Smith, Panels", t)
         self.assertNotIn("[1] [1]", t)
         self.assertEqual(t, xmltext.convert(str(self.tmp / "full.xml"))["text"])  # deterministic
+
+    def test_a_book_chapter_reads_like_an_article(self):
+        p = self.tmp / "chapter.xml"
+        p.write_text(CHAPTER, encoding="utf-8")
+        info = xmltext.convert(str(p))
+        t = info["text"]
+        self.assertTrue(info["full_text"])
+        self.assertTrue(t.startswith("# Energy security\n\n## Abstract\n\nA chapter on supply."))
+        self.assertLess(t.index("## History"), t.index("Table 1. Fuels."))  # floats after the text, not before it
+        self.assertIn("## References\n\n1 IEA, 2020.", t)
+
+    def test_an_article_without_a_body_reads_its_rawtext(self):
+        p = self.tmp / "nobody.xml"
+        p.write_text(NO_BODY, encoding="utf-8")
+        info = xmltext.convert(str(p))
+        self.assertEqual(info["format"], "elsevier-rawtext")
+        self.assertTrue(info["full_text"])  # by length: rawtext often has no paragraph breaks
+        self.assertIn("The energy trilemma remains a pivotal challenge.", info["text"])
 
     def test_metadata_only_is_not_a_full_text(self):
         info = xmltext.convert(str(self.tmp / "meta.xml"))

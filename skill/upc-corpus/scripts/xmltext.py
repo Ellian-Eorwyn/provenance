@@ -15,9 +15,12 @@ headings, each table and figure after the paragraph that first points to it, foo
 appendices and references. Markup is dropped, never the text inside it. The XML has no page numbers, so neither
 does the reading copy: cite a quotation by its section.
 
-Formats: Elsevier `full-text-retrieval-response` (ce: elements; the `xocs:rawtext` fallback some older articles
-carry). A response with neither is metadata only (the request was not entitled): `full_text` is False and the text
-is just the title and abstract, which is never a full text.
+Formats: Elsevier `full-text-retrieval-response` holding a journal article (`ja:article`: head, body, tail) or a book
+chapter (`bk:chapter`, its parts directly under it), in ce: elements; or the `xocs:rawtext` that older articles, and
+articles with no body of their own, carry instead. A response with none of these is metadata only (the request was not
+entitled): `full_text` is False and the text is just the title and abstract, which is never a full text. Nor is an
+article of fewer than five paragraphs (an abstract-only record), or a rawtext under 5,000 characters. Rawtext is kept
+as Elsevier sends it, mis-decoded characters ("â€“") included.
 """
 
 from __future__ import annotations
@@ -27,12 +30,20 @@ import re
 import sys
 import xml.etree.ElementTree as ET
 
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 _WS = re.compile(r"\s+")
+RAW_MIN = 5000
 # Elements whose text is not part of the running prose where they sit: floats are placed after their paragraph,
 # footnotes are gathered at the end, and the rest carry no reading text.
 _AWAY = {"float-anchor", "footnote", "display", "list", "inline-figure", "alt-text", "anchor"}
 _BREAK = {"hsp", "vsp", "br"}
+# A book chapter's body: what sits under it beside its title, abstract, floats and references.
+_BODY = {"sections", "section", "para", "simple-para", "acknowledgment", "appendices", "glossary"}
+
+
+def has_body(art) -> bool:
+    names = {local(c.tag) for c in art}
+    return "body" in names or bool(names & _BODY)
 
 
 def local(tag) -> str:
@@ -170,7 +181,8 @@ class Reader:
                 self.block(c, depth + 1)
 
     def references(self, bib) -> None:
-        self.out.append("## " + (clean("".join(inline(x) for x in kids(bib, "section-title"))) or "References"))
+        default = "Further reading" if local(bib.tag) == "further-reading" else "References"
+        self.out.append("## " + (clean("".join(inline(x) for x in kids(bib, "section-title"))) or default))
         for ref in (r for r in bib.iter() if local(r.tag) == "bib-reference"):
             label = clean("".join(inline(x) for x in kids(ref, "label")))
             src = first(ref, "source-text")
@@ -186,9 +198,13 @@ class Reader:
 
     # -- the article ----------------------------------------------------------------------------------------------
     def article(self, art) -> None:
+        """A journal article (head, body, tail) or a book chapter, whose parts sit directly under it."""
         head = next((c for c in art if local(c.tag) == "head"), None)
         body = next((c for c in art if local(c.tag) == "body"), None)
         tail = next((c for c in art if local(c.tag) == "tail"), None)
+        flat = head is None and body is None
+        if flat:
+            head = tail = art
         if head is not None:
             t = next((c for c in head if local(c.tag) == "title"), None)
             if t is not None:
@@ -200,16 +216,20 @@ class Reader:
                 title = clean("".join(inline(x) for x in kids(kw, "section-title"))) or "Keywords"
                 if words:
                     self.out.append(f"{title}: " + "; ".join(w for w in words if w))
-        if body is not None:
+        if flat:
+            for c in art:
+                if local(c.tag) in _BODY:
+                    self.block(c, 2)
+        elif body is not None:
             self.blocks(body, 2)
         for fid, f in self.floats.items():  # a float no paragraph pointed to still belongs to the article
             if fid not in self.placed:
                 self.float(f)
         if tail is not None:
             for c in tail:
-                if local(c.tag) == "bibliography":
+                if local(c.tag) in ("bibliography", "further-reading"):
                     self.references(c)
-                else:
+                elif not flat:
                     self.block(c, 2)
         if self.notes:
             self.out.append("## Notes")
@@ -232,14 +252,19 @@ def convert(xml_path: str) -> dict:
         raise ValueError(f"not a format this reads: <{local(root.tag)}> (Elsevier full-text-retrieval-response only)")
     meta = coredata(root)
     r = Reader(root)
-    art = next((e for e in root.iter() if local(e.tag) in ("article", "simple-article", "converted-article")
-                and e.tag.startswith("{http://www.elsevier.com/xml/ja/")), None)
+    art = next((e for e in root.iter() if
+                (local(e.tag) in ("article", "simple-article", "converted-article")
+                 and e.tag.startswith("{http://www.elsevier.com/xml/ja/")) or
+                (local(e.tag) in ("chapter", "simple-chapter") and e.tag.startswith("{http://www.elsevier.com/xml/bk/"))),
+               None)
+    raw = first(root, "rawtext")
+    raw_ok = raw is not None and bool(clean(raw.text or ""))
     how = "elsevier-ce"
-    if art is not None:
+    # An article with no body of its own (head and references only) carries its text as rawtext.
+    if art is not None and (has_body(art) or not raw_ok):
         r.article(art)
-    if r.paras == 0:
-        raw = first(root, "rawtext")
-        if raw is not None and clean(raw.text or ""):
+    if r.paras == 0 or (art is not None and not has_body(art) and raw_ok):
+        if raw_ok:
             how = "elsevier-rawtext"
             r.out = (["# " + meta["title"]] if meta.get("title") else []) + \
                 [clean(p) for p in re.split(r"\n\s*\n|\s{3,}", raw.text) if clean(p)]
@@ -248,7 +273,9 @@ def convert(xml_path: str) -> dict:
             how = "elsevier-metadata-only"
             r.out = [x for x in ("# " + meta.get("title", ""), meta.get("abstract", "")) if clean(x.strip("# "))]
     text = "\n\n".join(r.out) + "\n"
-    return {"text": text, "format": how, "full_text": how != "elsevier-metadata-only" and r.paras >= 5,
+    # rawtext often has no paragraph breaks at all, so it counts by length (an abstract is ~1,500 characters).
+    full = r.paras >= 5 if how == "elsevier-ce" else how == "elsevier-rawtext" and len(text) >= RAW_MIN
+    return {"text": text, "format": how, "full_text": full,
             "sections": r.sections, "paragraphs": r.paras, "chars": len(text), "pages": None,
             "title": meta.get("title", ""), "doi": meta.get("doi", ""), "method": f"xmltext {VERSION}"}
 
