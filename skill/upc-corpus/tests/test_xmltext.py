@@ -335,5 +335,93 @@ class AddAcquiredXml(unittest.TestCase):
         self.assertEqual(rep["errors"], [], rep["errors"])
 
 
+
+@unittest.skipUnless(upc_available(), "needs the upc CLI")
+class PaginateXml(unittest.TestCase):
+    """paginate.py on a corpus with a full-text XML: the structure map is stored as a representation, each passage
+    gets its section and paragraph, the ids and the gate are untouched, a rerun writes nothing, and a reading copy
+    that is not what this xmltext makes from its XML gets no map."""
+
+    def corpus(self, tamper: bool = False) -> Path:
+        tmp = Path(tempfile.mkdtemp())
+        corpus = tmp / "corpus"
+        f = tmp / "full.xml"
+        f.write_text(FULL, encoding="utf-8")
+        (tmp / "full.xml.acq.json").write_text(json.dumps({
+            "original_url": "https://api.elsevier.com/content/article/pii/S0000full?view=FULL", "http_status": 200,
+            "content_type": "text/xml", "fetched_at": "2026-10-28T20:00:00+00:00", "fetch_status": "success",
+            "fetch_method": "http", "bytes": f.stat().st_size, "sha256": hashlib.sha256(f.read_bytes()).hexdigest(),
+            "tool": "pdf-harvest", "route": "Elsevier article-api"}))
+        key = "doi:10.1016/full"
+        if tamper:  # a reading copy made by another version: one space more than this one writes
+            cache = corpus / ".upc" / "upc-corpus" / "text"
+            cache.mkdir(parents=True)
+            text = xmltext.convert(str(f))
+            (cache / f"{hashlib.sha256(key.encode()).hexdigest()[:16]}.txt").write_text(
+                text["text"].replace("## 1 Introduction", "## 1  Introduction"), encoding="utf-8")
+            C.save_json(cache / f"{hashlib.sha256(key.encode()).hexdigest()[:16]}.info.json",
+                        {k: v for k, v in text.items() if k != "text"})
+        items = tmp / "acquired.jsonl"
+        items.write_text(json.dumps({"key": key, "kind": "xml", "file": str(f), "title": "Panels", "asr": None}) + "\n")
+        r = subprocess.run([sys.executable, str(SCRIPTS / "add_acquired.py"), "--corpus", str(corpus), "--items",
+                            str(items), "--title", "test"], capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        src = json.loads(next(corpus.glob("sources/*/source.json")).read_text())
+        reading = C.reading_copy(src["representations"])
+        got = C.upc_jsonl("anchor", "--corpus", str(corpus), "--rep", reading["representation_id"], records=[
+            {"quote": "can cost several thousand dollars", "type": "quote", "query": "cost"},
+            {"quote": "100 A | 41", "type": "quote", "query": "panels"},
+            {"quote": "We study panel upgrades.", "type": "quote", "query": "what"}])
+        self.assertEqual(got["tally"]["anchored"], 3, got)
+        return corpus
+
+    def paginate(self, corpus: Path) -> str:
+        r = subprocess.run([sys.executable, str(SCRIPTS / "paginate.py"), "--corpus", str(corpus)],
+                           capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        return r.stdout
+
+    def exts(self, corpus: Path) -> list[dict]:
+        return [json.loads(l) for f in corpus.glob("sources/*/extractions.jsonl")
+                for l in f.read_text().splitlines() if l.strip()]
+
+    def test_sections_and_the_map(self):
+        corpus = self.corpus()
+        before = {e["extraction_id"] for e in self.exts(corpus)}
+        out = self.paginate(corpus)
+        self.assertIn("structure maps made", out)
+        sj = next(corpus.glob("sources/*/source.json"))
+        src = json.loads(sj.read_text())
+        reading = C.reading_copy(src["representations"])
+        maps = [r for r in src["representations"] if r["media_type"] == C.STRUCTURE]
+        self.assertEqual(len(maps), 1)
+        m = maps[0]
+        self.assertEqual((m["role"], m["parent_representation_ref"], m["produced_by"]),
+                         ("metadata", reading["representation_id"], "conversion"))
+        data = (corpus / m["path"]).read_bytes()
+        self.assertEqual(m["sha256"], "sha256:" + hashlib.sha256(data).hexdigest())
+        self.assertEqual(m["representation_id"], "rep-" + hashlib.sha256(data).hexdigest()[:12])
+        es = self.exts(corpus)
+        self.assertEqual({e["extraction_id"] for e in es}, before)  # a place is never part of a passage's id
+        self.assertEqual(sorted(C.place_of(e) for e in es), ["Abstract ¶1", "Table 1", "§1 ¶1"])
+        for e in es:
+            sec = next(s for s in e["secondary_locators"] if s["type"] == "section")
+            self.assertEqual(sec["representation_ref"], reading["representation_id"])
+        rep = C.upc("validate", str(corpus))
+        self.assertEqual(rep["errors"], [], rep["errors"])
+        self.assertFalse([w for w in rep.get("warnings", []) if str(w.get("code", "")).startswith("structure_")])
+        # Again: nothing new.
+        snap = {p: p.read_bytes() for p in [sj, *corpus.glob("sources/*/extractions.jsonl")]}
+        self.paginate(corpus)
+        self.assertEqual({p: p.read_bytes() for p in snap}, snap)
+
+    def test_a_reading_copy_this_version_did_not_make_gets_no_map(self):
+        corpus = self.corpus(tamper=True)
+        out = self.paginate(corpus)
+        self.assertRegex(out, r"text differs from what xmltext [0-9.]+ makes \(no map\)\s+1")
+        src = json.loads(next(corpus.glob("sources/*/source.json")).read_text())
+        self.assertFalse([r for r in src["representations"] if r["media_type"] == C.STRUCTURE])
+        self.assertEqual([C.place_of(e) for e in self.exts(corpus)], ["", "", ""])
+
 if __name__ == "__main__":
     unittest.main()
