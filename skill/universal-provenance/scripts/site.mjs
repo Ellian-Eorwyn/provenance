@@ -96,7 +96,7 @@ const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
 
 function authorList(bib) {
   const a = (bib && (bib.authors || bib.author)) || [];
-  const names = a.map((x) => (typeof x === "string" ? x : [x.family, x.given].filter(Boolean).join(", "))).filter(Boolean);
+  const names = a.map((x) => (typeof x === "string" ? x : x.literal || [x.family, x.given].filter(Boolean).join(", "))).filter(Boolean);
   if (!names.length) return "";
   if (names.length <= 3) return names.join("; ");
   return names.slice(0, 3).join("; ") + " et al.";
@@ -110,7 +110,9 @@ function shortCite(src) {
   if (iv && iv.interviewee) return iv.date ? `${iv.interviewee}, ${IV.niceDate(iv.date)}` : iv.interviewee;
   const b = src.bibliographic || {};
   const a = (b.authors || [])[0];
-  const fam = a ? (typeof a === "string" ? a.split(",")[0] : a.family) : (src.title || "Source").slice(0, 24);
+  // A literal name ("Soeder, Daniel J.", or an organisation) cites by what precedes its first comma.
+  const fam = a ? (typeof a === "string" ? a.split(",")[0] : a.family || String(a.literal || "").split(",")[0] || "Anon.")
+    : (src.title || "Source").slice(0, 24);
   const y = yearOf(b);
   return y ? `${fam} ${y}` : String(fam);
 }

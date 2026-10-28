@@ -3089,7 +3089,8 @@ ok("filename rejects reserved", !checkFilename("sources/con/x.md").ok);
   fs.writeFileSync(path.join(stage, "paper.txt"), text);
   fs.writeFileSync(path.join(stage, "paper.structure.json"), JSON.stringify(map) + "\n");
   const added = addSourceCmd(dir, [{ title: "Panels everywhere", source_kind: "document",
-    bibliographic: { title: "Panels everywhere", doi: "10.1016/j.test.2024.000001" },
+    bibliographic: { title: "Panels everywhere", doi: "10.1016/j.test.2024.000001",
+      authors: [{ literal: "Soeder, Daniel J." }, { family: "Borglum", given: "S. J." }], issued: { date_parts: [[2019]] } },
     files: [
       { path: path.join(stage, "paper.xml"), role: "original", media_type: "text/xml", produced_by: "import" },
       { path: path.join(stage, "paper.txt"), role: "text", media_type: "text/plain", produced_by: "conversion", parent: 0 },
@@ -3134,6 +3135,9 @@ ok("filename rejects reserved", !checkFilename("sources/con/x.md").ok);
   const out = path.join(tmp, "site");
   writeSite(dir, { out, bundle: true });
   const page = fs.readFileSync(path.join(out, "sources", `${s.slug}.html`), "utf8");
+  // add_acquired writes CSL literal names ("Soeder, Daniel J."): the page names them, never "undefined".
+  ok("xml page: a literal author's surname in the title", /<title>Soeder 2019 — /.test(page), page.match(/<title>[^<]*/)?.[0]);
+  ok("xml page: literal and family names both in the byline", page.includes("Soeder, Daniel J.; Borglum, S. J."));
   ok("xml site: the text is shown by its structure", /class="reading structured"/.test(page));
   ok("xml site: headings as headings", /<h3 class="r-h">1 Introduction<\/h3>/.test(page) && !/## 1 Introduction/.test(page));
   ok("xml site: each paragraph's number in the margin", /<p class="r-p" data-p="2"><mark id="t-[^"]+">Costs vary by size\.<\/mark> They vary a lot\.<\/p>/.test(page));
