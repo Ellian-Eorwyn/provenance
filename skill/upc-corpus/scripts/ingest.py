@@ -16,6 +16,10 @@ The config names where things are and how the manifest's columns map:
                   "status":"status","note":"source"}
     }
 
+A manifest row may name a publisher's full-text XML (`.xml`) instead of a PDF, where the publisher serves the version
+of record's full text only as XML (Elsevier). It is kept as the source's original and xmltext.py makes its reading
+copy, which has no page numbers; an XML that is metadata only is refused.
+
 Two decisions worth knowing:
 
   * **The manifest is the bibliographic authority, not the PDF.** Measured on
@@ -44,6 +48,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 import add_acquired as AQ   # noqa: E402
 import common as C          # noqa: E402
 import pdftext              # noqa: E402
+import xmltext              # noqa: E402
 
 DOI_RE = re.compile(r"\b10\.\d{4,9}/[-._;()/:A-Za-z0-9]+\b")
 
@@ -86,6 +91,11 @@ def parse_authors(raw: str) -> list[dict]:
             out.append({"family": bits[-1].strip(), "given": bits[0].strip()} if len(bits) == 2
                        else {"family": part.strip()})
     return out
+
+
+def is_xml(path: Path) -> bool:
+    """A publisher's full-text XML (xmltext.py), listed in the manifest like a PDF."""
+    return path.suffix.lower() == ".xml"
 
 
 def acquisition(pdf: Path) -> tuple[tuple[dict, dict] | None, str]:
@@ -145,6 +155,8 @@ def build_record(row: dict, cols: dict, cfg: dict, pdf: Path, txt: Path, info: d
         "field_evidence": fev,
         "aliases": {cfg.get("namespace", "corpus"): rid},
         "files": [
+            {"path": str(pdf), "role": "original", "media_type": "text/xml", "produced_by": "import"}
+            if is_xml(pdf) else
             {"path": str(pdf), "role": "document_pdf", "media_type": "application/pdf",
              "produced_by": "import", "page_count": info["pages"]},
             {"path": str(txt), "role": "text", "media_type": "text/plain",
@@ -252,7 +264,10 @@ def main() -> int:
         txt = txt_dir / f"{rid}.txt"
         try:
             if args.force_text or not txt.exists():
-                info = pdftext.convert(str(pdf))
+                info = xmltext.convert(str(pdf)) if is_xml(pdf) else pdftext.convert(str(pdf))
+                if is_xml(pdf) and not info["full_text"]:
+                    print(f"  UNAVAILABLE {rid}: the XML is not a full text ({info['format']})")
+                    continue
                 txt.write_text(info["text"], encoding="utf-8")
                 C.save_json(txt_dir / f"{rid}.info.json",
                             {k: v for k, v in info.items() if k != "text"})
@@ -268,7 +283,7 @@ def main() -> int:
                   f"— the PDF is probably a scan and needs OCR")
             continue
         m = DOI_RE.search(body[:6000])
-        doi_found = m.group(0) if m else None
+        doi_found = info.get("doi") if is_xml(pdf) else (m.group(0) if m else None)
         if rid in done:
             ret, why = prior.get(done[rid].get("source_id")), ""
             acq = (ret, {}) if ret else None

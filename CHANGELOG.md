@@ -12,6 +12,13 @@ existing `metadata` role with their own media type.
 
 ### Added
 
+- **Full text as XML** (upc-corpus toolkit): `xmltext.py` makes a deterministic reading copy
+  from a publisher's full-text XML (Elsevier `full-text-retrieval-response`: title, abstracts,
+  sections, tables and captions after the paragraph that cites them, notes, references; no
+  page numbers). Elsevier's Article Retrieval API serves an entitled request the whole article
+  only as XML; its PDF is the first page. `add_acquired.py` takes kind `xml` and `ingest.py` an
+  `.xml` manifest row: the XML is the `original`, its reading copy the `text`, and a
+  metadata-only response is refused. No standard change.
 - **Timings** (spec/05): `application/vnd.upc.timings+json`, a transcript's segments with
   their times, speakers and character ranges; asides ("mm-hm") and left-out stretches marked.
   `upc validate` reports `timestamp_out_of_bounds`, `timings_char_mismatch` and

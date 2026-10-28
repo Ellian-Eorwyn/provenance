@@ -7,15 +7,19 @@
 what the research pipeline fetched, one JSON object per line:
 
     {"key": "doi:10.1000/x" | "url:https://…",      stable across runs
-     "kind": "pdf" | "web" | "data",
-     "file": "/path/to/the fetched bytes",            PDF, the page's raw HTML, or a record (JSON/XML)
+     "kind": "pdf" | "xml" | "web" | "data",
+     "file": "/path/to/the fetched bytes",            PDF, full-text XML, the page's raw HTML, or a record (JSON/XML)
      "reading_copy": "/path/page.md",                 web: page-reader's markdown; data: a plain-text reading
      "provenance": {…},                               web: page-reader's record; data: ASR's fetch retrieval
      "title": "…", "doi": "…", "bibliographic": {…CSL…},
      "asr": {"registry_id", "source_id", "access_id", "endpoint_id"?, "fetch_id"?} | null,
      "discovery": {"query": "…", "discovered_from": "…"}}
 
-A PDF's fetch record is its pdf-harvest sidecar (`<file>.acq.json`); a page's
+An `xml` item is a publisher's full-text XML, the version of record where the publisher serves full text only as
+XML (Elsevier's Article Retrieval API: an entitled PDF request gets the first page only). The XML is kept as the
+original and xmltext.py makes its reading copy; a response that is metadata only is refused, never stored as a text.
+
+A PDF's or full-text XML's fetch record is its pdf-harvest sidecar (`<file>.acq.json`); a page's
 is the page-reader `provenance` block; a data record's (an IRS return, an API
 answer) is the `retrieval` block of ASR's fetch sidecar, which already speaks
 UPC. A data record keeps its original bytes and gets a plain-text reading for
@@ -48,6 +52,7 @@ from urllib.parse import urlparse
 sys.path.insert(0, str(Path(__file__).parent))
 import common as C          # noqa: E402
 import pdftext              # noqa: E402
+import xmltext              # noqa: E402
 
 TOOL = {"tool": "upc-corpus/add_acquired", "tool_version": "1.0.0"}
 RETRIEVAL_KEYS = ("original_url", "final_url", "fetch_status", "http_status", "content_type",
@@ -74,7 +79,7 @@ def sha256_file(path: Path) -> str:
 
 def fetch_record(item: dict) -> dict:
     """The acquisition record for an item: the pdf-harvest sidecar, or the page-reader block."""
-    if item["kind"] == "pdf":
+    if item["kind"] in ("pdf", "xml"):
         rec = C.load_json(str(item["file"]) + ".acq.json", None)
         if rec is None:
             raise ValueError("no acquisition sidecar (<file>.acq.json); fetch it through pdf-harvest")
@@ -115,6 +120,19 @@ def build(item: dict, text_dir: Path) -> dict:
         files = [
             {"path": str(src_file), "role": "document_pdf", "media_type": "application/pdf",
              "produced_by": "import", **({"page_count": info["pages"]} if info.get("pages") else {})},
+            {"path": str(txt), "role": "text", "media_type": "text/plain", "produced_by": "conversion", "parent": 0},
+        ]
+        reading = txt
+    elif item["kind"] == "xml":
+        txt = text_dir / f"{hashlib.sha256(item['key'].encode()).hexdigest()[:16]}.txt"
+        if not txt.exists():
+            info = xmltext.convert(str(src_file))
+            if not info["full_text"]:
+                raise ValueError(f"the XML is not a full text ({info['format']}): the request was not entitled")
+            txt.write_text(info["text"], encoding="utf-8")
+            C.save_json(txt.with_suffix(".info.json"), {k: v for k, v in info.items() if k != "text"})
+        files = [
+            {"path": str(src_file), "role": "original", "media_type": "text/xml", "produced_by": "import"},
             {"path": str(txt), "role": "text", "media_type": "text/plain", "produced_by": "conversion", "parent": 0},
         ]
         reading = txt
@@ -160,7 +178,7 @@ def build(item: dict, text_dir: Path) -> dict:
 
     out = {
         "title": item.get("title") or src_file.stem,
-        "source_kind": {"pdf": "document", "data": "dataset"}.get(item["kind"], "url"),
+        "source_kind": {"pdf": "document", "xml": "document", "data": "dataset"}.get(item["kind"], "url"),
         "retrieval": retrieval,
         "aliases": aliases,
         "ext": ext,
@@ -200,8 +218,8 @@ def main() -> int:
         ("items", len(items)),
         ("already in the corpus", len(items) - len(todo)),
         ("to add now", len(todo)),
-        ("pdf / web / data", f"{sum(i['kind'] == 'pdf' for i in todo)} / {sum(i['kind'] == 'web' for i in todo)}"
-                             f" / {sum(i['kind'] == 'data' for i in todo)}"),
+        ("pdf / xml / web / data", " / ".join(str(sum(i["kind"] == k for i in todo))
+                                              for k in ("pdf", "xml", "web", "data"))),
         ("corpus", str(corpus)),
         ("upc", spec),
     ])

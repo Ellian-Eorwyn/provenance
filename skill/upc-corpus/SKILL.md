@@ -124,6 +124,16 @@ task, embeddings, or several chat servers in a `pool`) may run at once.
 1. **Write the ingest config** as `<recipe folder>/ingest.json` (`references/jsonl-shapes.md`
    has the shape): `corpus` (a new folder), `manifest`, `pdf_dir`, `namespace`, and the
    column mapping. Use full paths.
+   - **Full text as XML.** Some publishers serve the version of record's full text only as
+     XML: Elsevier's Article Retrieval API gives an entitled request the whole article with
+     `view=FULL` and `Accept: text/xml`, but a PDF request only the first page (HTTP 200,
+     `X-ELS-Status: WARNING - Response limited to first page`). A manifest row may name that
+     `.xml` file instead of a PDF: it is kept as the source's original, and `xmltext.py`
+     makes the reading copy (title, abstracts, sections, tables, captions, notes,
+     references). It has **no page numbers**, so cite its passages by section. A response
+     that is metadata only (an unentitled request) is refused, never stored as a text.
+     `add_acquired.py` takes the same files as kind `xml`. Check one with
+     `<python> <skill>/scripts/xmltext.py <file.xml> --info`: `full_text` must be true.
 2. **Preflight** (Task 0) with `--config`, then plan the ingest:
    ```
    <python> -u <skill>/scripts/ingest.py --config <recipe folder>/ingest.json --plan
