@@ -3,6 +3,9 @@
 
     python3 code_pass.py --corpus <dir> --coder <project>-<model>-v1 [--limit N] [--only s0001]
 
+A paper already coded by the coder is skipped, so the same command resumes a stopped pass. To pause one cleanly,
+create <corpus>/.upc/upc-corpus/code_pass/PAUSE: the pass stops before its next paper.
+
 Per source: the whole document goes in (a document longer than `--max-chars`
 in consecutive parts, one call each), a list of candidate passages comes back,
 each carrying **every code that applies to it across all the codebooks**. Then `upc anchor --normalize` decides whether each proposed
@@ -264,7 +267,12 @@ def main() -> int:
     drops_all: dict[str, int] = {}
     t_start = time.time()
 
+    pause = st_dir.parent / "PAUSE"  # touch it to stop after the paper in hand; the same command resumes
     for n, (alias, info) in enumerate(todo, 1):
+        if pause.exists():
+            print(f"  paused before paper {n} of {len(todo)} ({pause} exists): delete it and run the same command to go on",
+                  flush=True)
+            break
         t0 = time.time()
         text = Path(info["text_path"]).read_text(encoding="utf-8")
         parts = split_for_model(text, args.max_chars)
