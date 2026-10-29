@@ -1950,7 +1950,8 @@ ok("filename rejects reserved", !checkFilename("sources/con/x.md").ok);
     starting_points: [{ id: "cases", label: "Case evidence", task: "Step 2", note: "Findings from data or cases. More words.",
                         match: { themes: ["theme/heat-pumps"], kinds: ["finding"] } },
                       { id: "none", label: "Nothing here", match: { kinds: ["recommendation"] } }],
-    words: { one_study: "Rests on one study: worth testing here" }, map_place: "us" }));
+    words: { one_study: "Rests on one study: worth testing here" }, map_place: "us",
+    status_note: "Ratings so far cover 1 of 2 papers; more come each night." }));
   const about2 = path.join(stage, "methods2.md");
   fs.writeFileSync(about2, "# How\n\nSee [view:findings] and [view:evidence].\n");
   clearRepCache();
@@ -1972,6 +1973,8 @@ ok("filename rejects reserved", !checkFilename("sources/con/x.md").ok);
   ok("1.15 findings: a starting point's theme may be written as in a marker", F2.starts[0].match.themes[0] === "theme:heat-pumps");
   ok("1.15 findings: home offers the starting points that match something", /Start from what you are working on/.test(home2) &&
      /href="findings\.html#start=cases"/.test(home2) && /1 statement →/.test(home2) && !/Nothing here/.test(home2));
+  ok("1.15 findings: a status note sits on home, Findings and the map", ["index.html", "findings.html", "evidence.html"]
+     .every((f) => r2(f).includes('<div class="card fnote-card status-note"><p style="margin:0">Ratings so far cover 1 of 2 papers; more come each night.</p></div>')));
   ok("1.15 findings: home shows how strong the evidence is", /class="strip"/.test(home2) && /How strong is the evidence\?/.test(home2));
   const ov3 = r2(`overviews/${s1.synthesis_id}.html`);
   ok("1.15 findings: Key findings above the review", /<section class="card kf"><h2>Key findings<\/h2>/.test(ov3) &&

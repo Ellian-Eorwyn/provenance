@@ -172,8 +172,15 @@ export function readFindingsSettings(file) {
     match: x.match ? { ...x.match, ...(x.match.themes ? { themes: x.match.themes.map((t) => String(t).replace("/", ":")) } : {}) } : null }));
   // "revision_labels": false leaves a revised overview or summary unlabelled: it simply takes the old one's
   // place, and only the Methods page says how it was made.
-  return { starts, words: o.words || {}, mapPlace: o.map_place || "", revisionLabels: o.revision_labels !== false };
+  // "status_note": one line at the top of the home, Findings and Evidence map pages while the library is still
+  // being added to (e.g. ratings arriving night by night); remove the setting and the line goes.
+  return { starts, words: o.words || {}, mapPlace: o.map_place || "", revisionLabels: o.revision_labels !== false,
+           statusNote: typeof o.status_note === "string" ? o.status_note.trim() : "" };
 }
+const statusNoteHtml = (model) => {
+  const n = (model.findingsSettings || {}).statusNote;
+  return n ? `<div class="card fnote-card status-note"><p style="margin:0">${esc(n)}</p></div>` : "";
+};
 /** A revised synthesis's label, unless the findings settings turn labels off. */
 const revisionShown = (model, o) => (o._revision && (model.findingsSettings || {}).revisionLabels !== false ? o._revision : null);
 
@@ -1905,6 +1912,7 @@ function homePage(model) {
     body: `<h1>${esc(model.title)}</h1>
 <p class="lede">A searchable library of what this literature actually says. Every quotation was compared with the
 source text character by character when this page was built${verified === nPass && nPass ? " — all of them matched" : ""}.</p>
+${statusNoteHtml(model)}
 ${findingsHomeHtml(model, folderLinks(""))}
 ${hc ? `${model.findings.length ? "<h2>What the literature says</h2>" : ""}<section class="card homesum"><h2>${esc(hc.t)}</h2>${hc.r || ""}${hc.h}</section>` : ""}
 ${model.syntheses.length ? `<p class="lede">${hc ? "<strong>Go deeper:</strong> read the" : "<strong>New here?</strong> Start with the"}
@@ -2757,7 +2765,7 @@ with how well the passages it cites support it. Pick a starting point, or filter
 function findingsPage(model) {
   return page({
     title: `Findings — ${model.title}`, rel: "findings.html", model, active: "findings", data: "findings",
-    body: `<h1>Findings</h1>${FINDINGS_LEDE(model)}
+    body: `<h1>Findings</h1>${FINDINGS_LEDE(model)}${statusNoteHtml(model)}
 <div data-findings></div>
 <noscript><p class="banner">This page builds its list as you filter, so it needs JavaScript. Each review's
 Key findings, on its own page under <a href="overviews/">Overviews</a>, work without it.</p></noscript>`,
@@ -2770,6 +2778,7 @@ function evidencePage(model) {
     body: `<h1>Evidence map</h1>
 <p class="lede">How much each review's statements rest on, at a glance. A review is marked <span class="flag">thin</span>
 when none of its statements has more than limited support. Click a review to read it, or its count to see its statements.</p>
+${statusNoteHtml(model)}
 <div data-evidence></div>`,
   });
 }
