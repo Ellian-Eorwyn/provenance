@@ -808,7 +808,7 @@ DESIGN_SHORT = {"experimental": "experiment", "observational-quantitative": "sur
                 "measured-performance": "field measurement", "model-simulation": "model", "case-study": "case study",
                 "qualitative-interview": "interviews", "mixed-methods": "mixed methods",
                 "systematic-review": "systematic review", "narrative-review": "review", "theory-conceptual": "theory",
-                "commentary": "commentary", "grey-report": "report"}
+                "commentary": "commentary", "grey-report": "report", "program-evaluation": "program evaluation"}
 
 
 def kind_of(sup: list[dict]) -> str:
@@ -1633,7 +1633,6 @@ def cmd_plan(args) -> int:
                         papers.add(data["exts"][c["target"]["id"]]["source_id"])
         papers = sorted(papers, key=lambda s: srcs[s]["slug"])
     chars = sum(srcs[s].get("chars") or 0 for s in papers)
-    all_chars = sum(s.get("chars") or 0 for s in srcs.values()) or 1
     npass = sum(len(srcs[s]["passages"]) for s in papers)
     claims = sum(len(data["syntheses"][s].get("claims", [])) for s in syns)
     out = {"set": args.set, "papers": papers, "syntheses": syns, "codes": args.codes or "",
@@ -1644,7 +1643,10 @@ def cmd_plan(args) -> int:
     C.counts_header(f"Set '{args.set}'", [
         ("papers", len(papers)), ("passages", npass), ("statements", claims),
         ("paper text", f"{chars / 1e6:.1f} M characters, about {tok / 1e6:.2f} M tokens"),
-        ("estimate, two servers, 3 runs", f"about {round(chars / all_chars * 105)} min (measured: 1.75 h for 179 papers on two servers running a 27B model)"),
+        # Time goes with the text the model reads, not the number of papers (it was scaled to the corpus's own
+        # length, which made every whole corpus 105 min).
+        ("estimate, two servers, 3 runs", f"about {round(chars / 16.6e6 * 105)} min, or about {round(chars / 16.6e6 * 202)} with "
+         "the checklist on think (measured: 1.75 h and 3.4 h for 16.6 M characters on two servers running a 27B model)"),
         ("written to", str(C.state_dir(corpus, "appraise") / "sets" / f"{args.set}.json")),
     ])
     return 0

@@ -5,7 +5,7 @@
  "covers": "Reports, working papers, policy documents and theses not written as journal studies. A report with its own data or model is also rated under that design's profile, and the lower grade stands.",
  "critical": ["D6", "D1", "D4"],
  "adapted_from": [
-  {"name": "AACODS: Authority, Accuracy, Coverage, Objectivity, Date, Significance (Tyndall 2010)", "url": "https://canberra.libguides.com/c.php?g=599348&p=4148869"}
+  {"name": "AACODS: Authority, Accuracy, Coverage, Objectivity, Date, Significance (Tyndall 2010)", "url": "https://dspace.flinders.edu.au/xmlui/handle/2328/3326"}
  ],
  "questions": [
   {"id": "q1", "dim": "D6", "text": "Authority: are the issuing organisation and the authors identified, with relevant expertise?"},
