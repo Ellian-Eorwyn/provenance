@@ -147,7 +147,7 @@ def build_rows(corpus: Path, args, books: dict, exts: dict) -> tuple[list[dict],
     for g in anns.values():
         for f in g["ext"]["upc-corpus"]["annotation"]["fields"]:
             if f["key"] not in {x["key"] for x in fields}:
-                fields.append({"key": f["key"], "label": f["label"]})
+                fields.append({"key": f["key"], "label": f["label"], "kind": f["kind"]})
     rows = []
     for sid, s in srcs.items():
         cite = citation(s)
@@ -167,7 +167,8 @@ def build_rows(corpus: Path, args, books: dict, exts: dict) -> tuple[list[dict],
                     q = {**q, "place": place_of(e)}
                 body = ("; ".join(f.get("code_labels") or []) or "Not reported") + "." + (
                     f" {f['note']}" if f.get("note") else "") if f["kind"] == "code" else f.get("text") or ""
-                row["fields"][f["key"]] = {"label": f["label"], "body": body, "quote": q}
+                row["fields"][f["key"]] = {"label": f["label"], "body": body, "quote": q,
+                                           "codes": f.get("code_labels") or [], "note": f.get("note") or ""}
         rows.append(row)
     rows.sort(key=lambda r: r["sort"])
     return rows, cols, fields
@@ -183,8 +184,14 @@ def write_xlsx(rows: list[dict], cols: list, fields: list[dict], dest: Path, tit
     wb.properties.title, wb.properties.creator = title, "upc-corpus sources_table"
     wb.properties.created = wb.properties.modified = dt.datetime.combine(dt.date.today(), dt.time())
     schemes = [h for _, _, h in cols]
-    head = ["No.", "Citation", "Authors", "Year", "Title", "Venue", "DOI", "URL", "Site page", *schemes,
-            *[f"{f['label']} (annotation)" if f["label"] in schemes else f["label"] for f in fields], "Annotation by"]
+    # A code field is two columns, its codes (to filter on) and its note; a text field is one.
+    ann_heads, widths_ann = [], []
+    for f in fields:
+        name = f"{f['label']} (annotation)" if f["label"] in schemes else f["label"]
+        ann_heads += [name, f"{name}: note"] if f.get("kind") == "code" else [name]
+        widths_ann += [24, 45] if f.get("kind") == "code" else [50]
+    head = ["No.", "Citation", "Authors", "Year", "Title", "Venue", "DOI", "URL", "Site page", *schemes, *ann_heads,
+            "Annotation by"]
     ws.append(head)
     for c in ws[1]:
         c.font, c.fill = Font(bold=True), PatternFill("solid", fgColor="F2E2B6")
@@ -195,8 +202,11 @@ def write_xlsx(rows: list[dict], cols: list, fields: list[dict], dest: Path, tit
         for f in fields:
             fr = r["fields"].get(f["key"])
             q = (fr or {}).get("quote")
-            cells.append("" if not fr else plain(fr["body"]) + (
-                f" “{q['text']}”" + (f" ({q['place']})" if q.get("place") else "") if q else ""))
+            said = f" “{q['text']}”" + (f" ({q['place']})" if q.get("place") else "") if q else ""
+            if f.get("kind") == "code":
+                cells += ["", ""] if not fr else ["; ".join(fr["codes"]) or "Not reported", (plain(fr["note"]) + said).strip()]
+            else:
+                cells.append("" if not fr else plain(fr["body"]) + said)
         cells.append(r.get("by", ""))
         cells = [D._ILLEGAL.sub("", v)[:32000] if isinstance(v, str) else v for v in cells]
         ws.append(cells)
@@ -207,7 +217,7 @@ def write_xlsx(rows: list[dict], cols: list, fields: list[dict], dest: Path, tit
         for k in (8, 9):  # URL, site page
             if cells[k - 1]:
                 ws.cell(ws.max_row, k).hyperlink = cells[k - 1]
-    widths = [5, 60, 28, 6, 50, 28, 24, 30, 30] + [22] * len(cols) + [50] * len(fields) + [28]
+    widths = [5, 60, 28, 6, 50, 28, 24, 30, 30] + [22] * len(cols) + widths_ann + [28]
     for i, w in enumerate(widths, 1):
         ws.column_dimensions[get_column_letter(i)].width = w
     for row in ws.iter_rows(min_row=2):

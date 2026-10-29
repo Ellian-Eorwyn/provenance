@@ -88,16 +88,19 @@ class Table(unittest.TestCase):
         ws = openpyxl.load_workbook(xlsx)["Sources"]
         head = [c.value for c in ws[1]]
         # the base columns, the scheme (t-screen's codes only), the annotation's fields, who wrote it
+        # a code field is its codes (to filter on) and its note; a text field is one column
         self.assertEqual(head, ["No.", "Citation", "Authors", "Year", "Title", "Venue", "DOI", "URL", "Site page",
-                                "Setting", "Setting (annotation)", "Technologies", "Annotation by"])
+                                "Setting", "Setting (annotation)", "Setting (annotation): note", "Technologies",
+                                "Annotation by"])
         rows = {r[4]: r for r in ws.iter_rows(min_row=2, values_only=True)}
         a, b = rows["Retrofits in one county"], rows["A survey of apartment owners"]
         slug = self.fx["a"]["slug"]
         self.assertEqual((a[8], a[7]), (f"{SITE}/sources/{slug}.html", "https://doi.org/10.1000/county"))
         self.assertEqual((a[9], b[9]), ("Single-family homes", None))
-        self.assertTrue(a[10].startswith("Single-family homes.") and a[10].endswith(f"“{TA.UNCODED}”"), a[10])
-        self.assertNotIn("[ext-", a[10] + a[11])
-        self.assertIn("model-written", a[12])
+        self.assertEqual(a[10], "Single-family homes")
+        self.assertTrue(a[11].endswith(f"“{TA.UNCODED}”"), a[11])
+        self.assertNotIn("[ext-", a[11] + a[12])
+        self.assertIn("model-written", a[13])
         self.assertEqual(ws.cell(2, 9).hyperlink.target, rows[ws.cell(2, 5).value][8])
         words = T.D.docx_text(docx)
         for want in ("Methods", "Annotated list", "Rivera, A., & Okafor, B. (2024). Retrofits in one county.", TA.UNCODED, TA.P1,
