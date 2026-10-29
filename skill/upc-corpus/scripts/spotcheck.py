@@ -3,7 +3,7 @@
 
     python3 spotcheck.py --corpus <dir> --per-code 20 --out spotcheck.csv
     python3 spotcheck.py --corpus <dir> --ingest spotcheck.csv --coder <your-handle>
-    python3 spotcheck.py --corpus <dir> --blind <dir> [--papers 15 --passages 40 --seed 1]
+    python3 spotcheck.py --corpus <dir> --blind <dir> [--papers 15 --passages 40 --seed 1 --strata source-class]
     python3 spotcheck.py --corpus <dir> --blind-ingest <dir> --coder <handle> [--coder-kind model --model <id>] [--name <shown as>]
 
 `--blind` draws a second coder's sheet for the evidence ratings (appraise.py),
@@ -108,7 +108,7 @@ The codes and their meanings are in rubric.md, Level 2.
 """
 
 
-def blind_sheet(corpus: Path, out: Path, n_papers: int, n_passages: int, seed: int) -> int:
+def blind_sheet(corpus: Path, out: Path, n_papers: int, n_passages: int, seed: int, strata_by: str = "source-class") -> int:
     import appraise as A  # noqa: PLC0415
     pilot = C.load_json(C.state_dir(corpus, "appraise") / "sets" / "pilot.json")
     if not pilot:
@@ -128,7 +128,8 @@ def blind_sheet(corpus: Path, out: Path, n_papers: int, n_passages: int, seed: i
     for f in corpus.glob("codings/*/items.jsonl"):
         for line in f.read_text(encoding="utf-8").splitlines():
             c = json.loads(line) if line.strip() else None
-            if c and (books.get(c["codebook_ref"]) or {}).get("slug") == "source-class" and c["target"]["kind"] == "source":
+            if c and (books.get(c["codebook_ref"]) or {}).get("slug") == strata_by and c["target"]["kind"] == "source" \
+                    and (c.get("status") or "active") == "active":
                 klass[c["target"]["id"]] = c.get("code")
     texts = {}
     for sid in in_pilot:
@@ -264,13 +265,15 @@ def main() -> int:
     ap.add_argument("--coder-kind", default="human", choices=["human", "model"], help="who coded the blind sheet")
     ap.add_argument("--model", default="", help="the model that coded the blind sheet, with --coder-kind model")
     ap.add_argument("--name", default="", help="how pages name the blind coder (default: --coder)")
+    ap.add_argument("--strata", default="source-class",
+                    help="with --blind: the source-level codebook whose codes stratify the papers (its kind of study)")
     ap.add_argument("--papers", type=int, default=15)
     ap.add_argument("--passages", type=int, default=40)
     args = ap.parse_args()
 
     corpus = Path(args.corpus).expanduser()
     if args.blind:
-        return blind_sheet(corpus, Path(args.blind).expanduser(), args.papers, args.passages, args.seed)
+        return blind_sheet(corpus, Path(args.blind).expanduser(), args.papers, args.passages, args.seed, args.strata)
     if args.blind_ingest:
         if not args.coder:
             C.die("--blind-ingest needs --coder")
