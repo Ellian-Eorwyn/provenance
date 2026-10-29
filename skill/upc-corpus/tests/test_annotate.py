@@ -174,6 +174,19 @@ class Checks(unittest.TestCase):
         s, _ = A.tidy("word " * 50, set(), 10, dict.fromkeys(("unknown_citation", "quotation_marks", "trimmed"), 0))
         self.assertEqual(s, "word " * 9 + "word…")
 
+    def test_a_note_does_not_repeat_its_code(self):
+        recs, _ = A.clean({"fields": {"setting": {"codes": ["multifamily"], "note": "Multifamily buildings; six in one city."}}},
+                          A_FIELDS, BOOKS, set())
+        self.assertEqual(recs["setting"]["note"], "Six in one city.")
+        recs, _ = A.clean({"fields": {"setting": {"codes": [], "note": "Not reported; national sales only."}}}, A_FIELDS, BOOKS, set())
+        self.assertEqual(recs["setting"]["note"], "National sales only.")
+
+    def test_a_first_sentence_a_little_over_is_kept_whole(self):
+        drops = dict.fromkeys(("unknown_citation", "quotation_marks", "trimmed"), 0)
+        one = "Heat pumps replaced gas boilers in most of the twelve homes the study followed."
+        s, _ = A.tidy(one + " The rest kept gas for cooking.", set(), 10, drops)
+        self.assertEqual((s, drops["trimmed"]), (one, 1))
+
     def test_the_schema_offers_only_the_codebook_codes_and_the_shown_passages(self):
         sch = A.schema(A_FIELDS, BOOKS, ["ext-0123456789ab"])["properties"]["fields"]["properties"]
         self.assertEqual(sch["setting"]["properties"]["codes"]["items"]["enum"], ["single-family", "multifamily"])

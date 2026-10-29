@@ -30,7 +30,8 @@ The model proposes, the tool disposes:
     carries is its `quote`, kept only when `upc anchor` finds it in the paper (into
     a hidden set, so it is checked but not listed as a passage; a quote that is a
     coded passage resolves to that passage);
-  * words over `max_words` are cut, at a sentence end when one fits.
+  * words over `max_words` are cut, at a sentence end when one fits; a first sentence
+    up to half again the limit is kept whole rather than cut mid-phrase.
 
 Each annotation is a generation (`upc add generation`, type x-annotation), so `upc`
 re-checks its quotations and pins the text it was read from. `ext["upc-site"].card`
@@ -207,10 +208,13 @@ def tidy(s, ids: set[str], max_words: int, drops: dict) -> tuple[str, list[str]]
     if words(s) > max_words:
         drops["trimmed"] += 1
         out = ""
-        for sentence in re.split(r"(?<=[.!?])\s+(?!\[ext-)", s):
+        sentences = re.split(r"(?<=[.!?])\s+(?!\[ext-)", s)
+        for sentence in sentences:
             if words((out + " " + sentence).strip()) > max_words:
                 break
             out = (out + " " + sentence).strip()
+        if not out and words(sentences[0]) <= max_words * 3 // 2:
+            out = sentences[0]  # one sentence a little over reads better whole than cut mid-phrase
         if not out:
             toks, n = [], 0
             for t in s.split():
@@ -245,7 +249,12 @@ def clean(raw: dict | None, fields: list[dict], books: dict[str, dict], ids: set
                 drops["extra_code"] += len(codes) - 1
                 codes = codes[:1]
             rec["codes"] = codes
-            body, cites = tidy(a.get("note"), ids, f["max_words"], drops)
+            note = str(a.get("note") or "")
+            said = [c.get("label") or c["code"] for c in b.get("codes", []) if c["code"] in codes] or [NOT_REPORTED.rstrip(".")]
+            for label in said:  # the card prints the codes (or "Not reported.") before the note: don't say them twice
+                cut = re.sub(rf"^\s*{re.escape(label)}\s*[.;:,]\s*", "", note, flags=re.I)
+                note = cut[:1].upper() + cut[1:] if cut != note else note
+            body, cites = tidy(note, ids, f["max_words"], drops)
         else:
             body, cites = tidy(a.get("text"), ids, f["max_words"], drops)
             body = body or NOT_REPORTED
