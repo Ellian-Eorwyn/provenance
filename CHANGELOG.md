@@ -91,6 +91,23 @@ map use the existing `metadata` role, each with its own media type.
     referrals marked.
   - `interview_drop.py`: a drop folder watched (a cron job): each settled interview folder
     transcribed, coded, the site rebuilt and published, one message per interview.
+- **Dossiers: a drafted memo, and the project in front** (upc-corpus toolkit, `dossier.py`),
+  so a dossier can be finished without a hand-written memo and open with the project's scope:
+  - `write`'s prompt carries the project profile's `aims` and `questions`, when given, beside
+    its lenses (it passed only the lenses and rules before).
+  - `brief --draft`: the configured local model drafts the cover memo (the bottom line,
+    themes, tensions, a paragraph per lens, next steps, a reading order) from the stored
+    entries alone, citing their checked quotations by marker. `synthesize.py`'s guards,
+    imported rather than copied, decide what is kept: a statement that cites no given passage
+    is left out, a near-quotation loses its quotation marks, and the model's working notes or
+    talk about "the passages provided" refuse the draft, after one fix pass. It is stored as
+    the usual `x-dossier-brief`, with the model in `produced_by` and a `drafted` record, and
+    the pages say "Drafted by". `brief --from` is unchanged.
+  - `build --scope <file.md>`, or the project profile's new `scope:`, shows a Markdown file
+    first, as "The project": a page and tab after the cover, the Word file's first section and
+    the spreadsheet's first sheet. It is read as plain Markdown and shown as written, labelled
+    as not checked against the documents; the never-publish and local-path checks cover it.
+  - Tests: 9 more in `tests/test_dossier.py` (35), against a stub model.
 
 ### Fixed
 

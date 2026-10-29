@@ -1,9 +1,9 @@
 """dossier.py: entries and a cover memo whose every quotation is found in its source,
-rendered as a site, a Word file and a spreadsheet.
+rendered as a site, a Word file and a spreadsheet, with the project's scope in front.
 
 A synthetic corpus: two web documents and a request note, two profiles, two entries
 (one quotation in each that is not in its source), and a brief. No network, no model
-server: `write` runs against a stub.
+server: `write` and `brief --draft` run against a stub.
 """
 
 import copy
@@ -56,6 +56,7 @@ AUDIENCE = {"id": "lab", "kind": "audience", "name": "Example Lab", "organizatio
             "readers": [{"name": "Dana Example", "role": "Director"}], "wants": ["What each document claims"],
             "knows": ["Transitions theory"], "style": ["Plain language"], "never_publish": ["Dana's medical leave"]}
 PROJECT = {"id": "path", "kind": "project", "name": "PATH", "full_name": "Pathways",
+           "aims": ["Find where households can leave gas easily"], "questions": ["Who pays when customers leave?"],
            "lenses": [{"slug": "policy", "title": "The policy landscape", "short": "Policy", "description": "Laws and proceedings."},
                       {"slug": "households", "title": "Households and equity", "short": "Households", "description": "Costs to households."}]}
 
@@ -136,6 +137,42 @@ BRIEF = {"title": "At a glance", "lede": "Two documents, one argument and its cr
          "next_steps": [{"step": "Read the report first", "detail": "The detail of the first step.",
                          "see": "url:https://ex.org/report"}, "Ask the advocate for its data"],
          "reading_order": [{"source": "url:https://ex.org/report", "why": "The argument"}]}
+SCOPE = """---
+made_by: a scope stage
+---
+# Scope: PATH
+
+<!-- a note for the owner, never shown -->
+PATH studies **household** costs. See [the program](https://ex.org/program) and [a file](file:///tmp/x).
+
+## Goals
+
+1. Find where switching is easy
+2. Find where it stalls
+
+3. Say why
+
+## Tasks
+
+- Task 1: Literature
+  - 1.1 Review the rate studies
+- Task 2: Interviews
+
+## Information needs
+
+| Need | Class | Why |
+|---|---|---|
+| Rate forecasts | find | Task 1 needs them |
+| Interview notes | collect | Not published |
+
+> The scope's own words, quoted.
+
+```
+code <b>here</b>
+```
+
+A paragraph with <script>alert(1)</script> in it.
+"""
 
 
 @unittest.skipUnless(upc_ok(), "needs the upc CLI 1.15+")
@@ -401,6 +438,8 @@ class Dossier(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertEqual(len(calls), 1)
         self.assertIn("Example Lab", calls[0][0])
+        self.assertIn("What it aims to do:\n- Find where households can leave gas easily", calls[0][0])
+        self.assertIn("What it asks:\n- Who pays when customers leave?", calls[0][0])
         self.assertIn("households", json.dumps(calls[0][1]))
         e = next(x for x in D.entries(corpus) if x["_source_id"] == C.corpus_reps(corpus)["url:https://ex.org/filing"]["source_id"])
         self.assertEqual(e["summary"], "A model's summary.")
@@ -437,6 +476,229 @@ class Dossier(unittest.TestCase):
         self.assertEqual(D.validate(dest).get("errors") or [], [])
         by_source = {e["_source_id"] for e in D.entries(dest)}
         self.assertTrue({first["source_id"], twin["source_id"]} <= by_source)
+
+    def test_the_write_prompt_names_aims_and_questions_only_when_the_profile_has_them(self):
+        bare = {k: v for k, v in PROJECT.items() if k not in ("aims", "questions")}
+        self.assertNotIn("What it aims to do", D.write_prompt(AUDIENCE, bare))
+        self.assertNotIn("What it asks", D.write_prompt(AUDIENCE, bare))
+        one = D.write_prompt(AUDIENCE, {**bare, "aims": "Map the transition"})  # the schema allows one aim as text
+        self.assertIn("What it aims to do:\n- Map the transition", one)
+        self.assertLess(one.index("Map the transition"), one.index("Judge relevance against these lenses"))
+
+    # -- brief --draft: the local model drafts the memo from the stored entries
+    def draft_reply(self, corpus):
+        _, keys, given = D.draft_material(D.order_docs(D.entries(corpus), D.load_cfg(corpus), D.source_index(corpus)))
+        by = {(keys[g["doc"]], g["direct_quote"]): eid for eid, g in given.items()}
+        rep_sid = C.corpus_reps(corpus)["url:https://ex.org/report"]["source_id"]
+        fil_sid = C.corpus_reps(corpus)["url:https://ex.org/filing"]["source_id"]
+        r_kp = by[(rep_sid, ENTRY_A["key_points"][0]["quote"])]
+        r_fig = next(e for (sid, q), e in by.items() if sid == rep_sid and "$5.60" in q)
+        f_kp = by[(fil_sid, ENTRY_B["key_points"][0]["quote"])]
+        reply = {
+            "bottom_line": 'Gas rates rise for those who stay, and "the poorest pay the most" unless pilots protect them.',
+            "themes": [{"title": "The rate spiral",
+                        "text": f'Rates climb as customers leave: "{ENTRY_A["key_points"][0]["quote"]}" [{r_kp}] '
+                                f"The advocate asks pilots to protect those who cannot pay [{r_kp}, {f_kp}]."},
+                       {"title": "An uncited theme", "text": "Something the model believes [ext-000000000000]."}],
+            "tensions": [{"title": "Who bears the cost",
+                          "text": f'The study sees "gas rates rising sharply as customers leave" [{r_kp}], while the '
+                                  f"advocate asks for protection [{f_kp}]."}],
+            "for_project": [{"lens": "households", "headline": "Households carry the risk",
+                             "text": f"Remaining customers face higher bills [{r_fig}]."}],
+            "next_steps": [{"step": "Read the report first", "detail": "", "see": "D1"},
+                           {"step": "List the works it cites", "detail": "Start with the leads.", "see": "leads"}],
+            "reading_order": [{"doc": "D1", "why": "The argument."}, {"doc": "D2", "why": "The reply."},
+                              {"doc": "D1", "why": "Twice."}]}
+        return reply, {"r_kp": r_kp, "r_fig": r_fig, "f_kp": f_kp, "report": rep_sid, "filing": fil_sid}
+
+    @staticmethod
+    def stub(replies, calls):
+        def llm_chat(system, user, **kw):
+            calls.append({"system": system, "user": user, **kw})
+            return {"content": json.dumps(replies[min(len(calls), len(replies)) - 1])}
+        return llm_chat
+
+    def test_brief_draft_stores_a_model_memo_from_the_entries_through_the_guards(self):
+        corpus, _ = self.fresh("draft")
+        reply, ids = self.draft_reply(corpus)
+        calls = []
+        with mock.patch.object(D.C, "llm_chat", self.stub([reply], calls)), \
+                mock.patch.object(sys, "argv", ["dossier.py", "brief", "--corpus", str(corpus), "--draft",
+                                                "--model", "stub-model"]):
+            self.assertEqual(D.main(), 0)
+        # One draft, then one fix pass, since the checks removed something from the first.
+        self.assertEqual(len(calls), 2)
+        self.assertIn("A CHECKER FOUND THESE PROBLEMS", calls[1]["user"])
+        self.assertIn("it cites no given passage", calls[1]["user"])
+        self.assertEqual(calls[0]["model"], "stub-model")
+        self.assertIn("Find where households can leave gas easily", calls[0]["system"])  # the project's aims
+        self.assertEqual(calls[0]["schema"]["properties"]["reading_order"]["items"]["properties"]["doc"]["enum"], ["D1", "D2"])
+        # The model reads the entries, never the documents: a sentence only in the report's body is not sent.
+        self.assertIn(f'"{ENTRY_A["key_points"][0]["quote"]}" [{ids["r_kp"]}]', calls[0]["user"])
+        self.assertNotIn(SECRET, calls[0]["user"])
+        self.assertNotIn(MISSING, calls[0]["user"])  # a quotation the gate dropped is not offered either
+
+        syn = D.current_brief(corpus)
+        b = syn["ext"]["upc_corpus"]["dossier_brief"]
+        self.assertEqual(syn["provenance"]["produced_by"]["model"], "stub-model")
+        self.assertEqual(syn["provenance"]["produced_by"]["prompt_version"], D.DRAFT_PROMPT)
+        self.assertEqual((b["writer"], b["drafted"]["model"], b["drafted"]["fix_pass"]),
+                         ("the assistant (stub-model)", "stub-model", True))
+        self.assertEqual([t["title"] for t in b["themes"]], ["The rate spiral"])  # the uncited theme is left out
+        self.assertEqual([e["extraction_id"] for e in b["themes"][0]["evidence"]], [ids["r_kp"], ids["f_kp"]])
+        self.assertIn(f'"{ENTRY_A["key_points"][0]["quote"]}"', b["themes"][0]["text"])  # a real quotation stays one
+        for text in (b["bottom_line"], b["themes"][0]["text"], b["tensions"][0]["text"], b["for_project"][0]["text"]):
+            self.assertNotIn("[ext-", text)  # the markers became evidence
+        self.assertIn("the poorest pay the most unless", b["bottom_line"])  # quoted words in no passage: marks gone
+        self.assertIn("The study sees gas rates rising sharply as customers leave, while", b["tensions"][0]["text"])
+        self.assertEqual([e["extraction_id"] for e in b["for_project"][0]["evidence"]], [ids["r_fig"]])
+        self.assertEqual([r["source_id"] for r in b["reading_order"]], [ids["report"], ids["filing"]])
+        self.assertEqual(b["next_steps"][0], {"step": "Read the report first", "see": ids["report"]})
+        self.assertTrue(any("ext-000000000000" in r for r in b["drafted"]["removed"]))
+        self.assertEqual(D.validate(corpus).get("errors") or [], [])
+        self.assertEqual(D.cmd_check(corpus), 0)
+
+        out = self.root / "draft-site"
+        D.build(corpus, out, docx=False, xlsx=False)
+        self.assertIn("Memo · drafted by the assistant (stub-model)", (out / "memo.html").read_text())
+        self.assertIn("Drafted by the assistant (stub-model)", (out / "index.html").read_text())
+
+    def test_a_draft_that_is_working_notes_is_refused_and_nothing_is_stored(self):
+        corpus, _ = self.fresh("draft-notes")
+        reply, _ = self.draft_reply(corpus)
+        before = D.current_brief(corpus)["synthesis_id"]
+        calls = []
+        notes = {**reply, "bottom_line": "The user wants a short memo for the lab. Rates rise for those who stay."}
+        with mock.patch.object(D.C, "llm_chat", self.stub([notes], calls)):
+            self.assertEqual(D.cmd_draft(corpus, "stub-model", None, plan=False), 1)
+        self.assertEqual(len(calls), 2)  # it was asked to fix it once
+        self.assertEqual(D.current_brief(corpus)["synthesis_id"], before)
+
+    def test_a_fix_pass_that_cannot_reach_the_model_keeps_the_first_draft(self):
+        corpus, _ = self.fresh("draft-down")
+        reply, _ = self.draft_reply(corpus)
+        calls = []
+
+        def flaky(system, user, **kw):
+            calls.append(user)
+            if len(calls) > 1:
+                raise C.Unavailable("the model server stopped answering")
+            return {"content": json.dumps(reply)}
+        with mock.patch.object(D.C, "llm_chat", flaky):
+            self.assertEqual(D.cmd_draft(corpus, "stub-model", None, plan=False), 0)
+        b = D.current_brief(corpus)["ext"]["upc_corpus"]["dossier_brief"]
+        self.assertEqual(([t["title"] for t in b["themes"]], len(calls)), (["The rate spiral"], 2))
+
+    def test_the_draft_guards_refuse_talk_about_the_input_and_accept_marker_lists(self):
+        corpus, _ = self.fresh("draft-meta")
+        reply, ids = self.draft_reply(corpus)
+        cfg = D.load_cfg(corpus)
+        _, keys, given = D.draft_material(D.order_docs(D.entries(corpus), cfg, D.source_index(corpus)))
+        proj, idx = D.load_profile(cfg["project"], "project"), D.source_index(corpus)
+        meta = {**reply, "tensions": [{"title": "Costs",
+                                       "text": f"Costs fall on those who stay, as the passages provided show [{ids['r_kp']}]."}]}
+        refuse = D.settle_draft(meta, given, keys, proj, idx)[1]
+        self.assertTrue(any("talks about what the model was given" in r for r in refuse), refuse)
+        brief, refuse, _ = D.settle_draft({**reply, "themes": reply["themes"][:1]}, given, keys, proj, idx)
+        self.assertEqual(refuse, [])
+        self.assertEqual(len(brief["themes"][0]["evidence"]), 2)  # "[ext-a, ext-b]" is two markers
+        none = {**reply, "themes": [{"title": "Uncited", "text": "No marker here."}]}
+        self.assertIn("themes: none rests on a given passage", D.settle_draft(none, given, keys, proj, idx)[1])
+
+    def test_brief_draft_plan_asks_no_model_and_brief_from_still_needs_a_writer(self):
+        corpus, _ = self.fresh("draft-plan")
+
+        def no_model(*a, **k):
+            raise AssertionError("--plan called the model")
+        with mock.patch.object(D.C, "llm_chat", no_model):
+            self.assertEqual(D.cmd_draft(corpus, "stub-model", None, plan=True), 0)
+        src = self.root / "brief.json"
+        src.write_text(json.dumps(BRIEF))
+        with mock.patch.object(sys, "argv", ["dossier.py", "brief", "--corpus", str(corpus), "--from", str(src)]):
+            with self.assertRaises(SystemExit) as cm:
+                D.main()
+        self.assertIn("needs --writer", str(cm.exception))
+        with mock.patch.object(sys, "argv", ["dossier.py", "brief", "--corpus", str(corpus), "--from", str(src),
+                                             "--writer", "Claude (test)", "--plan"]):
+            self.assertEqual(D.main(), 0)
+
+    # -- the project in front (build --scope, or the profile's scope:)
+    def test_a_scope_file_is_read_as_plain_markdown(self):
+        blocks = D.scope_blocks(SCOPE)
+        self.assertEqual([b["t"] for b in blocks], ["h", "p", "h", "ol", "h", "ul", "h", "table", "quote", "code", "p"])
+        self.assertEqual(blocks[3]["items"], [(0, "Find where switching is easy"), (0, "Find where it stalls"), (0, "Say why")])
+        self.assertEqual([lv for lv, _ in blocks[5]["items"]], [0, 1, 0])
+        page = D.scope_html(blocks)
+        for want in ("<h2>Scope: PATH</h2>", "<b>household</b>",
+                     '<a href="https://ex.org/program" target="_blank" rel="noopener">the program</a>',
+                     "<ol><li>Find where switching is easy</li><li>Find where it stalls</li><li>Say why</li></ol>",
+                     "<ul><li>Task 1: Literature<ul><li>1.1 Review the rate studies</li></ul></li><li>Task 2: Interviews</li></ul>",
+                     "<th>Need</th>", "<td>collect</td>", "<blockquote>The scope", "<pre><code>code &lt;b&gt;here&lt;/b&gt;</code></pre>",
+                     "&lt;script&gt;"):
+            self.assertIn(want, page)
+        for never in ("made_by", "a note for the owner", "file://", "<script>"):
+            self.assertNotIn(never, page)
+        self.assertIn("a file", page)  # a link that isn't http(s) or mailto keeps its words only
+        md = "\n".join(D.scope_markdown(blocks))
+        for want in ("## Scope\\: PATH", "1. Find where switching is easy", "    - 1\\.1 Review the rate studies",
+                     "[the program](<https://ex.org/program>)", "| Need | Class | Why |"):
+            self.assertIn(want, md)
+        rows = D.scope_rows(blocks)
+        self.assertEqual(rows[0], ["Scope: PATH", "heading", "Scope: PATH"])
+        self.assertIn(["Scope: PATH › Information needs", "table row", "Need: Rate forecasts; Class: find; Why: Task 1 needs them"], rows)
+        self.assertIn(["Scope: PATH › Tasks", "item", "  1.1 Review the rate studies"], rows)
+
+    def test_build_puts_the_project_in_front_of_the_site_the_word_file_and_the_spreadsheet(self):
+        corpus, cfg = self.fresh("scope")
+        scope = self.root / "scope.md"
+        scope.write_text(SCOPE)
+        out = self.root / "scope-site"
+        res = D.build(corpus, out, docx=HAVE_PANDOC, scope=scope)
+        self.assertEqual(res["scope"], str(scope.resolve()))
+        page = (out / "project.html").read_text()
+        for want in ("<h1>The project</h1>", "not checked against the documents", "<td>Rate forecasts</td>",
+                     'class="here">The project</a>'):
+            self.assertIn(want, page)
+        index = (out / "index.html").read_text()
+        self.assertIn('<a class="btn" href="project.html">The project</a>', index)
+        self.assertLess(index.index('href="project.html"'), index.index('href="memo.html"'))  # the tab after the cover
+        self.assertIn("scope file as written", (out / "method.html").read_text())
+        from openpyxl import load_workbook
+        wb = load_workbook(next(out.glob("*.xlsx")))
+        self.assertEqual(wb.sheetnames[:2], ["The project", "Documents"])
+        if HAVE_PANDOC:
+            words = " ".join(D.docx_text(next(out.glob("*.docx"))).split())
+            self.assertLess(words.index("The project"), words.index("At a glance"))
+            for want in ("Find where switching is easy", "1.1 Review the rate studies", "Rate forecasts"):
+                self.assertIn(want, words)
+        rec = json.loads((out.parent / "scope-site.build.json").read_text())
+        self.assertEqual(rec["scope"]["sha256"], hashlib.sha256(SCOPE.encode()).hexdigest())
+
+        # The project profile's scope: does the same, relative to the profile; a missing file refuses the build.
+        prof = self.root / "profile-with-scope"
+        prof.mkdir()
+        (prof / "scope.md").write_text(SCOPE)
+        (prof / "project.json").write_text(json.dumps({**PROJECT, "scope": "scope.md"}))
+        D.cfg_path(corpus).write_text(json.dumps({**cfg, "project": str(prof / "project.json")}))
+        out2 = self.root / "scope-site-2"
+        D.build(corpus, out2, docx=False, xlsx=False)
+        self.assertIn("Find where switching is easy", (out2 / "project.html").read_text())
+        with self.assertRaises(SystemExit) as cm:
+            D.build(corpus, out2, docx=False, xlsx=False, scope=self.root / "no-such-scope.md")
+        self.assertIn("no scope file", str(cm.exception))
+        # Without a scope there is no project page, and an earlier build's is removed.
+        D.cfg_path(corpus).write_text(json.dumps(cfg))
+        D.build(corpus, out2, docx=False, xlsx=False)
+        self.assertFalse((out2 / "project.html").exists())
+        self.assertNotIn("project.html", (out2 / "index.html").read_text())
+
+    def test_a_local_path_in_the_scope_refuses_the_build(self):
+        corpus, _ = self.fresh("scope-local")
+        scope = self.root / "scope-local.md"
+        scope.write_text("# Scope\n\nThe files are in /Users/someone/Documents/Project.\n")
+        with self.assertRaises(SystemExit) as cm:
+            D.build(corpus, self.root / "scope-local-site", docx=False, xlsx=False, scope=scope)
+        self.assertIn("local path", str(cm.exception))
 
     def test_check_finds_every_quotation_again(self):
         self.assertEqual(D.cmd_check(self.corpus), 0)

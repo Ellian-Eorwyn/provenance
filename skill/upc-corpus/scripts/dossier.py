@@ -5,7 +5,8 @@
     python3 dossier.py add   --corpus <dir> --from <entry.json> --writer "<who>" [--model M] [--replace] [--plan]
     python3 dossier.py write --corpus <dir> [--source <id>] [--redo] [--plan]
     python3 dossier.py brief --corpus <dir> --from <brief.json> --writer "<who>" [--model M] [--plan]
-    python3 dossier.py build --corpus <dir> --out <dir> [--copies] [--no-docx] [--no-xlsx] [--no-images]
+    python3 dossier.py brief --corpus <dir> --draft [--model M] [--writer "<who>"] [--plan]
+    python3 dossier.py build --corpus <dir> --out <dir> [--scope <scope.md>] [--copies] [--no-docx] [--no-xlsx] [--no-images]
     python3 dossier.py check --corpus <dir>
 
 Two profiles steer it. Both are kept outside the corpus and reused from one dossier
@@ -13,8 +14,10 @@ to the next (shapes in references/profiles/):
 
   * an AUDIENCE: who reads it, what they already know, what they look for, how
     they like to read, and phrases that must never be published;
-  * a PROJECT: what it is, and the lenses (usually its tasks) that relevance is
-    judged against.
+  * a PROJECT: what it is, its aims and questions, and the lenses (usually its
+    tasks) that relevance is judged against. Its `scope:` (or `build --scope`) names
+    a Markdown file shown first, as "The project", in the site, the Word file and
+    the spreadsheet.
 
 The objects are UPC's own, so a dossier is a projection (spec/09):
 
@@ -27,7 +30,9 @@ The objects are UPC's own, so a dossier is a projection (spec/09):
     theme backed by quotations that hop C checks.
 
 `add` takes an entry written anywhere (a person, Claude, any model); `write` has
-the configured local model write it. Both go through the same gate.
+the configured local model write it. Both go through the same gate. Likewise
+`brief --from` stores a memo written anywhere, and `brief --draft` has the local
+model draft one from the stored entries alone, through synthesize.py's guards.
 
 `build` refuses a corpus that does not validate and finds every quotation again
 in the stored source. It then writes the site (a cover that fits the point on one
@@ -61,6 +66,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 import common as C  # noqa: E402
 from corpus_view import (check_extraction, esc, extractions, find_span, generations, latest_per_source,  # noqa: E402
                          meta_content, suppressed_in, thumbnail, validate)
+from synthesize import MARKER, NOTES_LINE, NOTES_META, NOTES_START, unquote_misquotes  # noqa: E402  (the overviews' guards)
 
 TOOL = {"tool": "upc-corpus/dossier", "tool_version": "1.1.0"}
 ENTRY, BRIEF = "x-dossier-entry", "x-dossier-brief"
@@ -513,20 +519,32 @@ def style_text(aud: dict) -> str:
     return "; ".join(f"{k}: {v}" for k, v in s.items()) if isinstance(s, dict) else "; ".join(s)
 
 
-def write_prompt(aud: dict, proj: dict) -> str:
+def readers_text(aud: dict) -> str:
     readers = "; ".join(f"{r['name']} ({r['role']})" for r in aud["readers"])
-    lenses = "\n".join(f"- {lens['slug']}: {lens['title']}: {lens['description']}" for lens in proj["lenses"])
-    return f"""You write one entry of a dossier: what one document says that matters to a project, for its readers.
-
-The readers: {aud['name']}{' (' + aud['organization'] + ')' if aud.get('organization') else ''}: {readers}.
+    return f"""The readers: {aud['name']}{' (' + aud['organization'] + ')' if aud.get('organization') else ''}: {readers}.
 They already know (do not explain): {'; '.join(aud.get('knows') or ['—'])}.
 They look for: {'; '.join(aud['wants'])}.
-How they like to read: {style_text(aud)}.
+How they like to read: {style_text(aud)}."""
 
-The project: {proj['name']}{' (' + proj['full_name'] + ')' if proj.get('full_name') else ''}.
-Judge relevance against these lenses:
+
+def project_text(proj: dict) -> str:
+    """The project as a prompt gives it: its aims and questions (when the profile has them), then its lenses."""
+    aims = [proj["aims"]] if isinstance(proj.get("aims"), str) else proj.get("aims") or []
+    asks = "".join(f"{head}\n" + "\n".join(f"- {x}" for x in xs) + "\n"
+                   for head, xs in (("What it aims to do:", aims), ("What it asks:", proj.get("questions") or [])) if xs)
+    lenses = "\n".join(f"- {lens['slug']}: {lens['title']}: {lens['description']}" for lens in proj["lenses"])
+    return f"""The project: {proj['name']}{' (' + proj['full_name'] + ')' if proj.get('full_name') else ''}.
+{asks}Judge relevance against these lenses:
 {lenses}
-Project rules: {'; '.join(proj.get('rules') or ['—'])}.
+Project rules: {'; '.join(proj.get('rules') or ['—'])}."""
+
+
+def write_prompt(aud: dict, proj: dict) -> str:
+    return f"""You write one entry of a dossier: what one document says that matters to a project, for its readers.
+
+{readers_text(aud)}
+
+{project_text(proj)}
 
 Output JSON only:
 - kind, author_org (who wrote or issued it), date (as the document gives it).
@@ -595,7 +613,7 @@ BRIEF_SECTIONS = (("themes", "Themes"), ("tensions", "Where the documents pull a
 
 
 def add_brief(corpus: Path, brief: dict, *, writer: str, model: str | None = None, method: str = "model",
-              plan: bool = False, prompt: str = "dossier-brief@1") -> dict:
+              plan: bool = False, prompt: str = "dossier-brief@1", drafted: dict | None = None) -> dict:
     cfg = load_cfg(corpus)
     proj = load_profile(cfg["project"], "project")
     lenses, lt = {lens["slug"] for lens in proj["lenses"]}, lens_titles(proj)
@@ -635,7 +653,8 @@ def add_brief(corpus: Path, brief: dict, *, writer: str, model: str | None = Non
             see = idx[see]["source_id"]
         steps.append({k: v for k, v in {"step": st["step"], "detail": st.get("detail"), "see": see}.items() if v})
     out: dict = {"writer": writer, "title": brief.get("title") or "Cover memo", "lede": brief.get("lede", ""),
-                 "bottom_line": brief.get("bottom_line", ""), "next_steps": steps, "reading_order": []}
+                 "bottom_line": brief.get("bottom_line", ""), "next_steps": steps, "reading_order": [],
+                 **({"drafted": drafted} if drafted else {})}
     used: set[str] = set()
     for sec, _ in BRIEF_SECTIONS:
         out[sec] = []
@@ -678,7 +697,7 @@ def add_brief(corpus: Path, brief: dict, *, writer: str, model: str | None = Non
         raise SystemExit("the brief has no theme with a quotation found in its source; nothing was written")
 
     titles = {sid: idx[sid]["title"] for sid in used}
-    md = [f"# {_prose(out['title'])}", "", f"Written by {_prose(writer)}.", ""]
+    md = [f"# {_prose(out['title'])}", "", f"{penned(out)} by {_prose(writer)}.", ""]
     md += [_prose(x) for x in (out["bottom_line"], out["lede"]) if x] + [""]
     claims, n = [], 0
     for sec, head in BRIEF_SECTIONS:
@@ -746,6 +765,237 @@ def brief_shape(brief: dict, proj: dict, idx: dict) -> list[str]:
         if see and see not in PAGE_OF and see not in idx:
             errs.append(f"next_steps[{i}].see: {see!r} is not a page ({', '.join(PAGE_OF)}) or a source of this corpus")
     return errs
+
+
+def print_brief_report(rep: dict) -> None:
+    C.counts_header("Brief", [("status", rep.get("status")), ("themes", rep["themes"]), ("tensions", rep["tensions"]),
+                              ("for the project", rep["for_project"]), ("quotations", rep["quotations"]),
+                              ("not found", len(rep["refused"]))])
+    for r in rep["refused"]:
+        print(f"  NOT FOUND {r['where']} ({r['status']}): {r.get('quote', '')[:110]!r}")
+
+
+# ------------------------------------------------------------------ brief --draft (the local model)
+# The model drafts the memo from the stored entries only: their writers' notes and their checked quotations, never
+# the documents. It cites as synthesize.py's overviews do (a bare [ext-…] marker after each statement, a quotation
+# only as a given passage copied whole), so the same guards apply: a near-quotation loses its quotation marks, a
+# statement that cites no given passage is left out, and working notes or talk about what the model was given
+# ("the passages provided") refuse the draft. A draft with problems gets one fix pass with the checker's list.
+DRAFT_PROMPT = "dossier-brief-draft@1"
+DRAFT_FROM, DRAFT_QUOTES = ("key_points", "figures", "actors", "dates"), 14  # passages offered per document, in this order
+QUOTED_ANY = re.compile(r'"([^"\n]{4,600})"|“([^”\n]{4,600})”')
+MARKER_LIST = re.compile(r"\[(ext-[0-9a-f]{12}(?:\s*[,;]\s*ext-[0-9a-f]{12})+)\]")  # [ext-a, ext-b] -> [ext-a] [ext-b]
+
+
+def draft_material(es: list[dict]) -> tuple[str, dict[str, str], dict[str, dict]]:
+    """The entries as the model reads them. -> (text, document key -> source_id, extraction_id -> passage)."""
+    blocks, keys, given = [], {}, {}
+    for n, e in enumerate(es, 1):
+        key = f"D{n}"
+        keys[key] = e["_source_id"]
+        facts = " · ".join(str(x) for x in (KIND_LABEL.get(e.get("kind"), e.get("kind")), e.get("author_org"), e.get("date")) if x)
+        lines = [f"{key} · {short_title(e)} · {e['title']}" + (f" ({facts})" if facts else ""),
+                 f"Summary, by {e['writer']}: {_prose(e.get('summary'))}"]
+        if e.get("for_us"):
+            lines.append(f"What matters most: {_prose(e['for_us'])}")
+        lines += [f"Why it matters ({w.get('lens')}): {_prose(w.get('text'))}" for w in e.get("why_it_matters") or []]
+        if e.get("relevance"):
+            lines.append("Relevance, 0-3: " + ", ".join(f"{k} {v}" for k, v in e["relevance"].items()))
+        lines += [f"Open question: {_prose(q)}" for q in e.get("questions") or []]
+        lines.append("Passages:")
+        offered = 0
+        for sec in DRAFT_FROM:
+            for it in e.get(sec) or []:
+                eid = it.get("extraction_id")
+                if not eid or eid in given or offered >= DRAFT_QUOTES:
+                    continue
+                label = {"key_points": f"key point{' (' + it['lens'] + ')' if it.get('lens') else ''}: {it.get('text')}",
+                         "figures": f"figure: {it.get('label')}: {it.get('value')}",
+                         "actors": f"position: {it.get('name')}: {it.get('stance')}",
+                         "dates": f"date: {it.get('date')}: {it.get('event')}"}[sec]
+                lines += [f"- {_prose(label)}", f'  "{it["quote"]}" [{eid}]']
+                given[eid] = {"direct_quote": it["quote"], "source_id": e["_source_id"], "doc": key}
+                offered += 1
+        blocks.append("\n".join(lines))
+    return "\n\n".join(blocks), keys, given
+
+
+def draft_prompt(aud: dict, proj: dict) -> str:
+    return f"""You draft the cover memo of a dossier: what a set of documents says that matters to a project, for its readers.
+You are given one entry per document (D1, D2, ...): its writer's notes, then passages from the document, each already
+checked word for word against it. Use them and nothing else; nothing from your own knowledge.
+
+{readers_text(aud)}
+
+{project_text(proj)}
+
+RULES
+1. A quotation may ONLY be one of the given passages, copied whole INCLUDING its [ext-...] marker, inside double
+   quotes. Do not invent, merge, trim or tidy a quotation; if you cannot quote it exactly, say it in your own words.
+2. Every sentence of a theme, a tension or a lens paragraph ends with the bare marker(s) [ext-...] of the passage(s)
+   it rests on. Never put quotation marks around your own words. A statement that cites no given passage is thrown away.
+3. Use only the markers given. Write to the readers about the documents and the project, never about what you were
+   given (no "the passages", "the entries", "the notes provided").
+4. Say where the documents disagree, and say when a point rests on one document or on thin evidence.
+
+Output JSON only:
+- bottom_line: at most {LIMITS['bottom_line'] - 10} words, plain: the point of the whole file for {proj['name']}.
+- themes: 2 to {MAX_THEMES} findings across the documents, strongest first; prefer what more than one document
+  supports. title: the finding as a short statement (at most {LIMITS['theme title'] - 2} words, no markers); text: two
+  to four sentences, each ending in markers.
+- tensions: up to 4 places where the documents pull apart, or one leaves open what another assumes: title, and a
+  text that cites each side.
+- for_project: one for each lens the documents really bear on: lens, headline (at most {LIMITS['headline'] - 4} words,
+  no markers) and text (two or three sentences with markers): what it means for that part of the project.
+- next_steps: up to {MAX_STEPS} for the team: step (a checkable action, at most {LIMITS['next step'] - 4} words),
+  detail (the rest, or ""), see (a page: {', '.join(PAGE_OF)}; or a document's key; or "").
+- reading_order: the documents worth reading, in the order to read them: doc (its key) and why (one sentence)."""
+
+
+def draft_schema(proj: dict, keys: list[str]) -> dict:
+    s = {"type": "string"}
+    obj = lambda **p: {"type": "object", "properties": p, "required": list(p)}  # noqa: E731
+    arr = lambda item: {"type": "array", "items": item}  # noqa: E731
+    return obj(bottom_line=s, themes=arr(obj(title=s, text=s)), tensions=arr(obj(title=s, text=s)),
+               for_project=arr(obj(lens={"type": "string", "enum": [lens["slug"] for lens in proj["lenses"]]},
+                                   headline=s, text=s)),
+               next_steps=arr(obj(step=s, detail=s, see={"type": "string", "enum": ["", *PAGE_OF, *keys]})),
+               reading_order=arr(obj(doc={"type": "string", "enum": keys}, why=s)))
+
+
+def settle_draft(d: dict, given: dict[str, dict], keys: dict[str, str], proj: dict,
+                 idx: dict) -> tuple[dict, list[str], list[str]]:
+    """The model's reply as a brief (references/dossier.md, 'The memo'), through synthesize.py's guards.
+    -> (the brief, what refuses it, what code removed). Code only removes (a statement, a marker, quotation
+    marks, a theme or step over the limit); it never adds a word."""
+    refuse, removed = [], []
+    lenses = {lens["slug"] for lens in proj["lenses"]}
+
+    def field(raw, where: str, prose: bool = False) -> tuple[str, list[str]]:
+        """A text with its cited markers taken out: -> (the words, the given passages it cites)."""
+        t = MARKER_LIST.sub(lambda m: " ".join(f"[{x}]" for x in re.split(r"\s*[,;]\s*", m.group(1))),
+                            " ".join(str(raw or "").split()))
+        t, n = unquote_misquotes(t, given)  # a "quotation" [ext-…] that isn't that passage, exactly
+
+        def loose(m):  # any other quoted words that are not a given passage's own
+            nonlocal n
+            q = m.group(1) or m.group(2)
+            if any(q in g["direct_quote"] for g in given.values()):
+                return m.group(0)
+            n += 1
+            return q
+        t = QUOTED_ANY.sub(loose, t)
+        if n:
+            removed.append(f"{where}: {n} quotation(s) not copied whole from a given passage lost their quotation marks")
+        cited = list(dict.fromkeys(MARKER.findall(t)))
+        if [e for e in cited if e not in given]:
+            removed.append(f"{where}: {', '.join(e for e in cited if e not in given)} is not a given passage; its marker "
+                           "was taken out")
+        if (prose and NOTES_START.match(t)) or NOTES_LINE.search(t):
+            refuse.append(f"{where}: it is the model's working notes, not a memo")
+        elif NOTES_META.search(t):
+            refuse.append(f"{where}: it talks about what the model was given, not to a reader")
+        words = re.sub(r"\s+([.,;:!?)])", r"\1", re.sub(r"\s*\[ext-[0-9a-f]{12}\]", "", t)).strip()
+        return words, [e for e in cited if e in given]
+
+    def doc(key, where: str) -> str | None:
+        if key in keys:
+            return keys[key]
+        if key:
+            removed.append(f"{where}: {key!r} is not a document's key; left out")
+        return None
+
+    brief: dict = {"title": "Cover memo", "bottom_line": field(d.get("bottom_line"), "bottom_line", prose=True)[0]}
+    for sec in ("themes", "tensions", "for_project"):
+        brief[sec] = []
+        for i, item in enumerate(x for x in d.get(sec) or [] if isinstance(x, dict)):
+            where = f"{sec}[{i}]"
+            if sec == "for_project" and (item.get("lens") not in lenses
+                                         or item["lens"] in {x["lens"] for x in brief[sec]}):
+                removed.append(f"{where}: {item.get('lens')!r} is not a lens of {proj['name']}, or is there twice; left out")
+                continue
+            name = "headline" if sec == "for_project" else "title"
+            head = field(item.get(name), f"{where}.{name}")[0]
+            text, ids = field(item.get("text"), f"{where}.text", prose=True)
+            if not ids:
+                removed.append(f"{where}: it cites no given passage, so it was left out ({head[:60]!r})")
+                continue
+            named = {"lens": item["lens"], "headline": head} if sec == "for_project" else {"title": head}
+            brief[sec].append({**named, "text": text, "evidence": [{"extraction_id": e} for e in ids]})
+    steps = []
+    for i, st in enumerate(x for x in d.get("next_steps") or [] if isinstance(x, dict)):
+        step = field(st.get("step"), f"next_steps[{i}].step")[0]
+        see = st.get("see") if st.get("see") in PAGE_OF else doc(st.get("see"), f"next_steps[{i}].see")
+        if step:
+            steps.append({k: v for k, v in {"step": step, "detail": field(st.get("detail"), f"next_steps[{i}].detail")[0],
+                                            "see": see}.items() if v})
+    reading = []
+    for i, r in enumerate(x for x in d.get("reading_order") or [] if isinstance(x, dict)):
+        sid = doc(r.get("doc"), f"reading_order[{i}]")
+        if sid and sid not in {x["source"] for x in reading}:
+            reading.append({"source": sid, "why": field(r.get("why"), f"reading_order[{i}].why")[0]})
+    for sec, most, got in (("themes", MAX_THEMES, brief["themes"]), ("next_steps", MAX_STEPS, steps)):
+        if len(got) > most:
+            removed.append(f"{sec}: {len(got)}; only the first {most} were kept")
+            del got[most:]
+    brief.update(next_steps=steps, reading_order=reading)
+    if not brief["themes"]:
+        refuse.append("themes: none rests on a given passage")
+    return brief, refuse + brief_shape(brief, proj, idx), removed
+
+
+def cmd_draft(corpus: Path, model: str, writer: str | None, plan: bool) -> int:
+    """brief --draft: the configured local model drafts the memo; stored only if nothing refuses it."""
+    cfg = load_cfg(corpus)
+    aud, proj = load_profile(cfg["audience"], "audience"), load_profile(cfg["project"], "project")
+    idx = source_index(corpus)
+    es = order_docs(entries(corpus), cfg, idx)
+    if not es:
+        raise SystemExit("no entries yet (dossier.py add or write): the memo is drafted from them")
+    material, keys, given = draft_material(es)
+    C.counts_header("Brief: draft", [("documents with an entry", len(es)), ("passages offered", len(given)),
+                                     ("model", f"{model} at {C.CHAT_URL}")])
+    if plan:
+        return 0
+    system, schema = draft_prompt(aud, proj), draft_schema(proj, list(keys))
+    user = f"THE ENTRIES ({len(es)} documents, {len(given)} passages):\n\n{material}"
+
+    def attempt(prompt: str) -> tuple[str, dict, list[str], list[str]]:
+        raw = C.llm_chat(system, prompt, model=model, schema=schema, max_tokens=6000, temperature=0.3)["content"]
+        d = C.parse_json_loose(raw)
+        if not isinstance(d, dict):
+            return raw, {}, ["the reply was not a JSON object"], []
+        return raw, *settle_draft(d, given, keys, proj, idx)
+
+    t0 = time.time()
+    raw, brief, refuse, removed = attempt(user)
+    fix_pass = bool(refuse or removed)
+    if fix_pass:
+        try:
+            _, *second = attempt(user + "\n\nYOUR DRAFT:\n\n" + raw + "\n\nA CHECKER FOUND THESE PROBLEMS:\n- "
+                                 + "\n- ".join(refuse + removed)
+                                 + "\n\nWrite the whole memo again as JSON, fixing every problem and keeping every rule.")
+            if (len(second[1]), len(second[2])) <= (len(refuse), len(removed)):
+                brief, refuse, removed = second
+        except C.Unavailable as e:  # the first draft still counts
+            print(f"  UNAVAILABLE for the fix pass ({e}); the first draft is judged as it is")
+    for line in removed:
+        print(f"  REMOVED {line}")
+    if refuse:
+        for line in refuse:
+            print(f"  REFUSED {line}")
+        C.counts_header("Brief: draft refused", [("problems", len(refuse)), ("fix pass", "yes" if fix_pass else "no"),
+                                                 ("written", "nothing"), ("seconds", round(time.time() - t0, 1))])
+        return 1
+    rep = add_brief(corpus, brief, writer=writer or f"{C.AGENT_NAME} ({model})", model=model, method="model",
+                    prompt=DRAFT_PROMPT, drafted={"model": model, "prompt_version": DRAFT_PROMPT,
+                                                  "fix_pass": fix_pass, "removed": removed})
+    C.upc("regen", str(corpus), check=False)
+    print_brief_report(rep)
+    C.counts_header("Brief: drafted", [("model", model), ("fix pass", "yes" if fix_pass else "no"),
+                                       ("removed by the checks", len(removed)), ("synthesis", rep["synthesis_id"]),
+                                       ("seconds", round(time.time() - t0, 1))])
+    return 0
 
 
 # ------------------------------------------------------------------ reading the dossier back
@@ -973,6 +1223,11 @@ table.ledger th{font:600 .68rem/1.2 var(--mono);letter-spacing:.07em;text-transf
 text-align:left;border-bottom:2px solid var(--rule);padding:8px}
 table.ledger td{border-bottom:1px solid var(--rule);padding:9px 8px;vertical-align:top}
 code{font-size:.8rem;overflow-wrap:anywhere}
+.scope h2,.scope h3,.scope h4{margin-top:1.2em} .scope>:first-child{margin-top:0}
+.scope ul,.scope ol{padding-left:1.4em;margin:0 0 .8em} .scope li{margin:.2em 0}
+.scope blockquote{margin:0 0 .8em;padding:2px 0 2px 14px;border-left:3px solid var(--folder-edge);font-family:var(--serif)}
+.scope pre{background:var(--chip);padding:10px 12px;border-radius:6px;overflow-x:auto;font-size:.82rem;white-space:pre-wrap}
+.scope hr{border:0;border-top:1px solid var(--rule);margin:1.2em 0} .scope .scroll{margin:0 0 1em}
 .exhibits{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:26px;margin-top:10px}
 figure.exhibit{margin:0;background:var(--paper);padding:10px 10px 8px;box-shadow:var(--shadow);position:relative}
 figure.exhibit::before{content:"";position:absolute;top:-11px;left:50%;width:96px;height:24px;margin-left:-48px;
@@ -1407,8 +1662,8 @@ def find_box(what: str) -> str:
 
 def page_html(title: str, body: str, ctx: dict, here: str, depth: int = 0) -> str:
     up = "../" * depth
-    tabs = [("index.html", "Cover"), ("memo.html", "Memo"), ("timeline.html", "Timeline"), ("people.html", "Who's who"),
-            ("terms.html", "Terms"), ("leads.html", "Leads"), ("method.html", "Method")]
+    tabs = [("index.html", "Cover"), ("project.html", "The project"), ("memo.html", "Memo"), ("timeline.html", "Timeline"),
+            ("people.html", "Who's who"), ("terms.html", "Terms"), ("leads.html", "Leads"), ("method.html", "Method")]
     nav = "".join(f'<a href="{up}{h}" class="{"here" if h == here else ""}">{esc(t)}</a>'
                   for h, t in tabs if h in ctx["pages"])
     cfg = ctx["cfg"]
@@ -1422,6 +1677,11 @@ def page_html(title: str, body: str, ctx: dict, here: str, depth: int = 0) -> st
 <div class="wrap"><div class="topbar"><nav class="tabs" aria-label="Sections">{nav}</nav>{THEME_BUTTON}</div><main class="folder">{body}</main>
 <footer class="site">{foot}</footer></div>{DRAWER}<script>{JS}</script></body></html>
 """
+
+
+def penned(b: dict) -> str:
+    """How a memo names its writer's part: a draft the local model made (brief --draft) says so."""
+    return "Drafted" if b.get("drafted") else "Written"
 
 
 def steps_of(b: dict | None) -> list[dict]:
@@ -1495,20 +1755,21 @@ def cover_html(ctx: dict) -> str:
     cfg, proj, docs, b = ctx["cfg"], ctx["proj"], ctx["docs"], ctx["brief"]
     lenses = proj["lenses"]
     dl = "".join(f'<a class="btn" href="{esc(f)}" download>{esc(label)}</a>' for f, label in ctx["downloads"])
-    memo_btn = '<a class="btn" href="memo.html">Full memo</a>' if b else ""
+    buttons = ('<a class="btn" href="project.html">The project</a>' if ctx.get("scope") else "") \
+        + ('<a class="btn" href="memo.html">Full memo</a>' if b else "")
     who = [f"For <b>{esc(cfg['prepared_for'])}</b>"] + ([f"Prepared by {esc(cfg['prepared_by'])}"] if cfg.get("prepared_by") else []) \
         + ([esc(fmt_day(cfg.get("date")))] if cfg.get("date") else [])
     head = (f'<header class="cv-head"><div><span class="label">{esc(cfg.get("file_no") or "Dossier")} · {len(docs)} documents · '
             f'{ctx["quotes"]} passages, each checked against its source</span><h1>{esc(cfg["title"])}</h1>'
             f'<p class="cv-meta">{" · ".join(who)}</p></div><div class="cv-actions">'
-            f'{"<span class=stamp>" + esc(cfg["stamp"]) + "</span>" if cfg.get("stamp") else ""}{memo_btn}{dl}</div></header>')
+            f'{"<span class=stamp>" + esc(cfg["stamp"]) + "</span>" if cfg.get("stamp") else ""}{buttons}{dl}</div></header>')
 
     if b:
         bottom = b.get("bottom_line") or b.get("lede") or ""
         finds = "".join(f'<li><a href="memo.html#theme-{i}"><span class="n">{i}</span><span class="ft">{esc(t.get("title"))}</span>'
                         f'<span class="go">passages →</span></a></li>' for i, t in enumerate(b.get("themes") or [], 1))
         tens = len(b.get("tensions") or [])
-        left = (f'<article class="sheet bl"><div class="bl-top"><h2>The bottom line</h2><span class="label">Written by '
+        left = (f'<article class="sheet bl"><div class="bl-top"><h2>The bottom line</h2><span class="label">{penned(b)} by '
                 f'{esc(b["writer"])}</span></div><p class="bottom">{esc(bottom)}</p>'
                 + (f'<h3 class="label">Findings · each opens its passages</h3><ol class="find">{finds}</ol>' if finds else "")
                 + (f'<p class="more"><a href="memo.html#tensions">Where the documents pull apart ({tens}) →</a></p>' if tens else "")
@@ -1624,7 +1885,7 @@ def memo_html(ctx: dict) -> str:
     memo = (f'<article class="sheet memo">{CLIP}<div class="memo-top"><div class="memo-head"><b>TO</b><span>{esc(cfg["prepared_for"])}</span>'
             f'<b>FROM</b><span>{esc(cfg.get("prepared_by") or "")}</span><b>RE</b><span>{esc(cfg["title"])}</span>'
             f'<b>DATE</b><span>{esc(fmt_day(cfg.get("date")))}</span></div>{slip}</div>'
-            f'<p class="label">Memo · written by {esc(b["writer"])}</p>{"".join(body)}</article>')
+            f'<p class="label">Memo · {penned(b).lower()} by {esc(b["writer"])}</p>{"".join(body)}</article>')
     return (f'<p class="crumbs"><a href="index.html">Cover</a> › Memo</p><div class="memo-grid"><nav class="toc" aria-label="In this memo" data-spy>'
             f'<span class="label">In this memo</span><ol>{"".join(toc)}</ol></nav><div>{memo}</div></div>')
 
@@ -2033,7 +2294,7 @@ and proposed the passages behind each key point, figure, date, position, term an
 {ctx["quotes"]} quotations here{f", and {dropped} proposed quotations that were not found were left out" if dropped else ""}.
 It looked again when this page was built.</li>
 <li>A page number is the page as a PDF viewer counts it, which can differ from the number printed on the page.</li>
-<li>The memo's findings each rest on quotations checked the same way. Relevance (●) is the writer's judgement against the project's lenses.
+<li>The memo's findings each rest on quotations checked the same way. Relevance (●) is the writer's judgement against the project's lenses.{"" if not ctx.get("scope") else " The project page reproduces the project's scope file as written; it is not checked against the documents."}
 The groups on the Who's who page sort the writer's own descriptions of each actor; the card keeps those words.</li>
 <li>Fixity is not authenticity: a matching hash shows which bytes were read, not that what they say is right.
 Provenance is not truth.</li></ul></div>
@@ -2041,6 +2302,252 @@ Provenance is not truth.</li></ul></div>
 <h2 style="margin-top:18px">The lenses ({esc(proj['name'])})</h2><ul>{lenses}</ul></div>
 <div class="sheet"><h2>The documents</h2><div class="scroll"><table class="ledger"><tr><th>No.</th><th>Document</th><th>Where from</th>
 <th>Saved</th><th>SHA-256</th><th>Entry written by</th></tr>{rows}</table></div></div>"""
+
+
+# ------------------------------------------------------------------ the project (build --scope, or the profile's scope:)
+# A Markdown file that puts the project in front: its goals, its tasks, what it needs to know. It is read as plain
+# Markdown (headings, paragraphs, lists, tables, quotes, code blocks; **bold**, *italic*, `code`, [links](https://…))
+# and shown as written, on its own page, first in the Word file and as the spreadsheet's first sheet. Front matter
+# and HTML comments are dropped; raw HTML is shown as text. It is not checked against the documents, and its page
+# says so; the build's never-publish and local-path checks cover it like everything else.
+SCOPE_NOTE = "as its scope file sets it out. Reproduced as written: unlike the rest of this dossier, it is not checked against the documents."
+SCOPE_ITEM = re.compile(r"^([ \t]*)([-*+]|\d{1,4}[.)])[ \t]+(.*)$")
+SCOPE_RULE = re.compile(r"^ {0,3}([-*_])([ \t]*\1){2,}[ \t]*$")
+SCOPE_TABLE_RULE = re.compile(r"^[ \t]*\|?[ \t]*:?-{2,}:?[ \t]*(\|[ \t]*:?-{2,}:?[ \t]*)*\|?[ \t]*$")
+INLINE = re.compile(r"`([^`\n]+)`|\*\*(.+?)\*\*|__(.+?)__|\[([^\]\n]+)\]\(([^)\s]+)\)"
+                    r"|(?<![\w*])\*(?![\s*])(.+?)(?<![\s*])\*(?![\w*])|(?<![\w_])_(?![\s_])(.+?)(?<![\s_])_(?![\w_])")
+
+
+def scope_path(given: str | Path | None, proj: dict, cfg: dict) -> Path | None:
+    """build --scope, else the project profile's `scope:` (relative to the profile's folder)."""
+    raw = given or proj.get("scope")
+    if not raw:
+        return None
+    p = Path(raw).expanduser()
+    if not given and not p.is_absolute():
+        p = Path(cfg["project"]).parent / p
+    if not p.is_file():
+        raise SystemExit(f"no scope file {p} (named by {'--scope' if given else 'the project profile, scope:'})")
+    return p.resolve()
+
+
+def scope_blocks(text: str) -> list[dict]:
+    """Plain Markdown, read simply, as blocks: h (level, text), p, quote, code, hr, table (head, rows),
+    ul/ol (items: [(level, text)], start)."""
+    text = re.sub(r"(?s)<!--.*?-->", "", text.replace("\r\n", "\n"))
+    if (m := re.match(r"(?s)---\n.*?\n---[ \t]*\n", text)):
+        text = text[m.end():]
+    lines, blocks, para = text.split("\n"), [], []
+
+    def flush():
+        if para:
+            blocks.append({"t": "p", "text": " ".join(x.strip() for x in para)})
+            para.clear()
+
+    def cells(ln: str) -> list[str]:
+        return [c.strip() for c in ln.strip().strip("|").split("|")]
+
+    i = 0
+    while i < len(lines):
+        ln = lines[i]
+        fence = re.match(r"^[ \t]*(```|~~~)", ln)
+        heading = re.match(r"^ {0,3}(#{1,6})[ \t]+(.*?)(?:[ \t]+#+)?[ \t]*$", ln)
+        if not ln.strip():
+            flush()
+            i += 1
+        elif fence:
+            flush()
+            j = i + 1
+            while j < len(lines) and not lines[j].strip().startswith(fence.group(1)):
+                j += 1
+            blocks.append({"t": "code", "text": "\n".join(lines[i + 1:j])})
+            i = j + 1
+        elif heading:
+            flush()
+            blocks.append({"t": "h", "level": len(heading.group(1)), "text": heading.group(2)})
+            i += 1
+        elif SCOPE_RULE.match(ln):
+            flush()
+            blocks.append({"t": "hr"})
+            i += 1
+        elif "|" in ln and i + 1 < len(lines) and "|" in lines[i + 1] and SCOPE_TABLE_RULE.match(lines[i + 1]):
+            flush()
+            rows, i = [cells(ln)], i + 2
+            while i < len(lines) and "|" in lines[i] and lines[i].strip():
+                rows.append(cells(lines[i]))
+                i += 1
+            blocks.append({"t": "table", "head": rows[0], "rows": rows[1:]})
+        elif ln.lstrip().startswith(">"):
+            flush()
+            quote = []
+            while i < len(lines) and lines[i].lstrip().startswith(">"):
+                quote.append(re.sub(r"^[ \t]*>[ \t]?", "", lines[i]).strip())
+                i += 1
+            blocks.append({"t": "quote", "text": " ".join(x for x in quote if x)})
+        elif (first := SCOPE_ITEM.match(ln)):
+            flush()
+            items: list[list] = []
+            while i < len(lines):
+                m = SCOPE_ITEM.match(lines[i])
+                if m:
+                    items.append([len(m.group(1).expandtabs(4)), m.group(3).strip()])
+                elif lines[i].strip() and lines[i][:1] in " \t":
+                    items[-1][1] += " " + lines[i].strip()  # an item's next line
+                elif not lines[i].strip():  # a blank line ends the list unless another item follows
+                    j = i
+                    while j < len(lines) and not lines[j].strip():
+                        j += 1
+                    if j == len(lines) or not SCOPE_ITEM.match(lines[j]):
+                        break
+                    i = j
+                    continue
+                else:
+                    break
+                i += 1
+            levels, stack = [], []  # indents to levels: deeper than the item before is one level down
+            for indent, _ in items:
+                while stack and indent < stack[-1]:
+                    stack.pop()
+                if not stack or indent > stack[-1]:
+                    stack.append(indent)
+                levels.append(len(stack) - 1)
+            ordered = first.group(2)[0].isdigit()
+            blocks.append({"t": "ol" if ordered else "ul", "items": [(lv, t) for lv, (_, t) in zip(levels, items)],
+                           "start": int(re.match(r"\d+", first.group(2)).group(0)) if ordered else 1})
+        else:
+            para.append(ln)
+            i += 1
+    flush()
+    return blocks
+
+
+def _literal(s: str, kind: str) -> str:
+    if kind == "html":
+        return esc(s)
+    return _MD_SPECIAL.sub(r"\\\1", re.sub(r"\s+", " ", s)) if kind == "md" else s
+
+
+def inline(s: str, kind: str) -> str:
+    """One line's **bold**, *italic*, `code` and [links](https://…), as HTML ('html'), as Markdown pandoc reads
+    literally ('md'), or as plain text ('text'). A link to anything but http(s) or mailto is its words alone."""
+    out, at = [], 0
+    for m in INLINE.finditer(s):
+        out.append(_literal(s[at:m.start()], kind))
+        code, b1, b2, words, url, i1, i2 = m.groups()
+        if code is not None:
+            out.append({"html": f"<code>{esc(code)}</code>", "md": f"`{code}`", "text": code}[kind])
+        elif b1 or b2:
+            inner = inline(b1 or b2, kind)
+            out.append({"html": f"<b>{inner}</b>", "md": f"**{inner}**", "text": inner}[kind])
+        elif words:
+            inner = inline(words, kind)
+            if not re.match(r"(?i)(https?:|mailto:)", url):
+                out.append(inner)
+            else:
+                out.append({"html": f'<a href="{esc(url)}" target="_blank" rel="noopener">{inner}</a>',
+                            "md": f"[{inner}](<{url}>)", "text": f"{inner} ({url})"}[kind])
+        else:
+            inner = inline(i1 or i2, kind)
+            out.append({"html": f"<i>{inner}</i>", "md": f"*{inner}*", "text": inner}[kind])
+        at = m.end()
+    out.append(_literal(s[at:], kind))
+    return "".join(out)
+
+
+def _list_html(b: dict) -> str:
+    tag = b["t"]
+    out, depth = [], 0  # depth: lists open
+    for level, text in b["items"]:
+        level = min(level, depth)  # never skip a level
+        if level + 1 > depth:
+            out.append(f"<{tag}>" if depth or b.get("start", 1) == 1 else f'<{tag} start="{b["start"]}">')
+            depth += 1
+        else:
+            out.append("</li>")
+            while depth > level + 1:
+                out.append(f"</{tag}></li>")
+                depth -= 1
+        out.append(f"<li>{inline(text, 'html')}")
+    out.append("</li>")
+    while depth > 1:
+        out.append(f"</{tag}></li>")
+        depth -= 1
+    return "".join(out) + f"</{tag}>"
+
+
+def scope_html(blocks: list[dict]) -> str:
+    out = []
+    for b in blocks:
+        t = b["t"]
+        if t == "h":
+            n = min(b["level"] + 1, 4)  # the page's own h1 is "The project"
+            out.append(f"<h{n}>{inline(b['text'], 'html')}</h{n}>")
+        elif t in ("p", "quote"):
+            out.append(f"<p>{inline(b['text'], 'html')}</p>" if t == "p" else f"<blockquote>{inline(b['text'], 'html')}</blockquote>")
+        elif t == "code":
+            out.append(f"<pre><code>{esc(b['text'])}</code></pre>")
+        elif t == "hr":
+            out.append("<hr>")
+        elif t == "table":
+            n = len(b["head"])
+
+            def row(cs, cell):
+                return "<tr>" + "".join(f"<{cell}>{inline(c, 'html')}</{cell}>" for c in (cs + [""] * n)[:n]) + "</tr>"
+            out.append(f'<div class="scroll"><table class="ledger">{row(b["head"], "th")}'
+                       + "".join(row(r, "td") for r in b["rows"]) + "</table></div>")
+        else:
+            out.append(_list_html(b))
+    return "\n".join(out)
+
+
+def scope_markdown(blocks: list[dict]) -> list[str]:
+    """The Word file's lines, under its own "# The project" heading."""
+    L = []
+    for b in blocks:
+        t = b["t"]
+        if t == "h":
+            L += [f"{'#' * min(b['level'] + 1, 4)} {inline(b['text'], 'md')}", ""]
+        elif t in ("p", "quote"):
+            L += [("> " if t == "quote" else "") + inline(b["text"], "md"), ""]
+        elif t == "code":
+            L += ["```", *b["text"].split("\n"), "```", ""]
+        elif t == "hr":
+            L += ["* * *", ""]
+        elif t == "table":
+            n = len(b["head"])
+            L += ["| " + " | ".join(inline(c, "md") or " " for c in b["head"]) + " |", "|" + "---|" * n]
+            L += ["| " + " | ".join(inline(c, "md") or " " for c in (r + [""] * n)[:n]) + " |" for r in b["rows"]] + [""]
+        else:
+            L += ["    " * lv + (f"{b['start'] if not lv else 1}. " if t == "ol" else "- ") + inline(text, "md")
+                  for lv, text in b["items"]] + [""]
+    return L
+
+
+def scope_rows(blocks: list[dict]) -> list[list]:
+    """The sheet's rows: the heading each block falls under, what it is, its text."""
+    rows, heads = [], {}
+    for b in blocks:
+        t = b["t"]
+        if t == "h":
+            heads = {k: v for k, v in heads.items() if k < b["level"]} | {b["level"]: inline(b["text"], "text")}
+        under = " › ".join(heads[k] for k in sorted(heads))
+        if t == "h":
+            rows.append([under, "heading", inline(b["text"], "text")])
+        elif t in ("p", "quote", "code"):
+            rows.append([under, {"p": "paragraph"}.get(t, t), b["text"] if t == "code" else inline(b["text"], "text")])
+        elif t == "table":
+            rows += [[under, "table row", "; ".join(f"{inline(h, 'text')}: {inline(c, 'text')}" for h, c in zip(b["head"], r) if c)]
+                     for r in b["rows"]]
+        elif t in ("ul", "ol"):
+            rows += [[under, "item", "  " * lv + inline(text, "text")] for lv, text in b["items"]]
+    return rows
+
+
+def project_html(ctx: dict) -> str:
+    proj = ctx["proj"]
+    return (f'<p class="crumbs"><a href="index.html">Cover</a> › The project</p><div class="page-head"><div>'
+            f'<h1>The project</h1><p class="lede">{esc(proj.get("full_name") or proj["name"])}, {esc(SCOPE_NOTE)}</p></div></div>'
+            f'<article class="sheet prose scope">{scope_html(ctx["scope"]["blocks"])}</article>')
 
 
 # ------------------------------------------------------------------ images and copies
@@ -2076,8 +2583,11 @@ def docx_markdown(ctx: dict, out: Path) -> str:
         page = f", {where(it)}" if where(it) else ""
         return [f"> {md(it['quote'])}", ">", f"> — {md(short_title(d))}{md(page)}", ""]
 
+    if ctx.get("scope"):
+        L += ["# The project", "", f"*{md((ctx['proj'].get('full_name') or ctx['proj']['name']) + ', ' + SCOPE_NOTE)}*", ""]
+        L += scope_markdown(ctx["scope"]["blocks"])
     if b:
-        L += ["# At a glance", "", f"*{md('Written by ' + b['writer'] + '. Every quotation matches the saved copy of its source, character for character.')}*", ""]
+        L += ["# At a glance", "", f"*{md(penned(b) + ' by ' + b['writer'] + '. Every quotation matches the saved copy of its source, character for character.')}*", ""]
         L += [md(b.get("bottom_line") or b.get("lede")), ""]
         if b.get("themes"):
             L += ["**Findings**", ""] + [f"{i}. {md(t.get('title'))}" for i, t in enumerate(b["themes"], 1)] + [""]
@@ -2311,6 +2821,8 @@ def make_xlsx(ctx: dict, dest: Path) -> tuple[dict[str, int], str]:
 
     docs = ctx["docs"]
     secs = {s["slug"]: s["title"] for s in ctx["cfg"].get("sections") or []}
+    if ctx.get("scope"):
+        sheet("The project", ["Heading", "Kind", "Text"], [36, 12, 110], scope_rows(ctx["scope"]["blocks"]))
     sheet("Documents", ["No.", "Section", "Title", f"What matters for {ctx['proj']['name']}", "Read", "Kind", "By", "Date",
                         "Identifier", "Pages", "Original URL", "Saved", "SHA-256",
                         "Suggested by", "Their words", "Entry written by", *[f"{v} (0-3)" for v in lt.values()]],
@@ -2374,7 +2886,7 @@ def doc_groups(ctx: dict) -> list[tuple[dict | None, list[dict]]]:
 
 
 def build(corpus: Path, out: Path, *, copies: bool = False, docx: bool = True, xlsx: bool = True,
-          images: bool = True) -> dict:
+          images: bool = True, scope: str | Path | None = None) -> dict:
     corpus, out = Path(corpus).resolve(), Path(out).resolve()
     rep = validate(corpus)
     if rep.get("errors"):
@@ -2385,6 +2897,11 @@ def build(corpus: Path, out: Path, *, copies: bool = False, docx: bool = True, x
     es = entries(corpus)
     if not es:
         raise SystemExit("no entries yet (dossier.py add or write)")
+    sp = scope_path(scope, proj, cfg)
+    sc = None
+    if sp:
+        raw = sp.read_bytes()
+        sc = {"file": str(sp), "sha256": hashlib.sha256(raw).hexdigest(), "blocks": scope_blocks(raw.decode("utf-8"))}
     br_obj = current_brief(corpus)
     problems, nq = recheck(corpus, es, br_obj, cfg)
     if problems:
@@ -2413,11 +2930,11 @@ def build(corpus: Path, out: Path, *, copies: bool = False, docx: bool = True, x
               if info["source_id"] == sid and sid not in in_dossier}
     # Fold the build inputs into one id, so an unchanged dossier rebuilds identically.
     digest = hashlib.sha256(json.dumps([cfg, aud, proj, [d["_gen"] for d in docs], (br_obj or {}).get("synthesis_id"),
-                                        TOOL], sort_keys=True, default=str).encode()).hexdigest()[:12]
-    ctx = {"cfg": cfg, "aud": aud, "proj": proj, "docs": docs, "brief": br, "lt": lens_titles(proj), "others": others,
+                                        TOOL] + ([sc["sha256"]] if sc else []), sort_keys=True, default=str).encode()).hexdigest()[:12]
+    ctx = {"cfg": cfg, "aud": aud, "proj": proj, "docs": docs, "brief": br, "lt": lens_titles(proj), "others": others, "scope": sc,
            "build": f"{str(cfg.get('date'))[:10]}-{digest}", "quotes": nq,
            "dropped": sum(len(d.get("refused") or []) for d in docs) + len((br or {}).get("refused") or []),
-           "pages": {"index.html", "method.html"} | ({"memo.html"} if br else set())}
+           "pages": {"index.html", "method.html"} | ({"memo.html"} if br else set()) | ({"project.html"} if sc else set())}
     for sec, name in (("dates", "timeline.html"), ("actors", "people.html"), ("terms", "terms.html"), ("cites", "leads.html")):
         if gathered(ctx, sec):
             ctx["pages"].add(name)
@@ -2483,6 +3000,8 @@ def build(corpus: Path, out: Path, *, copies: bool = False, docx: bool = True, x
                  "method.html": page_html(f"Method · {cfg['title']}", method_html(ctx), ctx, "method.html")}
         if br:
             pages["memo.html"] = page_html(f"Memo · {cfg['title']}", memo_html(ctx), ctx, "memo.html")
+        if sc:
+            pages["project.html"] = page_html(f"The project · {cfg['title']}", project_html(ctx), ctx, "project.html")
         for i, d in enumerate(docs):
             pages[f"docs/{d['_file']}"] = page_html(f"{short_title(d)} · {cfg['title']}",
                                                     doc_html(d, ctx, docs[i - 1] if i else None, docs[i + 1] if i + 1 < len(docs) else None),
@@ -2518,12 +3037,14 @@ def build(corpus: Path, out: Path, *, copies: bool = False, docx: bool = True, x
     C.save_json(manifest_path(out), {"built": ctx["build"], **TOOL, "corpus": str(corpus), "pages": sorted(pages),
                                      "documents": [{"no": d["_no"], "source_id": d["_source_id"], "generation_id": d["_gen"]} for d in docs],
                                      "brief": (br_obj or {}).get("synthesis_id"), "quotations": nq, "images": img_log,
+                                     **({"scope": {"file": sc["file"], "sha256": sc["sha256"]}} if sc else {}),
                                      "downloads": [f for f, _ in downloads], "rows": rows})
     C.upc("event", "--corpus", str(corpus), check=False, stdin=json.dumps({
         "activity_type": "export", "tool": TOOL["tool"], "started_at": dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"),
         "status": "success", "inputs": {"generation_ids": [d["_gen"] for d in docs]},
         "notes": f"dossier: {len(docs)} documents, {nq} quotations -> {out.name}"}))
     return {"documents": len(docs), "quotations": nq, "pages": len(pages), "downloads": [f for f, _ in downloads],
+            "scope": sc["file"] if sc else None,
             "rows": rows, "covers": sum(bool(d.get("_cover")) for d in docs),
             "exhibits": sum(len(d.get("_exhibits") or []) for d in docs),
             "copies": sum(bool(d.get("_copy")) for d in docs), "out": str(out), "build": ctx["build"]}
@@ -2556,11 +3077,17 @@ def main() -> int:
                         "The records keep the real writer; the Method page names both")
     p.add_argument("--sections", help="a JSON file: [{slug, title, description}], the groups documents are shown in")
     for name in ("add", "brief"):
-        p = sub.add_parser(name, help=f"store {'an entry' if name == 'add' else 'the cover memo'} written elsewhere")
+        p = sub.add_parser(name, help="store an entry written elsewhere" if name == "add" else
+                           "store the cover memo written elsewhere (--from), or have the local model draft it (--draft)")
         p.add_argument("--corpus", required=True)
-        p.add_argument("--from", dest="src", required=True, help="the JSON file (references/dossier.md)")
-        p.add_argument("--writer", required=True, help="whose words these are, as the pages name them")
-        p.add_argument("--model", help="the model's name, when a model wrote it")
+        src = p.add_mutually_exclusive_group(required=True)
+        src.add_argument("--from", dest="src", help="the JSON file (references/dossier.md)")
+        if name == "brief":
+            src.add_argument("--draft", action="store_true",
+                             help="the configured local model drafts the memo from the stored entries only")
+        p.add_argument("--writer", help="whose words these are, as the pages name them "
+                                        "(needed with --from; brief --draft: '<agent> (<model>)')")
+        p.add_argument("--model", help="the model's name, when a model wrote it (brief --draft: the model to ask)")
         p.add_argument("--method", default="model", help="model, or manual for a person")
         p.add_argument("--plan", action="store_true", help="check the quotations, write nothing")
         if name == "add":
@@ -2578,12 +3105,17 @@ def main() -> int:
     p.add_argument("--no-docx", action="store_true")
     p.add_argument("--no-xlsx", action="store_true")
     p.add_argument("--no-images", action="store_true")
+    p.add_argument("--scope", help="a Markdown file shown first as 'The project' (default: the project profile's scope:)")
     p = sub.add_parser("check", help="find every quotation again; write nothing")
     p.add_argument("--corpus", required=True)
     a = ap.parse_args()
     corpus = Path(a.corpus).expanduser().resolve()
     if a.cmd == "init":
         return cmd_init(corpus, a)
+    if a.cmd == "brief" and a.draft:
+        return cmd_draft(corpus, a.model or C.DEFAULT_MODEL, a.writer, a.plan)
+    if a.cmd in ("add", "brief") and not a.writer:
+        raise SystemExit(f"{a.cmd} --from needs --writer: whose words these are, as the pages name them")
     if a.cmd == "add":
         entry = C.load_json(a.src, None)
         if not isinstance(entry, dict):
@@ -2598,11 +3130,7 @@ def main() -> int:
         if not isinstance(b, dict):
             raise SystemExit(f"{a.src}: not a JSON object")
         rep = add_brief(corpus, b, writer=a.writer, model=a.model, method=a.method, plan=a.plan)
-        C.counts_header("Brief", [("status", rep.get("status")), ("themes", rep["themes"]), ("tensions", rep["tensions"]),
-                                  ("for the project", rep["for_project"]), ("quotations", rep["quotations"]),
-                                  ("not found", len(rep["refused"]))])
-        for r in rep["refused"]:
-            print(f"  NOT FOUND {r['where']} ({r['status']}): {r.get('quote', '')[:110]!r}")
+        print_brief_report(rep)
         if not a.plan:
             C.upc("regen", str(corpus), check=False)
         return 0
@@ -2612,10 +3140,11 @@ def main() -> int:
         return cmd_check(corpus)
     t0 = time.time()
     res = build(corpus, Path(a.out).expanduser(), copies=a.copies, docx=not a.no_docx, xlsx=not a.no_xlsx,
-                images=not a.no_images)
+                images=not a.no_images, scope=a.scope)
     C.counts_header("Dossier", [("documents", res["documents"]), ("quotations, found again", res["quotations"]),
                                 ("pages", res["pages"]), ("first-page images", res["covers"]), ("exhibits", res["exhibits"]),
-                                ("PDF copies", res["copies"]), ("downloads", ", ".join(res["downloads"]) or "none"),
+                                ("PDF copies", res["copies"]), ("the project", res["scope"] or "no scope file"),
+                                ("downloads", ", ".join(res["downloads"]) or "none"),
                                 ("spreadsheet rows", ", ".join(f"{k} {v}" for k, v in res["rows"].items()) or "—"),
                                 ("site", res["out"]), ("build", res["build"]), ("seconds", round(time.time() - t0, 1))])
     return 0

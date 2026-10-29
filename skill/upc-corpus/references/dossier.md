@@ -22,10 +22,14 @@ YAML or JSON, and are checked against `profiles/audience.schema.json` and
 |---|---|---|
 | Says | Who reads it, what they already know, what they look for, how they like to read | What the project is, and the **lenses** relevance is judged against |
 | Required | `id`, `kind: audience`, `name`, `readers` (name and role), `wants` | `id`, `kind: project`, `name`, `lenses` (slug, title, description) |
-| Also | `organization`, `knows`, `style` (rules, or named facets), `summary_words`, `never_publish`, `updated`, `basis` | `full_name`, `funder`, `agreement`, `period`, `people`, `aims`, `questions`, `out_of_scope`, `terms`, `rules`, `never_publish`, `basis` |
+| Also | `organization`, `knows`, `style` (rules, or named facets), `summary_words`, `never_publish`, `updated`, `basis` | `full_name`, `funder`, `agreement`, `period`, `people`, `aims`, `questions`, `scope`, `out_of_scope`, `terms`, `rules`, `never_publish`, `basis` |
 
 - **Lenses** are usually the project's tasks, plus any cross-cutting concern. A lens's
   `short` is its label on chips and spreadsheet columns.
+- **`aims`** (a list, or one line) and **`questions`** go into the model's prompt for `write`
+  and `brief --draft`, before the lenses.
+- **`scope`** names a Markdown file, relative to the profile, that `build` shows first as
+  "The project" (below). `build --scope <file>` does the same for one build.
 - **`never_publish`** lists exact phrases (personal matters, internal material) that must
   never appear in anything a build writes. They are matched in any case and any spacing,
   as substrings, so write whole phrases (six characters at least), never fragments.
@@ -134,11 +138,53 @@ same shape from the configured model.
 - The first three documents of `reading_order` show on the cover as "Read first", the rest
   as "Then"; documents outside it follow by section.
 
+### Drafted by the local model (`brief --draft`)
+
+`dossier.py brief --draft` has the configured model write the same memo from the stored
+entries alone: each entry's notes (summary, what matters, why it matters per lens,
+relevance, open questions) and up to 14 of its checked quotations (key points first, then
+figures, positions and dates), each given as `"…" [ext-…]`. It never sees the documents.
+The prompt carries the readers, the project's aims, questions and lenses, and the rules
+`synthesize.py`'s overviews follow; the reply's shape (lenses, document keys, pages) is
+fixed by a JSON schema. Then, with `synthesize.py`'s own guards:
+
+- every theme, tension and lens paragraph must cite a given passage with a bare marker;
+  one that doesn't is left out. The markers become its evidence and leave the text;
+- a quotation that is not a given passage, character for character, loses its quotation
+  marks (`unquote_misquotes`): the words stay, as the model's own;
+- the model's working notes ("The user wants…", "Let me draft…") or talk about its input
+  ("the passages provided") anywhere refuse the draft, as do no theme left and a line over
+  its word limit.
+
+A draft with any problem gets one fix pass with the checker's list; the better of the two
+is kept. A refused draft stores nothing (exit 1). A stored one is the same `x-dossier-brief`
+synthesis, gated by hop C, with `produced_by` naming the model, method `model` and
+`dossier-brief-draft@1`, and `drafted` (the model, whether a fix pass ran, what the checks
+removed) in its record. The writer defaults to "<agent> (<model>)", and the pages say
+"Drafted by" instead of "Written by".
+
+## The project (`scope`)
+
+A dossier can open with the project itself: its goals, its tasks and what it needs to know.
+`build --scope <file.md>`, or the project profile's `scope:`, names a Markdown file, which is
+shown as written on `project.html` (a tab after the cover, and a button on it), as the Word
+file's first section and as the spreadsheet's first sheet, "The project".
+
+It is read as plain Markdown, simply: headings (`#` to `######`), paragraphs, bulleted and
+numbered lists (nested by indentation), pipe tables, `>` quotes, fenced code blocks and
+`---` rules, with `**bold**`, `*italic*`, `` `code` `` and `[links](https://…)` inside them
+(a link to anything but http(s) or mailto keeps its words only). Front matter and HTML
+comments are dropped, and raw HTML is shown as text. The file's `#` headings sit under the
+page's own "The project", one level down. Its page says it is reproduced as written and not
+checked against the documents. The never-publish and local-path checks cover it, and its
+hash is in the build record.
+
 ## What `build` writes
 
 | File | What it is |
 |---|---|
 | `index.html` | The cover, made to be read without scrolling on a laptop: who it is for; the bottom line; the findings, each linking to its passages in the memo; the next steps (a note); the request as a routing slip; then the documents in reading order, each with its first page, its line for the project (`for_us`), what to read, and a dot per lens. A lens filter narrows the list and shows that lens's line from the memo |
+| `project.html` | With a scope file: the project as its scope sets it out, reproduced as written, under a note that it is not checked against the documents |
 | `memo.html` | The full memo (paper-clipped, TO/FROM/RE, the request beside it): the bottom line, then each part under a divider tab in its own colour. Findings, tensions (naming the documents that pull apart) and what it means for each lens are cards, readable in full, that open on their passages; next steps are notes with their detail; where to start shows each document's first page and why it comes where it does. The contents list beside it marks the part on screen, and a link to `memo.html#theme-N` opens that finding's passages |
 | `docs/NN-<name>.html` | One per document: what matters for the project and what to read, a row of links to its parts with counts, why it is in the file, the summary, "why it matters" notes, key points (each passage one click away), and cards for numbers, dates, who's who, terms and cited works that open on their passage; exhibits, questions, the first page, the facts and the saved copy |
 | `timeline.html` | Every date as a card on a year spine, under a bar per year coloured by thread (the config's sections, or the kinds of document); years still ahead of the dossier's date are faded. Once scrolled past, the bar stays at the top as a strip and marks the year in view. Filters by thread and by happened/ahead, a search, and sparse neighbouring years share a row |
@@ -148,8 +194,8 @@ same shape from the configured model.
 | (cards) | A card opens in one panel with its passage, page and a copy button; ← and → step through the cards shown. Without JavaScript the card opens in place, and print opens every card |
 | `method.html` | How it was made, who wrote what, the readers, the lenses, and every document's origin, save date and hash |
 | (every page) | A light/dark switch beside the tabs. It follows the reader's system until they choose; the choice is kept in their browser (`upc-dossier-theme`) and applied before the page paints. Print is always light. Pages widen to 1600 px; the extra width goes to columns and cards, while running text stays near 75 characters a line |
-| `<name>.docx` | The same content as a Word file (pandoc), with exhibits. It opens "At a glance": the bottom line, the findings, the next steps and a table of the documents with their line for the project |
-| `<name>.xlsx` | Sheets for documents (with their line for the project and what to read), key points, numbers, timeline, who's who, terms, leads, next steps, questions and lenses. Every row gives the document, page, quotation and passage id |
+| `<name>.docx` | The same content as a Word file (pandoc), with exhibits. It opens with "The project" when there is a scope file, then "At a glance": the bottom line, the findings, the next steps and a table of the documents with their line for the project |
+| `<name>.xlsx` | "The project" first when there is a scope file (heading, kind, text per block), then sheets for documents (with their line for the project and what to read), key points, numbers, timeline, who's who, terms, leads, next steps, questions and lenses. Every row gives the document, page, quotation and passage id |
 | `img/`, `files/` | First pages and exhibits (pdftoppm), and with `--copies` each PDF up to 25 MiB |
 
 The build record is `<out>.build.json`, kept beside the folder and never inside it.
