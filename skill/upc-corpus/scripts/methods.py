@@ -75,7 +75,7 @@ def numbers(corpus: Path, original: str) -> dict:
     blind = C.blind_coding(corpus)
 
     impact = collections.Counter(c["code"] for c in CIT.impact_codings(corpus))
-    labels = {code: lab.lower() for code, lab, _ in CIT.TIERS}
+    labels = {code: lab[:1].lower() + lab[1:] for code, lab, _ in CIT.TIERS}     # "not in OpenAlex", not "openalex"
     fetched = C.load_json(CIT.state(corpus) / "fetched.json") or {}
     fdate = max((f.get("fetched", "") for f in fetched.get("fetches", [])), default="")
 
@@ -118,6 +118,7 @@ def numbers(corpus: Path, original: str) -> dict:
     return {
         "title": corp.get("title", "library"), "date": time.strftime("%-d %B %Y"), "original": original,
         "papers": len(data["sources"]), "passages": f"{len(data['exts']):,}", "proposed": f"{proposed:,}" if proposed else "",
+        "rated": sum(1 for p in papers.values() if p.get("grade")),     # fewer than {papers} while ratings are coming in
         "themes": len(revised), "revision_label": "Revised from rated evidence",
         "model": A.MODEL, "temperature": A.TEMPERATURE,
         "designs_line": counted(designs), "grades_line": counted(grades, GRADE_ORDER),
