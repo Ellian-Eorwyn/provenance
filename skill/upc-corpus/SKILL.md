@@ -342,6 +342,50 @@ the full run, `screen` for big tables, then `export` and `publish`.
 4. `report.py` then prints per-code agreement; the site shows the disagreements. Nothing is
    overwritten.
 
+## Task 7b: Check every code, then change or withdraw what a person approves
+
+A second reading by a model of every passage coding (`check_codes.py`). A person then decides which of the
+doubted codings change, and `upc recode` records each change.
+
+1. Plan (counts, calls, time; read-only):
+   ```
+   <python> -u <skill>/scripts/check_codes.py plan --corpus <corpus> --set <cds-id>
+   ```
+2. Estimate first. Check every coding of 15 random papers:
+   ```
+   <python> -u <skill>/scripts/check_codes.py run --corpus <corpus> --set <cds-id> --checker <project>-27b-check-v1 \
+     --papers 15 --model chat --url <a 27B> --context "<one line on the project>"
+   ```
+   Then run it without `--papers` for every coding; it resumes where it stopped. Each passage is read in its "In
+   context" window (built once, about a minute). Nothing in the corpus changes.
+3. Report: how often each codebook's codes fit, and a review sheet of the doubted ones:
+   ```
+   <python> -u <skill>/scripts/check_codes.py report --corpus <corpus> --set <cds-id> --checker <handle> --out <staging>/check.csv
+   ```
+4. **The person decides.** Put `yes` in `apply` on the rows to change. Or name whole kinds (`wrong`: a better
+   code of the same codebook; `none`: no code fits, withdraw; `reason`: the code fits but its stated reason is the
+   coder thinking aloud, restate it). Then:
+   ```
+   <python> -u <skill>/scripts/check_codes.py apply --corpus <corpus> --set <cds-id> --checker <handle> \
+     --approved-by <person> --sheet <staging>/check.csv          # or --accept none,reason
+   ```
+   Try `--dry-run` first. The old codings stay in the corpus (superseded or retracted, never shown); one event
+   names every change, its reason and who approved it.
+5. Overviews were written from the codes as they were. A withdrawn code takes its passage out of that theme, so
+   redo the affected overviews (`synthesize.py --only <code> --replace`) before publishing.
+
+A single change by hand: `upc recode` (universal-provenance), one JSON line per change.
+
+- **If** the checker doubts far more than a person would: read 20 rows of the sheet. A checker that can't see
+  the context rejects "this project…" passages; that's why the windows are there.
+- **If** two runs disagree: run a second checker handle and apply only what both doubt. FORGE 2.2, 10-28, 3
+  papers: the two runs made the same call on 88% of codings.
+
+Measured (FORGE 2.2, 10-28, llms 27B chat, 3 papers, 208 codings): 6 calls, 2.3 min. It doubted 67: 5 wrong
+code, 60 no code fits, 2 reasons that weren't reasons. The doubts read as real ("operating cost" as a barrier
+on a passage praising low running costs; "practices" for a satisfaction score). A full check of 25,889 codings is
+about 1,264 calls: about 7 h on one 27B.
+
 ## Task 8: Rate the evidence (papers, passages, statements)
 
 This rates each paper (a grade), each passage (whose claim it is, and what backs it) and
