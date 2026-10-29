@@ -182,6 +182,11 @@ task, embeddings, or several chat servers in a `pool`) may run at once.
    ```
    <python> -u <skill>/scripts/synthesize.py --corpus <corpus> --codebook <slug> --min-passages 10
    ```
+   - A `REFUSED <title>` line means the model misquoted a passage and nothing was written. Retry
+     only that code with `--only <code>` (a rerun without it writes every overview again, beside
+     the first ones). The model reads afresh, so a second try usually passes.
+   - Two runs at once (or one beside `screen.py` or `code_pass.py`) can lose an event in the
+     corpus's journal: the CLI has no lock. Run them one after another.
 8. **Home summary** (optional, with the owner): `home-summary.md` + `.json` in the recipe
    folder, checked and placed through the quotation gate. Read every passage you cite
    first.

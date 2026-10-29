@@ -646,6 +646,8 @@ def main() -> int:
     ap.add_argument("--min-passages", type=int, default=4)
     ap.add_argument("--max-passages", type=int, default=26)
     ap.add_argument("--limit-codes", type=int, default=0)
+    ap.add_argument("--only", default="",
+                    help="with --codebook: only these codes (code,code), e.g. to retry an overview that was refused")
     ap.add_argument("--plan", action="store_true")
     ap.add_argument("--v2", action="store_true", help="revise the current overviews from the rated evidence (criteria-v2)")
     ap.add_argument("--codes", default="", help="v2: slug:code,… (default: every code of --codebook)")
@@ -676,7 +678,13 @@ def main() -> int:
     jobs = []
     if args.codebook:
         b = books[args.codebook]
+        only = {x.strip() for x in args.only.split(",") if x.strip()}
+        unknown = only - {c["code"] for c in b["codes"]}
+        if unknown:
+            C.die(f"--only: no code {', '.join(sorted(unknown))} in '{args.codebook}'")
         for c in b["codes"]:
+            if only and c["code"] not in only:
+                continue
             ids = by_code.get((b["codebook_id"], c["code"]), [])
             if len(ids) >= args.min_passages:
                 jobs.append((f"{c.get('label', c['code'])}", c.get("definition", ""), ids, "thematic"))
