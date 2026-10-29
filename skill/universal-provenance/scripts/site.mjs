@@ -2407,6 +2407,11 @@ export function renderOverviewMarkdown(md, model, links, opts = {}) {
     // escaped; only http(s) targets, opened in a new tab.
     .replace(/\[([^\]\n]+)\]\((https?:\/\/[^\s)"<>]+)\)/g,
       (m, t, u) => `<a href="${u}" target="_blank" rel="noopener">${t}</a>`)
+    // [text](List.docx) — a file published beside the page (a Word or spreadsheet edition),
+    // as a download. Only where a person wrote the text (opts.files: the Methods page), never
+    // in a model's overview or card; a bare file name with a download extension, nothing else.
+    .replace(/\[([^\]\n]+)\]\(([A-Za-z0-9][A-Za-z0-9._-]*\.(?:docx|xlsx|csv|pdf|zip))\)/g,
+      (m, t, u) => (opts.files ? `<a href="${u}" download>${t}</a>` : m))
     // **strong** (1.15.0: rating cards and Methods pages use it), before *em*
     .replace(/\*\*([^*\s](?:[^*\n]*?[^*\s])?)\*\*/g, "<strong>$1</strong>")
     .replace(/(^|[^*\w])\*([^*\s][^*\n]*?)\*(?=[^*\w]|$)/g, "$1<em>$2</em>");
@@ -2770,7 +2775,7 @@ function methodsPage(model) {
   return page({
     title: `${title} — ${model.title}`, rel: "methods.html", model, active: "methods",
     body: `<h1>${esc(title)}</h1>
-<div class="card" style="max-width:74ch">${renderOverviewMarkdown(md.replace(/^\s*#\s+.*\n+/, ""), model, folderLinks(""))}</div>`,
+<div class="card" style="max-width:74ch">${renderOverviewMarkdown(md.replace(/^\s*#\s+.*\n+/, ""), model, folderLinks(""), { files: true })}</div>`,
   });
 }
 
@@ -2778,7 +2783,7 @@ function methodsPage(model) {
 function aboutPayload(model, links) {
   const md = model.about.md || "";
   const h1 = /^\s*#\s+(.*)\n/.exec(md);
-  return { t: h1 ? h1[1].trim() : "Methods", h: renderOverviewMarkdown(md.replace(/^\s*#\s+.*\n+/, ""), model, links) };
+  return { t: h1 ? h1[1].trim() : "Methods", h: renderOverviewMarkdown(md.replace(/^\s*#\s+.*\n+/, ""), model, links, { files: true }) };
 }
 
 /** Read `--about <md>`, or null. */

@@ -1877,7 +1877,7 @@ ok("filename rejects reserved", !checkFilename("sources/con/x.md").ok);
   // The folder site.
   const about = path.join(stage, "methods.md");
   fs.writeFileSync(about, "# How this library was made\n\nEvery paper was rated. See [theme:theme/heat-pumps]. " +
-    "After [MMAT 2018](https://example.org/mmat?a=1&b=2).\n");
+    "After [MMAT 2018](https://example.org/mmat?a=1&b=2). The list as a [Word file](The-List.docx).\n");
   clearRepCache();
   const out = fs.mkdtempSync(path.join(os.tmpdir(), "upc-115o-"));
   writeSite(dir, { out, about, originalEdition: "https://example.org/2.1/" });
@@ -1887,6 +1887,7 @@ ok("filename rejects reserved", !checkFilename("sources/con/x.md").ok);
   ok("1.15 site: a Methods page and its nav item", fs.existsSync(path.join(out, "methods.html")) && /href="methods\.html"/.test(home));
   ok("1.15 site: Methods renders theme links", /How this library was made/.test(read("methods.html")) && /overviews\//.test(read("methods.html")));
   ok("1.15 markdown: [text](url) becomes a link", read("methods.html").includes('<a href="https://example.org/mmat?a=1&amp;b=2" target="_blank" rel="noopener">MMAT 2018</a>'));
+  ok("methods: [text](file.docx) is a download of a file beside the page", read("methods.html").includes('<a href="The-List.docx" download>Word file</a>'));
   const codes = read("codes/index.html");
   ok("1.15 site: evidence schemes get their own section on Codes", codes.indexOf('id="evidence"') > codes.indexOf(">Theme<") &&
      codes.indexOf(">Evidence grade<") > codes.indexOf('id="evidence"'));
@@ -2068,6 +2069,10 @@ ok("filename rejects reserved", !checkFilename("sources/con/x.md").ok);
   const links = { passage: (x) => `P:${x.id}`, source: (x) => `S:${x.id}`, overview: (o) => `O:${o.synthesis_id}`,
                   code: (sl, c) => `C:${sl}/${c}`, view: (n) => `V:${n}` };
   const r = (md, o) => renderOverviewMarkdown(md, model, links, o);
+
+  ok("overview: a model's [text](file.docx) stays plain text, never a link", !r("See [the list](List.docx).").includes("href"));
+  ok("overview: nor a path that leaves the page's folder, even where files may be linked",
+     !r("[x](../secret.pdf) [y](/etc/x.pdf) [z](a/b.pdf)", { files: true }).includes("href"));
 
   ok("prose quote: an apostrophe no longer hides a quotation",
      /<a href="P:ext-aaaaaaaaaaaa"[^>]*>“the regime&#39;s core”<\/a> <span class="small">✓/.test(r(`As they put it, "the regime's core" [ext-aaaaaaaaaaaa].`)));
