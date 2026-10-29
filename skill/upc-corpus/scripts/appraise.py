@@ -71,6 +71,7 @@ import common as C  # noqa: E402
 import llm_pool as P  # noqa: E402
 
 PROMPT_VERSION = "appraise.v1"
+LAYOUT = "paper-in-system"      # where a paper's text goes; records made before 2026-10-29 were "paper-in-user"
 MODEL = os.environ.get("APPRAISE_MODEL", "chat")       # thinking off unless the pilot shows it's needed
 EFFORT = os.environ.get("APPRAISE_EFFORT", "")          # with think: none|low|medium|xhigh (the proxy's levels)
 # The checklist (the questions the grade rests on) may use another model than the rest (the pilot, 10-05:
@@ -913,7 +914,17 @@ class Runner:
         st.update({"source_id": sid, "slug": src["slug"], "prompt_version": PROMPT_VERSION, "model": MODEL,
                    "text_rep": src["text_rep"], "text_notes": notes})
         st.setdefault("machine", name)
-        head = f"PAPER TEXT:\n<<<\n{text}\n>>>\n\nTASK:\n"
+        # The paper goes in the system message and the task in the user's (2026-10-29; before, both were one user
+        # message). The words are the same; a server that reuses a prompt only from the end of its system message
+        # (NInfer saves a checkpoint there once it has seen that prefix twice) then reads each paper twice, not on
+        # every one of its 12-15 calls. Each paper's state says which layout made it.
+        system = f"{SYS}\n\nPAPER TEXT:\n<<<\n{text}\n>>>"
+        st.setdefault("layout", "paper-in-user" if (st.get("design") or {}).get("runs") else LAYOUT)
+        if st["layout"] != LAYOUT:
+            why = (f"begun with the paper in the {st['layout'].split('-')[-1]} message; finish it with that version, "
+                   "or move its state aside to start it again")
+            self.failed.append(f"{src['slug']}: {why}")
+            return {"slug": src["slug"], "calls": 0, "error": why}
         save = lambda: C.save_json(pf, st)  # noqa: E731
         t0 = time.time()
         calls = 0
@@ -921,7 +932,7 @@ class Runner:
         def call(task: str, schema: dict, cap: int, *key, model=None, effort=None):
             nonlocal calls
             calls += 1
-            out, meta = chat_json(url, SYS, head + task, schema, cap, seed=seed_for(src["slug"], *key),
+            out, meta = chat_json(url, system, "TASK:\n" + task, schema, cap, seed=seed_for(src["slug"], *key),
                                   model=model, effort=effort)
             meta["machine"] = name
             return out, meta
@@ -1105,7 +1116,7 @@ def vote_paper(R: dict, st: dict) -> dict:
             pv[e] = {"origin": vo, "basis": vb, "origin_runs": o, "basis_runs": b, "reason": reason_o}
     return {"design": dv, "strands": [{"profile": p, "design": d, "start": s} for p, d, s in strands],
             "answers": detail, "grade": grade, "grade_why": why, "passages": pv,
-            "setting": setting_of(R, dv)}
+            "setting": setting_of(R, dv), "layout": st.get("layout") or "paper-in-user"}
 
 
 def parse_clock(s: str | None, after: datetime | None = None) -> datetime | None:
@@ -2012,7 +2023,8 @@ def cmd_store(args) -> int:
         voided += sum(1 for qs in rec["answers"].values() for a in qs.values() if a.get("voided"))
         md = out_dir / f"{src['slug']}.md"
         md.write_text(rating_markdown(R, src, rec), encoding="utf-8")
-        appraisal = {"prompt_version": PROMPT_VERSION, "model": MODEL, "temperature": TEMPERATURE, "runs": RUNS,
+        appraisal = {"prompt_version": PROMPT_VERSION, "layout": pv.get("layout") or "paper-in-user",
+                     "rubric": R["designs"].get("version"), "model": MODEL, "temperature": TEMPERATURE, "runs": RUNS,
                      "grade": rec["grade"], "grade_why": rec["grade_why"], "grade_before_anchor": rec["grade_before_anchor"],
                      "design": rec["design"], "strands": rec["strands"], "setting": rec.get("setting"),
                      "answers": {p: {q: {k: v for k, v in a.items() if k in ("answer", "runs", "dim", "reason", "voided")}

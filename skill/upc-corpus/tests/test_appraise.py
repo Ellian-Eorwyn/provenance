@@ -589,7 +589,10 @@ class StubbedRunTests(unittest.TestCase):
             prof = R["profiles"]["qualitative-case"]
             real = "We interviewed 24 installers in Oregon"
 
+            seen = []
+
             def fake(url, system, user, schema, cap, seed=None, model=None, effort=None):
+                seen.append((system, user))
                 props = schema.get("properties", {})
                 if "design" in props:
                     return ({"design": "qualitative-interview", "second_design": "none", "sector": "residential buildings",
@@ -623,6 +626,21 @@ class StubbedRunTests(unittest.TestCase):
             self.assertIn(v["grade"], A.LEVELS)
             self.assertEqual(v["passages"]["ext-000000000001"]["origin"], "own-finding")
             self.assertEqual(v["passages"]["ext-000000000001"]["origin_runs"], ["own-finding"] * 3)
+            # the paper is in the system message, the same on every call, and the task alone in the user's
+            self.assertEqual(len({sy for sy, _ in seen}), 1)
+            self.assertTrue(seen[0][0].startswith(A.SYS) and paper in seen[0][0])
+            self.assertTrue(all(u.startswith("TASK:\n") and paper not in u for _, u in seen))
+            self.assertEqual((st["layout"], v["layout"]), ("paper-in-system", "paper-in-system"))
+            # a paper begun with the old layout isn't mixed with the new one
+            st["layout"] = "paper-in-user"
+            st["design"]["runs"] = st["design"]["runs"][:1]
+            A.paper_file(corpus, "s0001-x-2024").write_text(json.dumps(st))
+            A.load_corpus, A.chat_json = (lambda c: data), fake
+            try:
+                res = A.Runner(corpus, "", 3, None).work(sid, "stub", "http://stub")
+            finally:
+                A.load_corpus, A.chat_json = old_load, old_chat
+            self.assertIn("begun with the paper in the user message", res["error"])
 
 
 class SynthesizeV2Tests(unittest.TestCase):
