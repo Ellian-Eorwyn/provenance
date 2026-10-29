@@ -39,6 +39,12 @@ class NotAnOverviewTests(unittest.TestCase):
     def test_nothing_cited(self):
         self.assertEqual(S.not_an_overview(got("A fine sentence.", cited=(), claims=())), "it cites no passage")
 
+    def test_talk_about_its_input(self):
+        self.assertIn("passages it was given", S.not_an_overview(got(
+            "The passages before me describe European heat decarbonization [ext-0123456789ab].")))
+        self.assertIn("passages it was given", S.not_an_overview(got(
+            "Costs differ, and the range is not reconciled in the passages provided [ext-0123456789ab].")))
+
     def test_a_real_overview_passes(self):
         prose = ("Electrical capacity is among the most cited barriers [ext-0123456789ab]. Several "
                  "evaluations let households use 120-volt equipment instead, and the user experience "

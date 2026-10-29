@@ -39,6 +39,10 @@ NOTES_START = re.compile(r"\s*(the user\b|i need to\b|i must\b|i should\b|i'll\b
                          r"alright\b|we need to\b|first, i\b)", re.I)
 NOTES_LINE = re.compile(r"^\s*(?:now )?let me (?:draft|write|organi[sz]e|structure|plan|check|re-?read|count|verify|"
                         r"go through|look)\b", re.I | re.M)
+# ...or talks about its own input, which means nothing to a reader: "The passages before me
+# describe…", "…is not reconciled in the passages provided" (2 of FORGE 2.2's 65; none of 2.1's).
+NOTES_META = re.compile(r"\b(?:the|these) passages (?:before me|provided|given|supplied|i (?:was|have been) given|"
+                        r"shown to me|you (?:gave|provided))\b|\bas an ai\b|\bword count\b|\b(?:my|this) draft\b", re.I)
 
 
 def not_an_overview(got: dict) -> str:
@@ -47,7 +51,18 @@ def not_an_overview(got: dict) -> str:
         return "it cites no passage"
     if NOTES_START.match(got["prose"]) or NOTES_LINE.search(got["prose"]):
         return "it is the model's working notes, not an overview"
+    if NOTES_META.search(got["prose"]):
+        return "it talks about the passages it was given, not to a reader"
     return ""
+
+
+def remove_overview(corpus: Path, sid: str, why: str) -> None:
+    """Take a stored overview out of the corpus and journal it, as place_summary.mjs --replace does."""
+    import shutil
+    shutil.rmtree(corpus / "syntheses" / sid, ignore_errors=True)
+    C.upc("event", "--corpus", str(corpus), check=False, stdin=json.dumps({
+        "activity_type": "remove", "tool": "upc-corpus", "status": "success",
+        "inputs": {"synthesis_ids": [sid]}, "notes": why}))
 
 
 def current_overviews(corpus: Path) -> dict[tuple[str, str], str]:
@@ -679,9 +694,15 @@ def main() -> int:
     ap.add_argument("--limit-codes", type=int, default=0)
     ap.add_argument("--only", default="",
                     help="with --codebook: only these codes (code,code), e.g. to retry an overview that was refused. "
-                         "A stored overview of the same code is superseded, not duplicated")
+                         "If one of them is stored already, say --replace or --supersede")
+    ap.add_argument("--replace", action="store_true",
+                    help="with --only: the new overview takes the stored one's place, which is removed (journaled, "
+                         "no label): for an overview nobody has relied on yet")
+    ap.add_argument("--supersede", action="store_true",
+                    help="with --only: the stored overview stays as the previous version and the new one says Revised: "
+                         "for a published overview")
     ap.add_argument("--why", default="",
-                    help="with --only: the reason a superseded overview was rewritten, shown under its Revised label")
+                    help="with --supersede: the reason, shown under the Revised label")
     ap.add_argument("--plan", action="store_true")
     ap.add_argument("--v2", action="store_true", help="revise the current overviews from the rated evidence (criteria-v2)")
     ap.add_argument("--codes", default="", help="v2: slug:code,… (default: every code of --codebook)")
@@ -764,6 +785,12 @@ def main() -> int:
     scheme_slug = args.codebook or (args.matrix.split(":", 1)[0] if args.matrix else "")
     out_dir = C.state_dir(corpus, "syntheses")
     stored = current_overviews(corpus) if args.only else {}
+    if args.replace and args.supersede:
+        C.die("--replace or --supersede, not both")
+    clash = [t for t, *_ in jobs if (scheme_slug, t) in stored]
+    if clash and not (args.replace or args.supersede):
+        C.die(f"already stored: {', '.join(clash)}. --replace swaps an overview out (journaled, no label); "
+              "--supersede keeps it as the previous version and labels the new one Revised")
     wrote, refused, unquoted_total, t0 = 0, 0, 0, time.time()
     for title, definition, ids, syn_type in jobs:
         lines = evidence_lines(corpus, ids, sources, exts, args.max_passages)
@@ -808,11 +835,11 @@ def main() -> int:
 
         old = stored.get((scheme_slug, title))
         ext = {"upc-corpus": {"codebook": scheme_slug}}
-        if old:
-            ext["upc-site"] = {"revision": {"label": "Rewritten", "date": datetime.now().date().isoformat(),
+        if old and args.supersede:
+            ext["upc-site"] = {"revision": {"label": "Revised", "date": datetime.now().date().isoformat(),
                                             "note": args.why}}
         res = C.upc("add", "synthesis", "--corpus", str(corpus), "--output", str(md_path),
-                    "--tool", "upc-corpus", *(["--supersedes", old] if old else []), check=False,
+                    "--tool", "upc-corpus", *(["--supersedes", old] if old and args.supersede else []), check=False,
                     stdin=json.dumps({"type": syn_type, "title": title,
                                       "question": definition, "claims": got["claims"],
                                       # Say which scheme this overview belongs to, so a
@@ -821,10 +848,15 @@ def main() -> int:
         if isinstance(res, dict) and res.get("status") == "ok":
             wrote += 1
             unquoted_total += unquoted
+            done = ""
+            if old and args.replace and res.get("synthesis_id") != old:
+                remove_overview(corpus, old, f"overview replaced by {res.get('synthesis_id')} (synthesize.py --replace)")
+                done = f" (replaces {old}, removed)"
+            elif old and args.supersede:
+                done = f" (supersedes {old})"
             print(f"  wrote {title[:44]:46} {len(got['claims']):3} claims, "
                   f"{len(got['cited']):3} passages cited"
-                  f"{f', {unquoted} unquoted' if unquoted else ''}, {got['seconds']}s"
-                  f"{f' (supersedes {old})' if old else ''}")
+                  f"{f', {unquoted} unquoted' if unquoted else ''}, {got['seconds']}s{done}")
         else:
             refused += 1
             fails = (res or {}).get("failures", [])
