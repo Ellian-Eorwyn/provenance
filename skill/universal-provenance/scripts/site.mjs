@@ -170,8 +170,12 @@ export function readFindingsSettings(file) {
   // A theme may be written as in an overview's markers (actor/installers) or as a key (actor:installers).
   const starts = (Array.isArray(o.starting_points) ? o.starting_points : []).map((x) => ({ ...x,
     match: x.match ? { ...x.match, ...(x.match.themes ? { themes: x.match.themes.map((t) => String(t).replace("/", ":")) } : {}) } : null }));
-  return { starts, words: o.words || {}, mapPlace: o.map_place || "" };
+  // "revision_labels": false leaves a revised overview or summary unlabelled: it simply takes the old one's
+  // place, and only the Methods page says how it was made.
+  return { starts, words: o.words || {}, mapPlace: o.map_place || "", revisionLabels: o.revision_labels !== false };
 }
+/** A revised synthesis's label, unless the findings settings turn labels off. */
+const revisionShown = (model, o) => (o._revision && (model.findingsSettings || {}).revisionLabels !== false ? o._revision : null);
 
 const DATE_FMT = (d) => {
   const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(d || "");
@@ -2496,7 +2500,7 @@ function homeCard(model, links) {
   const changed = h._changed
     ? '<p class="small" style="color:var(--warn)">⚠ This text was changed after its quotations were checked.</p>' : "";
   return { t: h.title || "What the literature says",
-           r: h._revision ? revisionHtml(model, h._revision, "") : "",
+           r: revisionShown(model, h) ? revisionHtml(model, h._revision, "") : "",
            h: changed + renderOverviewMarkdown(h.md, model, links, { foldRefs: true }) };
 }
 
@@ -2514,7 +2518,7 @@ function overviewBodyHtml(model, syn, root) {
   const rendered = renderOverviewMarkdown(body, model, folderLinks(base));
   const kf = keyFindingsHtml(model, syn, folderLinks(base));
   return `<h1 style="margin-top:0">${esc(syn.title || syn.synthesis_id)}</h1>
-${syn._revision ? revisionHtml(model, syn._revision, syn._addr) : ""}
+${revisionShown(model, syn) ? revisionHtml(model, syn._revision, syn._addr) : ""}
 ${kf}${kf ? `<h2>The review</h2>` : ""}
 <div class="card" style="max-width:74ch">${rendered || `<p class="muted">No text.</p>`}</div>
 ${claimsTableHtml(model, syn, folderLinks(base))}`;
@@ -3620,7 +3624,7 @@ export function writeSingleFile(root, opts = {}) {
       id: syn._addr || syn.synthesis_id,
       t: syn.title || syn.synthesis_id,
       grp: syn._group ? syn._group.slug : "",
-      ...(syn._revision ? { rv: revisionHtml(model, syn._revision, syn._addr) } : {}),
+      ...(revisionShown(model, syn) ? { rv: revisionHtml(model, syn._revision, syn._addr) } : {}),
       ...(syn._support ? { ct: claimsTableHtml(model, syn, oneLinks) } : {}),
       ...(syn._support && model.findings.length ? { kf: keyFindingsHtml(model, syn, oneLinks) } : {}),
       // Rendered here, by the same function as the folder's pages.
