@@ -17,6 +17,7 @@ from __future__ import annotations
 import argparse
 import collections
 import json
+import string
 import sys
 import time
 from pathlib import Path
@@ -143,17 +144,22 @@ def plain_counts(c: collections.Counter) -> str:
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--corpus", required=True)
-    ap.add_argument("--original", required=True, help="the original edition's address")
+    ap.add_argument("--original", default="", help="the original edition's address (needed when the template names {original})")
     ap.add_argument("--out", required=True)
     ap.add_argument("--template", default="", help="default: the corpus's own, else the shipped one")
     args = ap.parse_args()
     own = Path(args.corpus).expanduser() / ".upc" / "upc-corpus" / "site" / "methods.template.md"
     args.template = args.template or str(own if own.exists() else TEMPLATE)
     nums = numbers(Path(args.corpus).expanduser(), args.original)
-    empty = [k for k, v in nums.items() if v in ("", None)]
+    text = Path(args.template).read_text(encoding="utf-8")
+    # Only the numbers this template uses must exist: a library with no original edition online leaves {original} out.
+    used = {f for _, f, _, _ in string.Formatter().parse(text) if f}
+    missing = sorted(used - set(nums))
+    if missing:
+        C.die(f"the template names {', '.join('{' + k + '}' for k in missing)}, which methods.py doesn't fill")
+    empty = [k for k in sorted(used) if nums[k] in ("", None)]
     if empty:
         C.die(f"no value for {', '.join(empty)}: run the ratings, report, citations and the revised overviews first")
-    text = Path(args.template).read_text(encoding="utf-8")
     # A template's "**Draft …" line is for whoever approves the wording, not the page.
     text = "\n".join(ln for ln in text.splitlines() if not ln.startswith("**Draft"))
     out = text.format_map(nums)
