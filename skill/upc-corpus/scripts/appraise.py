@@ -1615,6 +1615,10 @@ def cmd_report(args) -> int:
 
 def cmd_plan(args) -> int:
     corpus = Path(args.corpus).expanduser()
+    if args.set != "all" and not args.syntheses.strip() and not args.codes.strip():
+        # A bare `plan --set pilot` used to write an empty set over the pilot's, and the pilot's later steps
+        # (statements, report) then found nothing to do.
+        C.die(f"set '{args.set}' needs --syntheses or --codes (to see a set's progress: status)")
     data = load_corpus(corpus)
     srcs = data["sources"]
     if args.set == "all":
@@ -2221,7 +2225,7 @@ def overnight_steps(corpus: Path, stop: str) -> list[tuple[str, list[str]]]:
         ("store ratings and support", [me, "store", "--corpus", co, "--blind", "--write"]),
         ("page numbers for the rating quotations", [pag, "--corpus", co]),
         ("citation tiers", [cit, "code", "--corpus", co, "--write"]),
-        ("50 overviews from rated evidence", [syn, "--corpus", co, "--v2", "--codes", "all", *st]),
+        ("overviews from rated evidence", [syn, "--corpus", co, "--v2", "--codes", "all", *st]),
         ("statements of the revised overviews ×3", [me, "statements", "--corpus", co, "--set", "revised", *st]),
         ("vote again", [me, "vote", "--corpus", co]),
         ("agreement report again", [me, "report", "--corpus", co]),

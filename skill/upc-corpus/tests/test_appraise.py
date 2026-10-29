@@ -572,6 +572,17 @@ class OverviewPromptTests(unittest.TestCase):
             self.assertNotIn("{own_setting}", own)
 
 
+class PlanTests(unittest.TestCase):
+    def test_a_named_set_without_syntheses_or_codes_is_refused_and_left_as_it_was(self):
+        import argparse
+        with tempfile.TemporaryDirectory() as tmp:
+            f = Path(tmp) / "pilot.json"
+            f.write_text('{"set": "pilot", "papers": ["src-1"]}', encoding="utf-8")
+            with self.assertRaises(SystemExit):
+                A.cmd_plan(argparse.Namespace(corpus=tmp, set="pilot", syntheses="", codes=" "))
+            self.assertEqual(json.loads(f.read_text(encoding="utf-8"))["papers"], ["src-1"])
+
+
 class StubbedRunTests(unittest.TestCase):
     """Runner.work with the model replaced: three runs each step, saved, and voted."""
 
