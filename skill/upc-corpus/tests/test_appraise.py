@@ -236,6 +236,121 @@ class PlainWordsTests(unittest.TestCase):
         self.assertEqual(A.places_of(["North America"]), ["elsewhere"])
 
 
+class CorpusOwnRubricTests(unittest.TestCase):
+    """A corpus's own copy of the rubric, its own places and its lead-author rule (2026-10-29)."""
+
+    def corpus(self, tmp, settings=None):
+        c = Path(tmp)
+        (c / ".upc" / "upc-corpus").mkdir(parents=True)
+        (c / ".upc" / "upc-corpus" / "settings.json").write_text(json.dumps({"namespace": "t", **(settings or {})}))
+        (c / "codebooks").mkdir()
+        return c
+
+    def test_the_toolkits_rubric_without_a_copy(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            c = self.corpus(tmp)
+            self.assertEqual(A.appraisal_dir(c), A.APPRAISAL)
+            self.assertIsNone(A.rubric(c)["places"])
+            self.assertEqual(A.rubric(c)["lead_rule"], "family")
+
+    def test_a_corpus_copy_wins(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            c = self.corpus(tmp)
+            own = c / ".upc" / "upc-corpus" / "appraisal"
+            (own / "profiles").mkdir(parents=True)
+            designs = json.loads((A.APPRAISAL / "designs.json").read_text(encoding="utf-8"))
+            designs["designs"].append({"code": "program-evaluation", "label": "Program evaluation", "definition": "x",
+                                       "profile": "program-evaluation", "start": "Moderate"})
+            (own / "designs.json").write_text(json.dumps(designs))
+            (own / "profiles" / "program-evaluation.json").write_text(json.dumps({**PROF, "profile": "program-evaluation"}))
+            R2 = A.rubric(c)
+            self.assertEqual(A.appraisal_dir(c), own)
+            self.assertIn("program-evaluation", R2["by_code"])
+            self.assertEqual(list(R2["profiles"]), ["program-evaluation"])
+            self.assertEqual(A.profiles_for(R2, "program-evaluation", "none"), [("program-evaluation", "program-evaluation", "Moderate")])
+            self.assertNotIn("program-evaluation", A.rubric()["by_code"])
+
+    def test_lead_authors_with_a_first_initial(self):
+        wang_y = {"bib": {"authors": [{"family": "Wang", "given": "Yi"}]}}
+        wang_z = {"bib": {"authors": [{"family": "Wang", "given": "Zhen"}]}}
+        org = {"bib": {"authors": [{"literal": "State Energy Agency"}]}}
+        self.assertEqual(A.lead_of(wang_y), A.lead_of(wang_z))
+        self.assertEqual((A.lead_of(wang_y, "family-initial"), A.lead_of(wang_z, "family-initial")), ("wang y", "wang z"))
+        self.assertEqual(A.lead_of(org, "family-initial"), "state energy agency")
+        self.assertEqual(A.lead_of({"bib": {"authors": [{"family": "Gölz", "given": "Sebastian"}]}}, "family-initial"),
+                         A.lead_of({"bib": {"authors": [{"family": "Golz", "given": "S."}]}}, "family-initial"))
+
+    def test_the_corpus_own_places(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            c = self.corpus(tmp, {"places_codebook": "place", "lead_author": "family-initial"})
+            book = {"codebook_id": "cbk-000000000001", "namespace": "t", "slug": "place",
+                    "codes": [{"code": "california", "label": "California"}, {"code": "us-other", "label": "Elsewhere in the US"},
+                              {"code": "europe", "label": "Rest of Europe"}],
+                    "provenance": {"produced_by": {"tool": "upc-corpus"}}}
+            (c / "codebooks" / "cbk-000000000001.json").write_text(json.dumps(book))
+            (c / "codings" / "cds-x").mkdir(parents=True)
+            rows = [{"codebook_ref": "cbk-000000000001", "code": "europe", "target": {"kind": "source", "id": "a"}, "status": "active"},
+                    {"codebook_ref": "cbk-000000000001", "code": "california", "target": {"kind": "source", "id": "b"}, "status": "active"},
+                    {"codebook_ref": "cbk-000000000001", "code": "us-other", "target": {"kind": "source", "id": "b"}, "status": "retracted"}]
+            (c / "codings" / "cds-x" / "items.jsonl").write_text("\n".join(json.dumps(r) for r in rows) + "\n")
+            R2 = A.rubric(c)
+            own = R2["places"]
+            self.assertEqual(R2["lead_rule"], "family-initial")
+            self.assertEqual(own["by_source"], {"a": ["europe"], "b": ["california"]})
+            papers = {"a": {"design": {"countries": ["Germany"]}, "places": ["europe"]},
+                      "b": {"design": {"countries": ["USA"]}, "places": ["california"]}}
+            r = lambda sid, lead: {"source_id": sid, "lead": lead, "verdict": "supports", "origin": "own-finding",  # noqa: E731
+                                   "basis": "data", "grade": "Moderate", "gap": "none"}
+            rows = [r("b", "x"), r("a", "y")]
+            p = A.plain_of(rows, A.confidence(rows), papers, own)
+            self.assertEqual(p["places"], ["california", "europe"])
+            self.assertEqual(p["countries"], ["US", "Germany"])
+            # the corpus's own codebook says where: no evidence `place` scheme beside it
+            self.assertNotIn("place", [b["slug"] for b in A.evidence_codebooks(R2)])
+            self.assertIn("place", [b["slug"] for b in A.evidence_codebooks(R)])
+
+    def test_places_codebook_must_exist(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            c = self.corpus(tmp, {"places_codebook": "where"})
+            with self.assertRaises(SystemExit):
+                A.rubric(c)
+
+
+class PoolFitTests(unittest.TestCase):
+    """A paper too long for one server goes to another; one no server fits is left over (2026-10-29)."""
+
+    def test_items_go_where_they_fit(self):
+        got = {}
+        lock = __import__("threading").Lock()
+
+        def work(item, name, url):
+            with lock:
+                got[item] = name
+            return item
+        fits = lambda item, name: not (item.startswith("long") and name == "small") and item != "huge"  # noqa: E731
+        problems, left = A.P.run_all(["long1", "a", "b", "long2", "c", "huge"], work, lambda *a: None,
+                                     endpoints={"small": "http://s", "big": "http://b"}, fits=fits)
+        self.assertEqual(problems, [])
+        self.assertEqual(left, ["huge"])
+        self.assertEqual((got["long1"], got["long2"]), ("big", "big"))
+        self.assertEqual(set(got), {"long1", "long2", "a", "b", "c"})
+
+    def test_a_paper_fits_by_its_length(self):
+        runner = A.Runner.__new__(A.Runner)
+        runner.data = {"sources": {"s": {"model_chars": 460_000}, "t": {"model_chars": 100_000}}}
+        old = dict(A.P.CONTEXT)
+        try:
+            A.P.CONTEXT.clear()
+            A.P.CONTEXT.update({"gpu-box": 131072, "desk": 262144})
+            self.assertFalse(runner.fits("s", "gpu-box"))
+            self.assertTrue(runner.fits("s", "desk"))
+            self.assertTrue(runner.fits("t", "gpu-box"))
+            self.assertTrue(runner.fits("s", "unknown"))      # a server the config doesn't size takes anything
+        finally:
+            A.P.CONTEXT.clear()
+            A.P.CONTEXT.update(old)
+
+
 class AgreementTests(unittest.TestCase):
     def test_perfect_agreement(self):
         pairs = [("a", "a"), ("b", "b"), ("a", "a"), ("c", "c")]

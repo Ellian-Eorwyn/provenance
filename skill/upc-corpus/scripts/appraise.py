@@ -17,7 +17,8 @@
     python3 appraise.py recheck --corpus <dir>   (every stored quotation checked again; no model calls)
 
 The rubric is in ../references/appraisal/ (rubric.md, designs.json, profiles/,
-domains/); the project owns its wording. What happens, per paper, on one machine so the
+domains/), or in the corpus's own copy at <corpus>/.upc/upc-corpus/appraisal/; the project
+owns its wording. What happens, per paper, on one machine so the
 server's prompt cache holds the paper:
 
   1. design ×3 (which of 12 designs; that picks a profile), voted;
@@ -89,6 +90,11 @@ RUNS = 3
 WINDOW = tuple(C.CONFIG.get("overnight_window") or ("22:00", "06:00"))
 PAUSED = 3                                               # exit code: stopped at --stop-at, items left; run again
 CHUNK = 12                                               # passages per call
+# Does a paper fit a server's context window (the config's "context")? English prose runs about 4.1 characters
+# a token (a 382,223-character paper was 92,864 tokens); 3.4 leaves room for tables and numbers. The
+# reserve covers the system prompt, the task, and an answer with its retry and thinking room.
+CHARS_PER_TOKEN = 3.4
+RESERVE_TOKENS = 16000
 APPRAISAL = Path(__file__).resolve().parent.parent / "references" / "appraisal"
 
 ANSWERS = ["yes", "partly", "not found", "can't tell"]
@@ -116,18 +122,64 @@ def load_domain(corpus: Path | None) -> dict | None:
         return d or None
     p = Path(d).expanduser()
     if not p.suffix:
-        p = APPRAISAL / "domains" / f"{d}.json"
+        p = appraisal_dir(corpus) / "domains" / f"{d}.json"
+        if not p.is_file():
+            p = APPRAISAL / "domains" / f"{d}.json"
     elif not p.is_absolute():
         p = Path(corpus) / p
     return json.loads(p.read_text(encoding="utf-8"))
 
 
+def appraisal_dir(corpus: Path | None = None) -> Path:
+    """The rubric's folder: the corpus's own copy (<corpus>/.upc/upc-corpus/appraisal/, with designs.json,
+    profiles/ and rubric.md) when it has one, so a project that needs other wording edits its copy and never
+    another project's; else the toolkit's."""
+    if corpus is not None:
+        own = Path(corpus) / ".upc" / "upc-corpus" / "appraisal"
+        if (own / "designs.json").is_file():
+            return own
+    return APPRAISAL
+
+
 def rubric(corpus: Path | None = None) -> dict:
-    designs = json.loads((APPRAISAL / "designs.json").read_text(encoding="utf-8"))
+    where = appraisal_dir(corpus)
+    designs = json.loads((where / "designs.json").read_text(encoding="utf-8"))
     profiles = {p.stem: json.loads(p.read_text(encoding="utf-8"))
-                for p in sorted((APPRAISAL / "profiles").glob("*.json"))}
+                for p in sorted((where / "profiles").glob("*.json"))}
     by_code = {d["code"]: d for d in designs["designs"]}
-    return {"designs": designs, "by_code": by_code, "profiles": profiles, "domain": load_domain(corpus)}
+    return {"designs": designs, "by_code": by_code, "profiles": profiles, "domain": load_domain(corpus), "dir": where,
+            "places": own_places(corpus), "lead_rule": (C.corpus_settings(corpus).get("lead_author") if corpus else None)
+            or "family"}
+
+
+def own_places(corpus: Path | None) -> dict | None:
+    """A corpus whose settings name "places_codebook" (the slug of its own source-level codebook of places)
+    keeps its own places: {"slug", "codebook_id", "order": [codes], "labels": {code: label}, "by_source":
+    {source_id: [codes]}} from that codebook's active codings, any coder. Statements then say where their
+    evidence comes from in the corpus's own words, and `store` writes no `place` scheme of its own (it would
+    take the same id and replace the corpus's codebook). None when the settings name none."""
+    slug = C.corpus_settings(corpus).get("places_codebook") if corpus is not None else None
+    if not slug:
+        return None
+    ns = C.namespace_of(corpus)
+    book = None
+    for f in sorted(Path(corpus).glob("codebooks/*.json")):
+        d = C.load_json(f, {}) or {}
+        if d.get("slug") == slug and d.get("namespace") == ns:
+            book = d
+    if not book:
+        C.die(f"settings name places_codebook {slug!r}, but the corpus has no {ns} codebook with that slug")
+    order = [c["code"] for c in book.get("codes", [])]
+    by_source: dict[str, set] = collections.defaultdict(set)
+    for f in Path(corpus).glob("codings/*/items.jsonl"):
+        for line in f.read_text(encoding="utf-8").splitlines():
+            o = json.loads(line) if line.strip() else {}
+            if o.get("codebook_ref") == book["codebook_id"] and (o.get("status") or "active") == "active" \
+                    and (o.get("target") or {}).get("kind") == "source" and o.get("code") in order:
+                by_source[o["target"]["id"]].add(o["code"])
+    return {"slug": slug, "codebook_id": book["codebook_id"], "order": order,
+            "labels": {c["code"]: c.get("label") or c["code"] for c in book.get("codes", [])},
+            "by_source": {k: [c for c in order if c in v] for k, v in by_source.items()}}
 
 
 # --- the corpus ----------------------------------------------------------------
@@ -690,12 +742,15 @@ def fold(s: str) -> str:
     return "".join(c for c in unicodedata.normalize("NFKD", s or "") if not unicodedata.combining(c)).lower().strip()
 
 
-def lead_of(src: dict) -> str:
-    """The first author's family name, folded ("Geels", "Gééls" → "geels"); "" when the record has no authors."""
+def lead_of(src: dict, rule: str = "family") -> str:
+    """The first author's family name, folded ("Geels", "Gééls" → "geels"); "" when the record has no authors.
+    With the rule "family-initial" (a corpus's settings, "lead_author"), a person's first initial joins it, so
+    three different Wangs stay three ("wang y", "wang z"); an organisation stays its whole name."""
     for a in (src.get("bib") or {}).get("authors") or []:
         n = (a.get("family") or a.get("literal") or a.get("name") or "") if isinstance(a, dict) else str(a).split(",")[0]
         if n.strip():
-            return fold(n)
+            given = (a.get("given") or "").strip() if isinstance(a, dict) and a.get("family") else ""
+            return fold(n) + (f" {fold(given)[:1]}" if rule == "family-initial" and given else "")
     return ""
 
 
@@ -771,7 +826,7 @@ def kind_of(sup: list[dict]) -> str:
     return "argument"
 
 
-def plain_of(rows: list[dict], conf: dict, papers: dict) -> dict:
+def plain_of(rows: list[dict], conf: dict, papers: dict, own: dict | None = None) -> dict:
     """The site's plain fields for one statement: support in four words, how many lead authors and papers agree,
     what kind of statement it is, where its independent evidence comes from and what kind of study it is."""
     sup = [r for r in rows if r.get("verdict") in ("supports", "partly")]
@@ -784,7 +839,11 @@ def plain_of(rows: list[dict], conf: dict, papers: dict) -> dict:
         if dv.get("design"):
             designs.append(DESIGN_SHORT.get(dv["design"], dv["design"]))
     leads = {r.get("lead") or r["source_id"] for r in indep}
-    places = [k for k, _, _ in PLACES if k != "not-stated" and any(region_of(c) == k for c in countries)]
+    if own:     # the corpus's own places (own_places), in its codebook's order
+        got = {k for r in indep for k in (papers.get(r.get("source_id")) or {}).get("places") or []}
+        places = [k for k in own["order"] if k in got]
+    else:
+        places = [k for k, _, _ in PLACES if k != "not-stated" and any(region_of(c) == k for c in countries)]
     return {"support": key, "support_label": SUPPORT_LABEL[key], "studies": len(leads),
             "papers": len({r["source_id"] for r in indep}), "same_lead": len({r["source_id"] for r in indep}) >= 2 and len(leads) == 1,
             "relayed_only": bool(sup) and not indep, "kind": kind_of(sup),
@@ -969,6 +1028,11 @@ class Runner:
         save()
         return {"slug": src["slug"], "calls": calls, "seconds": round(time.time() - t0, 1)}
 
+    def fits(self, sid: str, name: str) -> bool:
+        """Does the paper, as the model reads it, fit this server? Too long for one server, it waits for another."""
+        cap = P.context_of(name)
+        return not cap or self.data["sources"][sid].get("model_chars", 0) / CHARS_PER_TOKEN + RESERVE_TOKENS <= cap
+
     def on_done(self, sid, result, name, seconds):
         self.done += 1
         self.calls += result.get("calls", 0)
@@ -1073,10 +1137,16 @@ def cmd_run(args) -> int:
         if not s:
             continue
         cur = C.load_json(paper_file(corpus, s["slug"]), {}) or {}
-        if paper_done(cur, args.only, args.runs, len(s["passages"])):
+        if paper_done(cur, args.only, args.runs, len(s["passages"]), runner.R):
             continue
         todo.append(sid)
     todo.sort(key=lambda sid: -(srcs[sid].get("chars") or 0))
+    if P.CONTEXT:     # each paper's length as the model reads it, so the pool can send it where it fits
+        for sid in todo:
+            src = srcs[sid]
+            src["model_chars"] = len(model_text(Path(src["text_path"]).read_text(encoding="utf-8"), src["container"])[0])
+    too_long = [sid for sid in todo if not any(runner.fits(sid, n) for n in P.ENDPOINTS)]
+    todo = [sid for sid in todo if sid not in too_long]     # never queued: a re-run couldn't finish them either
     C.counts_header("Appraisal run", [
         ("set", f"{args.set} ({len(papers)} papers)"),
         ("to do", len(todo)),
@@ -1087,7 +1157,10 @@ def cmd_run(args) -> int:
         ("prompt version", PROMPT_VERSION),
     ])
     t0 = time.time()
-    problems, left = P.run_all(todo, runner.work, runner.on_done)
+    if too_long:
+        print(f"  TOO LONG for every server's context window, left out: {', '.join(srcs[x]['slug'] for x in too_long)}",
+              flush=True)
+    problems, left = P.run_all(todo, runner.work, runner.on_done, fits=runner.fits)
     C.counts_header("Appraisal run finished", [
         ("papers done", runner.done), ("calls", runner.calls), ("minutes", round((time.time() - t0) / 60, 1)),
         ("left (resume to finish)", len(left)), ("failed steps", len(runner.failed)),
@@ -1095,7 +1168,7 @@ def cmd_run(args) -> int:
     return PAUSED if left else 0
 
 
-def paper_done(st: dict, only: str, runs: int, n_passages: int) -> bool:
+def paper_done(st: dict, only: str, runs: int, n_passages: int, R: dict | None = None) -> bool:
     if len(((st.get("design") or {}).get("runs")) or []) < runs:
         return False
     dv = (st.get("design") or {}).get("vote") or {}
@@ -1103,7 +1176,7 @@ def paper_done(st: dict, only: str, runs: int, n_passages: int) -> bool:
         return False
     if only == "design":
         return True
-    R = rubric()
+    R = R or rubric()
     for prof, _, _ in strands_of(R, dv):
         if len((((st.get("criteria") or {}).get(prof)) or {}).get("runs", [])) < runs:
             return False
@@ -1258,6 +1331,8 @@ def cmd_vote(args) -> int:
         st = C.load_json(f, {}) or {}
         if st.get("source_id"):
             papers[st["source_id"]] = vote_paper(R, st)
+            if R["places"]:
+                papers[st["source_id"]]["places"] = R["places"]["by_source"].get(st["source_id"], [])
     passage_vote = {e: v for p in papers.values() for e, v in p["passages"].items()}
     statements = {}
     # A revision replaced by a later one (a v2 overview by its grouped rewrite) is left out, so the report,
@@ -1282,7 +1357,7 @@ def cmd_vote(args) -> int:
                 pp = papers.get(src_id) or {}
                 why = next((r["passages"][e]["reason"] for r in rec["runs"]
                             if r["passages"].get(e, {}).get("verdict") == verdict), "")
-                rows.append({"extraction_id": e, "source_id": src_id, "lead": lead_of(data["sources"].get(src_id) or {}),
+                rows.append({"extraction_id": e, "source_id": src_id, "lead": lead_of(data["sources"].get(src_id) or {}, R["lead_rule"]),
                              "verdict": verdict, "gap": gap,
                              "verdict_runs": [r["passages"].get(e, {}).get("verdict") for r in rec["runs"]],
                              "origin": (passage_vote.get(e) or {}).get("origin"),
@@ -1290,7 +1365,7 @@ def cmd_vote(args) -> int:
                              "grade": pp.get("grade"), "setting": pp.get("setting"), "reason": why})
             conf = confidence(rows)
             statements.setdefault(f.stem, {})[cid] = {"text": rec["text"], "rows": rows, "confidence": conf,
-                                                      "plain": plain_of(rows, conf, papers)}
+                                                      "plain": plain_of(rows, conf, papers, R["places"])}
     out = {"prompt_version": PROMPT_VERSION, "voted_at": datetime.now().isoformat(timespec="seconds"),
            "papers": papers, "statements": statements}
     C.save_json(state(corpus) / "vote.json", out)
@@ -1741,6 +1816,8 @@ def evidence_codebooks(R: dict, report: dict | None = None) -> list[dict]:
                      "agreed on (two of three runs), so a paper can be in two places, or in none.",
          "codes": [{"code": k, "label": lab, "definition": d} for k, lab, d in PLACES]},
     ]
+    if R.get("places"):         # the corpus's own codebook says where; a `place` scheme here would replace it
+        books = [b for b in books if b["slug"] != "place"]
     out = []
     for b in books:
         ag = agreement_of(report or {}, b["slug"])
@@ -1913,6 +1990,12 @@ def cmd_store(args) -> int:
         print("  NOTE no report.json: run `appraise.py report` first, or every scheme is offered as a filter")
     for b in evidence_codebooks(R, report):
         obj, dest, status, _ = MC.build_codebook(into, b, ids["namespace"])
+        prior = C.load_json(dest) or {}
+        made_by = ((prior.get("provenance") or {}).get("produced_by") or {}).get("tool")
+        if prior and made_by != "appraise.py":
+            C.die(f"{dest.name} ({ids['namespace']}/{b['slug']}) is the corpus's own codebook, made by {made_by or 'another tool'}; "
+                  f"storing would replace it. If it says where papers were studied, name it in the settings "
+                  f'("places_codebook": "{b["slug"]}"); otherwise use another --namespace')
         rows.append((obj, dest, status))
     MC.write_codebooks(into, rows)
     cbk = {o["slug"]: o["codebook_id"] for o, _, _ in rows}
@@ -1943,7 +2026,7 @@ def cmd_store(args) -> int:
         if not isinstance(r, dict) or r.get("status") not in ("ok", "exists", "replaced"):
             print(f"  REFUSED {src['slug']}: {json.dumps(r)[:300]}")
         dv = rec["design"]
-        for k in places_of(dv.get("countries") or []):
+        for k in ([] if R["places"] else places_of(dv.get("countries") or [])):
             place_rows.append({"codebook_ref": cbk["place"], "code": k, "target": {"kind": "source", "id": sid},
                                "coder": ids["place_coder"],
                                "rationale": prose("Countries agreed by the design vote: " + (", ".join(dv.get("countries") or []) or "none"))})
@@ -1979,10 +2062,13 @@ def cmd_store(args) -> int:
     man.setdefault("ext", {})["upc-corpus"] = {"appraisal": PROMPT_VERSION, "rubric": "references/appraisal/rubric.md"}
     C.save_json(man_f, man)
 
-    # 3b. where each paper was studied: a rule over the voted countries, its own coder (kind rule)
-    r = C.upc_jsonl("code", "--corpus", str(into), "--set", ids["place"], "--coder-kind", "rule", "--tool", "appraise.py",
-                    "--method", "manual", records=place_rows)
-    ptally = (r or {}).get("tally", {})
+    # 3b. where each paper was studied: a rule over the voted countries, its own coder (kind rule); a corpus
+    # with its own places codebook keeps those (own_places)
+    ptally = {}
+    if place_rows:
+        r = C.upc_jsonl("code", "--corpus", str(into), "--set", ids["place"], "--coder-kind", "rule", "--tool", "appraise.py",
+                        "--method", "manual", records=place_rows)
+        ptally = (r or {}).get("tally", {})
 
     # 4. the blind second coding, as its own coder
     btally = {}
@@ -2031,7 +2117,7 @@ def cmd_store(args) -> int:
             srcs_all += sids
             label = conf.get("label", "")
             ipcc = f"{label} confidence" if label in ("very low", "low", "medium", "high", "very high") else label
-            pl = rec.get("plain") or plain_of(rec["rows"], conf, vote["papers"])
+            pl = rec.get("plain") or plain_of(rec["rows"], conf, vote["papers"], R["places"])
             claims.append({"claim_id": cid, "text": rec["text"], "evidence_ids": ev, "source_ids": sids,
                            "ext": {"upc-corpus": {"ipcc": ipcc, "evidence": conf.get("evidence"),
                                                   "agreement": conf.get("agreement"), "independent": conf.get("independent"),

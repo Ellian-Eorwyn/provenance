@@ -99,9 +99,12 @@ def numbers(corpus: Path, original: str) -> dict:
             (conf_old, conf_new, conf_home)[which][r["confidence"]["label"]] += 1
             (sup_old, sup_new, sup_home)[which][A.SUPPORT.get(r["confidence"]["label"], "weak")] += 1
             same_lead += which == 1 and bool((r.get("plain") or {}).get("same_lead"))
-    places = collections.Counter(k for p in papers.values() if p.get("grade")
-                                 for k in A.places_of((p.get("design") or {}).get("countries") or []))
-    place_label = {k: lab for k, lab, _ in A.PLACES}
+    own = R.get("places")      # the corpus's own codebook of places, when its settings name one
+    places = collections.Counter(k for sid, p in papers.items() if p.get("grade")
+                                 for k in (own["by_source"].get(sid, []) if own else
+                                           A.places_of((p.get("design") or {}).get("countries") or [])))
+    place_label = own["labels"] if own else {k: lab for k, lab, _ in A.PLACES}
+    place_order = own["order"] if own else [k for k, _, _ in A.PLACES]
     home_model = next(((((syns[s].get("provenance") or {}).get("produced_by") or {}).get("model")) for s in home), "")
     single = tot = 0
     for s in old:
@@ -128,7 +131,7 @@ def numbers(corpus: Path, original: str) -> dict:
         "support_old": plain_counts(sup_old), "support_new": plain_counts(sup_new),
         "home_line": f"{sum(sup_home.values())} statements, " + plain_counts(sup_home), "home_model": home_model,
         "same_lead": same_lead, "origin_agree": pct((rr.get("claim-origin") or {}).get("all_agree")),
-        "places_line": counted(places, [k for k, _, _ in A.PLACES], lambda k: place_label[k].lower()
+        "places_line": counted(places, place_order, (lambda k: place_label[k]) if own else lambda k: place_label[k].lower()
                                .replace("united states", "United States").replace("europe", "Europe")),
     }
 

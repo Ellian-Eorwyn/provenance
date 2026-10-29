@@ -172,7 +172,7 @@ def blind_sheet(corpus: Path, out: Path, n_papers: int, n_passages: int, seed: i
                       "in_context": w[0][:w[1]] + "«" + w[0][w[1]:w[2]] + "»" + w[0][w[2]:]})
     C.save_json(out / "papers.json", plist)
     C.save_json(out / "passages.json", qlist)
-    (out / "README.md").write_text(BLIND_README.format(name=A.short_name(corpus), rubric=A.APPRAISAL, n_papers=len(plist),
+    (out / "README.md").write_text(BLIND_README.format(name=A.short_name(corpus), rubric=A.appraisal_dir(corpus), n_papers=len(plist),
                                                        n_passages=len(qlist)), encoding="utf-8")
     C.save_json(out / "sheet.json", {"seed": seed, "pilot_set": str(C.state_dir(corpus, "appraise") / "sets" / "pilot.json"),
                                      "papers": [p["source_id"] for p in plist], "passages": picked,

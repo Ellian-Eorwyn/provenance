@@ -13,14 +13,19 @@ The machine's config (common.CONFIG) describes the pool:
 
     "pool": {"gpu-box": "http://gpu-box:8012/v1/chat/completions",
              "desk":    "http://127.0.0.1:8012/v1/chat/completions"},
-    "relay": {"header": "X-LLM-Served-By", "value": "fallback", "to": "desk"}
+    "relay": {"header": "X-LLM-Served-By", "value": "fallback", "to": "desk"},
+    "context": {"gpu-box": 131072, "desk": 262144}
 
 Without "pool", the one chat server (common.CHAT_URL) is the pool. Without
-"relay", no reply counts as relayed.
+"relay", no reply counts as relayed. "context" is each server's context window in
+tokens: with a `fits(item, name)` test, a worker takes only the items that fit its
+server, and an item no server fits is left over (`left`) rather than stopping a
+worker on an error.
 
     chat(url, system, user, ...)   one chat call -> text
-    Pool(work, on_done)            add() items, close(), join() -> problems
+    Pool(work, on_done, fits=…)    add() items, close(), join() -> problems
     run_all(items, work, on_done)  -> (problems, items no server could take)
+    context_of(name)               a server's context window in tokens, or None
 """
 from __future__ import annotations
 
@@ -40,6 +45,12 @@ RELAY_HEADER = _RELAY.get("header") or ""
 RELAY_VALUE = _RELAY.get("value") or ""
 # The server relayed replies come from: a reply relayed to it is only a problem for the others.
 HOME = ENDPOINTS.get(_RELAY.get("to") or "", "")
+CONTEXT: dict[str, int] = dict(C.CONFIG.get("context") or {})
+
+
+def context_of(name: str) -> int | None:
+    """A server's context window in tokens, from the config's "context"; None when it doesn't say."""
+    return CONTEXT.get(name)
 THINK_HEADROOM = 8000            # thinking spends tokens before the answer starts
 
 
@@ -125,8 +136,10 @@ class Pool:
 
     def __init__(self, work: Callable[[Any, str, str], Any],
                  on_done: Callable[[Any, Any, str, float], None],
-                 endpoints: dict[str, str] | None = None):
+                 endpoints: dict[str, str] | None = None,
+                 fits: Callable[[Any, str], bool] | None = None):
         self.work, self.on_done = work, on_done
+        self.fits = fits or (lambda item, name: True)
         self.endpoints = endpoints or ENDPOINTS
         self.queue: list[Any] = []
         self.closed = False
@@ -166,11 +179,14 @@ class Pool:
                 return
             while True:
                 with self.cond:
-                    while not self.queue and not self.closed:
+                    while True:
+                        at = next((i for i, it in enumerate(self.queue) if self.fits(it, name)), None)
+                        if at is not None or self.closed:
+                            break
                         self.cond.wait()
-                    if not self.queue:
+                    if at is None:          # closed, and nothing left that fits this server
                         return
-                    item = self.queue.pop(0)
+                    item = self.queue.pop(at)
                 t0 = time.time()
                 try:
                     result = self.work(item, name, url)
@@ -192,9 +208,10 @@ class Pool:
 
 def run_all(items: list[Any], work: Callable[[Any, str, str], Any],
             on_done: Callable[[Any, Any, str, float], None],
-            endpoints: dict[str, str] | None = None) -> tuple[list[str], list[Any]]:
+            endpoints: dict[str, str] | None = None,
+            fits: Callable[[Any, str], bool] | None = None) -> tuple[list[str], list[Any]]:
     """Every item through the pool; returns (problems, items no server could take)."""
-    pool = Pool(work, on_done, endpoints)
+    pool = Pool(work, on_done, endpoints, fits)
     pool.add(*items)
     problems = pool.join()
     return problems, pool.left
