@@ -1986,6 +1986,22 @@ ok("filename rejects reserved", !checkFilename("sources/con/x.md").ok);
      src2.indexOf("What this paper contributes") < src2.indexOf("Evidence ratings (advisory)") && src2.includes('href="../findings.html#src=0"'));
   ok("1.15 findings: two coders giving one code make one chip naming both",
      (src2.match(/>Low<\/a><\/span>/g) || []).length === 1 && /Also coded so by claude-blind/.test(src2));
+  {
+    // A label alone ("Not met") can't say what it answers: a judgement about the paper
+    // as a whole names its scheme. Evidence ratings keep their own card's heading.
+    const rule = mkCb("narrow", "Narrow rule", [{ code: "no", label: "Not met" }]);
+    clearRepCache();
+    codeCmd(dir, "cds-rule", [{ codebook_ref: rule.codebook_id, code: "no", target: { kind: "source", id: sid }, coder: "claude-blind" }],
+            { tool: "selftest", coderKind: "model" });
+    clearRepCache();
+    const out3 = fs.mkdtempSync(path.join(os.tmpdir(), "upc-scheme-"));
+    writeSite(dir, { out: out3 });
+    const src3 = fs.readFileSync(path.join(out3, "sources", "hp.html"), "utf8");
+    ok("site: a judgement about the paper as a whole names its scheme",
+       src3.includes('<span class="scheme">Narrow rule:</span><a href="../codes/narrow/no.html">Not met</a>'));
+    ok("site: an evidence rating's chip does not", (src3.match(/class="scheme"/g) || []).length === 1);
+    fs.rmSync(out3, { recursive: true, force: true });
+  }
   ok("1.15 findings: [view:findings] and [view:evidence] link", /<a href="findings\.html">the findings<\/a>/.test(r2("methods.html")) &&
      /<a href="evidence\.html">the evidence map<\/a>/.test(r2("methods.html")));
   ok("1.15 findings: the page script carries the engine", /window\.UPCF=API/.test(r2("assets/site.js")));
@@ -2472,6 +2488,9 @@ ok("filename rejects reserved", !checkFilename("sources/con/x.md").ok);
        c2.includes("In the PDF, this passage is on the 14th page."));
     B.init(ctx(null, { p: "", d: "", k: "Doe 2020" }));
     ok("browse card: with neither, the bare page", B.card(card).includes(">p. 14</span>"));
+    ok("browse chip: a judgement about the paper as a whole names its scheme; a passage's chip does not",
+       B.chip(card.g[0], false, true).includes('<span class="scheme">Theory:</span><a href="#code">MLP</a>') &&
+       !/class="scheme"/.test(B.card(card)));
     fs.rmSync(hd, { recursive: true, force: true });
     fs.rmSync(hout, { recursive: true, force: true });
     clearRepCache();

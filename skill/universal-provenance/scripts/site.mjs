@@ -641,7 +641,7 @@ mark{background:var(--mark);color:inherit;padding:.05em 0;border-radius:2px}
 /* a code chip — a judgement, pill-shaped, always carrying its coder */
 .chip{display:inline-flex;align-items:baseline;gap:.35rem;border-radius:999px;padding:.1rem .6rem;
   background:var(--chip);color:var(--chip-ink);border:1px dashed var(--line)}
-.chip .who{font-size:.74rem;color:var(--muted)}
+.chip .who,.chip .scheme{font-size:.74rem;color:var(--muted)}
 .chip.detached{opacity:.55;text-decoration:line-through}
 .disagree{color:var(--warn);font-family:ui-sans-serif,system-ui,sans-serif;font-size:.8rem;margin-top:.35rem}
 .banner{background:var(--warn-soft);color:var(--warn);border:1px solid currentColor;border-radius:10px;
@@ -979,12 +979,13 @@ const BROWSE_JS = String.raw`
   // (codeNote) — so a model's judgement never passes for a fact (spec/09).
   // A code on a quotation that no longer matches its paper is shown struck
   // through (detached), as the pages built on the server show it.
-  function chip(g,detached){
+  function chip(g,detached,scheme){
     var d=codeDef[g[0]+":"+g[1]], lbl=d?d.c.label:g[1];
     var kind=(X.coderKind||{})[g[2]];
     var tip=(d&&d.c.def?d.c.label+": "+d.c.def+"\n":"")+"Coded by "+g[2]+(kind?" ("+({rule:"a rule",ensemble:"a vote of model runs"}[kind]||kind)+")":"")+
       (g[3]?" · confidence "+g[3]:"")+(g[4]?"\nWhy: "+g[4]:"")+(g[5]?"\n"+g[5]:"");
     return '<span class="chip'+(detached?" detached":"")+'" title="'+E(tip)+'">'+
+      (scheme&&d?'<span class="scheme">'+E(d.cb.title)+":</span>":"")+
       '<a href="'+E(X.hrefCode(g[0],g[1]))+'">'+E(lbl)+"</a></span>";
   }
   // "See in original, p. 14 ↗": the PDF at that page when the PDFs travel with
@@ -1752,7 +1753,7 @@ function badgeHtml(badge, terse) {
   return `<span class="${cls}"${terse ? "" : ` title="${attr(why)}"`}>${icon} ${esc(label)}</span>`;
 }
 
-function chipHtml(c, base, detached) {
+function chipHtml(c, base, detached, scheme) {
   const label = esc(c.label || c.code || c.value);
   // Who made the judgement lives in the tooltip, with its confidence and reason;
   // each page also says once, visibly, what kind of coder made its codes (§09).
@@ -1760,7 +1761,10 @@ function chipHtml(c, base, detached) {
                  `Coded by ${c.coder}${c.coder_kind ? ` (${KIND_LABEL[c.coder_kind] || c.coder_kind})` : ""}${c.confidence ? ` · confidence ${c.confidence}` : ""}`,
                  c.rationale ? `Why: ${c.rationale}` : ""].filter(Boolean).join("\n");
   const href = c.code != null ? `${base}codes/${encodeURIComponent(c.codebook_slug)}/${encodeURIComponent(c.code)}.html` : null;
-  return `<span class="chip${detached ? " detached" : ""}" data-id="${attr(c.coding_id)}" title="${attr(title)}">${
+  // A judgement about a paper as a whole names its scheme: a label alone ("Not met",
+  // "Review") can't say what question it answers.
+  const lead = scheme && c.codebook_title ? `<span class="scheme">${esc(c.codebook_title)}:</span>` : "";
+  return `<span class="chip${detached ? " detached" : ""}" data-id="${attr(c.coding_id)}" title="${attr(title)}">${lead}${
     href ? `<a href="${href}">${label}</a>` : label}</span>`;
 }
 
@@ -1828,8 +1832,8 @@ function passageHtml(p, model, base, { showSource = true, context = true, compac
   // Evidence ratings (1.15.0) ride apart, shown where a passage is opened in
   // context or read on its paper's page, never on a topical list's cards.
   const ev = p.codings.filter((c) => c.ev);
-  const chips = p.codings.filter((c) => !c.ev).map((c) => chipHtml(c, base, bad, compact)).join(" ") +
-    (ev.length ? ` <span class="evchips">${ev.map((c) => chipHtml(c, base, bad, compact)).join(" ")}</span>` : "");
+  const chips = p.codings.filter((c) => !c.ev).map((c) => chipHtml(c, base, bad)).join(" ") +
+    (ev.length ? ` <span class="evchips">${ev.map((c) => chipHtml(c, base, bad)).join(" ")}</span>` : "");
   const dis = p.disagreements.length
     ? `<div class="disagree">Coders disagree here — both judgements are kept and shown.</div>` : "";
   // "line N →" opens the passage where it sits in the paper's text (#text=, the
@@ -2035,7 +2039,7 @@ function sourcePage(model, s, textInfo) {
 ${s.codings.length || s.passages.some((p) => p.codings.length) ? `<p class="small muted">${esc(codeNote(model))}</p>` : ""}
 ${contributesHtml(model, s, folderLinks(base))}
 ${s.codings.some((c) => !c.ev) ? `<div class="card"><div class="small muted">Judgements about this paper as a whole</div>
-  <div class="meta" style="margin-top:.4rem">${s.codings.filter((c) => !c.ev).map((c) => chipHtml(c, base, false)).join(" ")}</div></div>` : ""}
+  <div class="meta" style="margin-top:.4rem">${s.codings.filter((c) => !c.ev).map((c) => chipHtml(c, base, false, true)).join(" ")}</div></div>` : ""}
 ${sourceCardsHtml(model, s, folderLinks(base))}
 
 <h2>Passages (${s.passages.length})</h2>
@@ -2093,7 +2097,7 @@ function recordingPage(model, s, textInfo, marks) {
 <h1>${esc(s.interview ? s.interview.interviewee || s.title : s.title)}</h1>
 ${s.interview ? IV.interviewTopHtml(model, s, base) : (s.audioHref ? `<div class="player"><audio id="upc-audio" controls preload="metadata" src="${attr(base + s.audioHref)}"></audio></div>` : "")}
 ${s.codings.some((c) => !c.ev) ? `<div class="card"><div class="small muted">Judgements about this ${s.interview ? "interview" : "source"} as a whole</div>
-  <div class="meta" style="margin-top:.4rem">${s.codings.filter((c) => !c.ev).map((c) => chipHtml(c, base, false)).join(" ")}</div></div>` : ""}
+  <div class="meta" style="margin-top:.4rem">${s.codings.filter((c) => !c.ev).map((c) => chipHtml(c, base, false, true)).join(" ")}</div></div>` : ""}
 ${others.length ? `<h2>Passages (${others.length})</h2>
 <p class="small muted">${esc(codeNote(model))}</p>
 <div class="evshow">${others.map((p) => passageHtml(p, model, base, { showSource: false, context: false })).join("\n")}</div>` : ""}
@@ -3219,7 +3223,7 @@ const CLIENT_ONE = String.raw`
       ((s.g.length||mine.some(function(p){return p.g.length;}))?'<p class="small muted">'+E(UPCB.codeNote())+"</p>":"")+
       (s.cb||"")+
       (sTop.length?'<div class="card"><div class="small muted">Judgements about this paper as a whole</div>'+
-        '<div class="meta" style="margin-top:.4rem">'+sTop.map(function(g){return chip(g);}).join(" ")+"</div></div>":"")+
+        '<div class="meta" style="margin-top:.4rem">'+sTop.map(function(g){return chip(g,false,true);}).join(" ")+"</div></div>":"")+
       (sEv.length?'<div class="card evcard"><div class="small muted">'+E(D.evTitle)+"</div>"+
         '<div class="meta" style="margin-top:.4rem">'+mergeEv(sEv).map(function(g){return chip(g);}).join(" ")+"</div></div>":"")+
       (s.cd||[]).map(function(c){ return '<details class="card evcard"><summary><strong>'+E(c[0])+"</strong></summary>"+c[1]+"</details>"; }).join("")+
