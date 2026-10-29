@@ -1608,6 +1608,16 @@ ok("filename rejects reserved", !checkFilename("sources/con/x.md").ok);
      addSynthesisCmd(dir, { type: "thematic", title: "U", claims }, { output: uncited, tool: "selftest" }).status,
      "refused");
 
+  // ... and prose that cites nothing at all: validate would reject it (missing_input_digest).
+  const empty = path.join(stage, "empty.md");
+  fs.writeFileSync(empty, "# Overview\n\nThe user wants a 350-700 word overview. I need to use only the passages.\n");
+  clearRepCache();
+  {
+    const r = addSynthesisCmd(dir, { type: "thematic", title: "Empty" }, { output: empty, tool: "selftest" });
+    eq("add synthesis: prose that cites nothing is refused", r.status, "refused");
+    eq("add synthesis: nothing is written for it", r.wrote, 0);
+  }
+
   // ... and so is prose whose CLAIM rests on a passage the prose never marks.
   // Checking only the sources let a synthesis through that then failed validation.
   {

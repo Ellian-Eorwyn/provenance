@@ -1835,6 +1835,12 @@ function addSynthesisCmd(root, obj, opts = {}) {
       .filter(Boolean);
     if (inputs.length) stamp.input_digest = U.computeInputDigest(inputs);
   }
+  // Prose that rests on nothing in the corpus (a model's empty or note-only answer,
+  // say) has no input digest, which validate rejects: refuse it rather than write it.
+  if (!stamp.input_digest && !opts.allowUnverified) {
+    return { status: "refused", wrote: 0, failures: [],
+             detail: "the prose cites no passage of this corpus, so it rests on nothing; nothing was written" };
+  }
 
   const syn = {
     type: obj.type || "thematic",

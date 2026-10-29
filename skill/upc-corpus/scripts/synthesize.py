@@ -31,6 +31,37 @@ sys.path.insert(0, str(Path(__file__).parent))
 import common as C  # noqa: E402
 
 MARKER = re.compile(r"\[(ext-[0-9a-f]{12})\]")
+# A thinking model sometimes writes its planning into the answer itself, with no
+# think tags for the server to strip: "The user wants a 350-700 word overview…",
+# "Let me organize the passages…", then the overview. Such prose is refused, never
+# stored (FORGE 2.2, 10-28: 4 of 38; none of FORGE 2.1's 51 overviews matches).
+NOTES_START = re.compile(r"\s*(the user\b|i need to\b|i must\b|i should\b|i'll\b|i will\b|let me\b|okay\b|ok,|"
+                         r"alright\b|we need to\b|first, i\b)", re.I)
+NOTES_LINE = re.compile(r"^\s*(?:now )?let me (?:draft|write|organi[sz]e|structure|plan|check|re-?read|count|verify|"
+                        r"go through|look)\b", re.I | re.M)
+
+
+def not_an_overview(got: dict) -> str:
+    """Why this output must not be stored as an overview, or ''."""
+    if not got["cited"] and not any(c.get("evidence_ids") for c in got["claims"]):
+        return "it cites no passage"
+    if NOTES_START.match(got["prose"]) or NOTES_LINE.search(got["prose"]):
+        return "it is the model's working notes, not an overview"
+    return ""
+
+
+def current_overviews(corpus: Path) -> dict[tuple[str, str], str]:
+    """(codebook slug, title) -> the id of the stored overview no other one supersedes."""
+    objs = [C.load_json(f) for f in sorted(corpus.glob("syntheses/*/synthesis.json"))]
+    objs = [o for o in objs if o]
+    replaced = {o.get("supersedes") for o in objs}
+    out = {}
+    for o in sorted(objs, key=lambda o: str((o.get("provenance") or {}).get("created_at", ""))):
+        if o["synthesis_id"] in replaced:
+            continue
+        slug = ((o.get("ext") or {}).get("upc-corpus") or {}).get("codebook", "")
+        out[(slug, o.get("title", ""))] = o["synthesis_id"]
+    return out
 
 
 def load_books(corpus: Path) -> dict[str, dict]:
@@ -647,7 +678,10 @@ def main() -> int:
     ap.add_argument("--max-passages", type=int, default=26)
     ap.add_argument("--limit-codes", type=int, default=0)
     ap.add_argument("--only", default="",
-                    help="with --codebook: only these codes (code,code), e.g. to retry an overview that was refused")
+                    help="with --codebook: only these codes (code,code), e.g. to retry an overview that was refused. "
+                         "A stored overview of the same code is superseded, not duplicated")
+    ap.add_argument("--why", default="",
+                    help="with --only: the reason a superseded overview was rewritten, shown under its Revised label")
     ap.add_argument("--plan", action="store_true")
     ap.add_argument("--v2", action="store_true", help="revise the current overviews from the rated evidence (criteria-v2)")
     ap.add_argument("--codes", default="", help="v2: slug:code,… (default: every code of --codebook)")
@@ -729,6 +763,7 @@ def main() -> int:
 
     scheme_slug = args.codebook or (args.matrix.split(":", 1)[0] if args.matrix else "")
     out_dir = C.state_dir(corpus, "syntheses")
+    stored = current_overviews(corpus) if args.only else {}
     wrote, refused, unquoted_total, t0 = 0, 0, 0, time.time()
     for title, definition, ids, syn_type in jobs:
         lines = evidence_lines(corpus, ids, sources, exts, args.max_passages)
@@ -741,6 +776,11 @@ def main() -> int:
         prose, unquoted = unquote_misquotes(got["prose"], exts)
         got["prose"] = prose
         got["cited"] = list(dict.fromkeys(MARKER.findall(prose)))
+        why = not_an_overview(got)
+        if why:
+            refused += 1
+            print(f"  REFUSED {title[:44]:44} — {why}; nothing was written")
+            continue
 
         # Rule 2.4: the prose must name every source its claims rely on. A
         # reference list is what a reader wants anyway, so build one.
@@ -766,19 +806,25 @@ def main() -> int:
         md_path = out_dir / (re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-") + ".md")
         md_path.write_text(f"# {title}\n\n{got['prose']}\n" + "\n".join(refs) + "\n", encoding="utf-8")
 
+        old = stored.get((scheme_slug, title))
+        ext = {"upc-corpus": {"codebook": scheme_slug}}
+        if old:
+            ext["upc-site"] = {"revision": {"label": "Rewritten", "date": datetime.now().date().isoformat(),
+                                            "note": args.why}}
         res = C.upc("add", "synthesis", "--corpus", str(corpus), "--output", str(md_path),
-                    "--tool", "upc-corpus", check=False,
+                    "--tool", "upc-corpus", *(["--supersedes", old] if old else []), check=False,
                     stdin=json.dumps({"type": syn_type, "title": title,
                                       "question": definition, "claims": got["claims"],
                                       # Say which scheme this overview belongs to, so a
                                       # reader's index can group them without guessing.
-                                      "ext": {"upc-corpus": {"codebook": scheme_slug}}}))
+                                      "ext": ext}))
         if isinstance(res, dict) and res.get("status") == "ok":
             wrote += 1
             unquoted_total += unquoted
             print(f"  wrote {title[:44]:46} {len(got['claims']):3} claims, "
                   f"{len(got['cited']):3} passages cited"
-                  f"{f', {unquoted} unquoted' if unquoted else ''}, {got['seconds']}s")
+                  f"{f', {unquoted} unquoted' if unquoted else ''}, {got['seconds']}s"
+                  f"{f' (supersedes {old})' if old else ''}")
         else:
             refused += 1
             fails = (res or {}).get("failures", [])
@@ -792,7 +838,7 @@ def main() -> int:
              if isinstance(rep, dict) else "UNAVAILABLE: validate did not return a report")
     C.counts_header("Overviews", [
         ("written", wrote),
-        ("refused (misquoted or uncited)", refused),
+        ("refused (misquoted, uncited or notes)", refused),
         ("near-quotations unquoted", unquoted_total),
         ("corpus", state),
         ("minutes", round((time.time() - t0) / 60, 1)),
