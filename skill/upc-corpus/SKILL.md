@@ -608,6 +608,9 @@ Methods page. The renderer is generic; the corpus supplies its own words.
    - `words.one_study`: the heading over single-study statements in Key findings.
    - `words.map_note`: one line above the evidence map.
    - `map_place`: the place given its own column on the map (for example `us`).
+   - `revision_labels`: `false` shows a revised overview with no "Revised" label.
+   - `status_note`: one line at the top of the home, Findings and Evidence map pages while
+     ratings are still coming in (an edition built from a pilot, say). Remove it when done.
    Without the file the pages still build, with no starting points.
 2. **Methods page** (it stops if any number is missing):
    ```
@@ -634,15 +637,19 @@ Methods page. The renderer is generic; the corpus supplies its own words.
 
 ## Task 13: A dossier for an audience and a project
 
-A dossier tells one group what a set of documents says that matters to their project: one
-folder per document (why it is in the file, a summary, notes per lens, key points with their
-passages, numbers, dates, who's who, terms, exhibits), a cover memo across them, and the
-same as a Word file and a spreadsheet. The shapes and checks are in `references/dossier.md`.
+A dossier tells one group what a set of documents says that matters to their project: the
+project in front (from its scope file, when there is one), one folder per document (why it is
+in the file, a summary, notes per lens, key points with their passages, numbers, dates, who's
+who, terms, exhibits), a cover memo across them, and the same as a Word file and a
+spreadsheet. The shapes and checks are in `references/dossier.md`.
 
 1. **Profiles**, once per group and project (reuse them after that). Copy
    `references/profiles/examples/*.example.yaml`, fill them in from the owner's notes, and
    record where each line came from under `basis`. Readers get work roles only. Put personal
-   matters in `never_publish` as whole phrases. Check both (expect no output):
+   matters in `never_publish` as whole phrases. The project's `aims` and `questions`, when
+   given, go into the model's prompt for `write` and `brief --draft` beside the lenses. Its
+   `scope:` may name a Markdown file (relative to the profile) shown first as "The project"
+   (step 8). Check both (expect no output):
    ```
    <python> -c "import sys; sys.path.insert(0, '<skill>/scripts'); import dossier as D; D.load_profile('<audience.yaml>', 'audience'); D.load_profile('<project.yaml>', 'project')"
    ```
@@ -670,20 +677,53 @@ same as a Word file and a spreadsheet. The shapes and checks are in `references/
    Then run the same command without `--plan`. A model reads only the first `--max-chars`
    characters (default 48,000), and the page says so.
 5. **Page numbers** for quotations from PDFs: `<python> <skill>/scripts/paginate.py --corpus <corpus>`.
-6. **The memo:** `brief.json` (the shape is in `references/dossier.md`), then
-   `dossier.py brief --corpus <corpus> --from <brief.json> --writer "<name>"`. A theme
-   whose quotation is not found is left out, and the command says so.
+6. **The memo**, one of two ways. Either a writer drafts `brief.json` (the shape is in
+   `references/dossier.md`), then:
+   ```
+   <python> <skill>/scripts/dossier.py brief --corpus <corpus> --from <brief.json> --writer "<name>"
+   ```
+   A theme whose quotation is not found is left out, and the command says so. Or the
+   configured local model drafts it from the stored entries alone (their notes and checked
+   quotations, never the documents). First the plan, which calls no model:
+   ```
+   <python> <skill>/scripts/dossier.py brief --corpus <corpus> --draft --plan
+   ```
+   Expect a `Brief: draft` table (documents with an entry, passages offered, the model). Then
+   the same without `--plan` (`--model <name>` asks another configured model):
+   ```
+   <python> -u <skill>/scripts/dossier.py brief --corpus <corpus> --draft
+   ```
+   - Expect a `Brief` table, then `Brief: drafted` (model, fix pass, removed by the checks,
+     the synthesis id), exit 0. The memo is labelled "Drafted by <agent> (<model>)" on the
+     cover and the memo page, and the synthesis records the model and `dossier-brief-draft@1`.
+   - `REMOVED …` lines are what the checks took out: a statement that cites no given passage,
+     a marker that isn't one, quotation marks around words that are not a given passage's own,
+     themes or steps over the limit. Code only removes; it never adds a word.
+   - If the draft had any problem, the model was asked once to fix it with the checker's list.
+   - `REFUSED …` lines, a `Brief: draft refused` table and exit 1 mean nothing was stored:
+     the model's working notes, talk about what it was given ("the passages provided"), no
+     theme resting on a passage, or a line over its word limit. Run it again (a model's
+     second try often passes), or write `brief.json` yourself.
+   - The owner reads the drafted memo before anything is shared, as for any memo.
 7. **Check:** `<python> <skill>/scripts/dossier.py check --corpus <corpus>`. Expect
    `corpus errors 0` and `quotations NOT found 0`.
 8. **Build into staging:**
    ```
-   <python> <skill>/scripts/dossier.py build --corpus <corpus> --out <staging>/<name> --copies
+   <python> <skill>/scripts/dossier.py build --corpus <corpus> --out <staging>/<name> --copies [--scope <scope.md>]
    ```
    `--copies` offers each PDF up to 25 MiB for download: use it only where the documents
    may be shared with these readers. The build needs `pandoc` for the Word file and
    `pdftoppm` for pictures. `--no-docx` and `--no-images` skip them.
-9. **Look at it:** the cover, two document pages, the timeline, at desktop and phone width,
-   in light and dark. Open the Word file and the spreadsheet.
+   - **The project in front:** `--scope <scope.md>` (or the project profile's `scope:`) puts
+     that Markdown file first: a "The project" page and tab after the cover, the Word file's
+     first section and the spreadsheet's first sheet. Expect `the project  <its path>` in the
+     `Dossier` table (`no scope file` without one).
+   - The file is read as plain Markdown (references/dossier.md, "The project") and shown as
+     written, with a note that it is not checked against the documents. The never-publish and
+     local-path checks cover it, so a scope that names a file on this machine refuses the
+     build: reword the scope, never the check.
+9. **Look at it:** the cover, the project page, two document pages, the timeline, at desktop
+   and phone width, in light and dark. Open the Word file and the spreadsheet.
 10. **Online, only on the owner's go**, each time. Behind a password if it carries copies of
     papers.
 
@@ -872,6 +912,10 @@ passages is annotated from its opening alone, and the plan counts them.
 | `dossier.py`: `already exists from these inputs with a different output` | A rewritten entry uses the same passages as the stored one | Add `--replace` |
 | `dossier.py build`: `a never-publish phrase would appear` | A profile's phrase is in an entry, the memo or a source quotation | Reword the writer's text, or drop that item; never delete the phrase from the profile to get past it |
 | `dossier.py build`: `a local path would be published` | A writer's text or a caption names a file on this machine | Reword it |
+| `dossier.py brief --draft`: `REFUSED bottom_line: it is the model's working notes` (or `talks about what the model was given`) | The model wrote its planning, or about its input, into the memo, even after the fix pass | Run it again; if it keeps failing, write `brief.json` and use `--from` |
+| `dossier.py brief --draft`: `REFUSED themes: none rests on a given passage` | No theme carried a marker of a passage it was shown | Check the entries have quotations (`check`), then run it again |
+| `dossier.py brief`: `brief --from needs --writer` | `--from` was given without whose words they are | Add `--writer "<name>"`; only `--draft` names its writer itself |
+| `dossier.py build`: `no scope file …` | `--scope`, or the profile's `scope:` (relative to the profile), names a file that isn't there | Fix the path; drop `scope:` from the profile if the project has none |
 | `onepager.py figures add`: `its value … is not in its quote` | The passage doesn't state the figure | Copy the span that states the value; for a chart, anchor the readings table |
 | `onepager.py`: `the same passage as figure …` | Two figures on one span | Give each figure the span that states it |
 | `onepager.py add`: `… is not a figure on this page` | The words print a number that isn't a cited figure's value or form | Cite the figure, use one of its display forms, or add a `plain_numbers` entry with a reason; never spell the number out to get past it |

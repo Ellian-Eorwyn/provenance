@@ -88,6 +88,8 @@ A script's own flag always wins over the settings.
   task "Publish an updated edition"). Without it the pages build with no starting points.
   `"revision_labels": false` there shows a revised overview or summary with no "Revised" label and no link
   to the earlier edition, for a site whose only account of how it was made is its Methods page.
+  `"status_note"` puts one line at the top of the home, Findings and Evidence map pages while ratings are still
+  coming in; `methods.py` fills `{rated}` (papers with a grade) for a Methods page written meanwhile.
 - `site/methods.template.md`: the corpus's own Methods page template. Without it,
   `methods.py` uses `methods.template.md` in this folder.
 
