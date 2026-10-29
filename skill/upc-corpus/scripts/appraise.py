@@ -7,7 +7,7 @@
                                 [--not-before HH:MM] [--stop-at HH:MM]
     python3 appraise.py statements --corpus <dir> --set pilot|all|revised [--not-before …] [--stop-at …]
     python3 appraise.py vote    --corpus <dir>
-    python3 appraise.py report  --corpus <dir> [--set pilot]
+    python3 appraise.py report  --corpus <dir>   (every rated paper so far)
     python3 appraise.py table   --corpus <dir> --out designs.md
     python3 appraise.py status  --corpus <dir>
     python3 appraise.py store   --corpus <dir> [--into <clone>] [--blind] --write   (into the corpus, UPC 1.15.0)
