@@ -90,5 +90,57 @@ class CurrentOverviewTests(unittest.TestCase):
             self.assertEqual(got_[("enabler", "Upfront cost")], "syn-d")
 
 
+class PooledOverviewTests(unittest.TestCase):
+    """--pool (2026-10-29, three 27Bs): overviews drafted on several servers at once store what one server stores."""
+
+    def run_main(self, d: str, *extra: str) -> tuple[list, list]:
+        from unittest import mock
+        ids = {f"c{i}": [f"ext-{i:06d}{j:06d}" for j in range(5)] for i in range(4)}
+        book = {"codebook_id": "cbk-1", "title": "Theory", "slug": "theory",
+                "codes": [{"code": c, "label": f"Code {c}", "definition": f"About {c}."} for c in ids]}
+        exts = {e: {"source_id": f"src-{c}", "direct_quote": "q"} for c, es in ids.items() for e in es}
+        calls, added = [], []
+
+        def chat(system, user, url="", model="", **kw):
+            calls.append((url, model))
+            theme = user.splitlines()[0].removeprefix("THEME: ")
+            cited = [e for e in ids[theme.removeprefix("Code ")]][:2]
+            prose = f"Studies of {theme} find costs matter [{cited[0]}]. Another agrees [{cited[1]}]."
+            return {"content": prose + "\n\n## Claims\n" + json.dumps([{"text": f"{theme} matters.",
+                                                                            "evidence_ids": cited}]),
+                    "seconds": 1.0, "headers": {}}
+
+        def upc(*args, stdin=None, check=True):
+            if args[:2] == ("add", "synthesis"):
+                added.append(json.loads(stdin))
+                return {"status": "ok", "synthesis_id": f"syn-{len(added)}"}
+            return {"status": "ok", "level": "L1", "errors": []}
+
+        three = {"a": "http://a/v1/chat/completions", "b": "http://b/v1/chat/completions",
+                 "c": "http://c/v1/chat/completions"}
+        with mock.patch.object(S.C, "check_compat", lambda: "upc test"), \
+                mock.patch.object(S, "load_books", lambda c: {"theory": book}), \
+                mock.patch.object(S, "load_coded", lambda c: (exts, {("cbk-1", c): es for c, es in ids.items()})), \
+                mock.patch.object(S.C, "corpus_reps", lambda c: {}), \
+                mock.patch.object(S, "evidence_lines", lambda c, i, s, x, n: [f"[{e}] passage" for e in i]), \
+                mock.patch.object(S.C, "llm_chat", chat), mock.patch.object(S.C, "upc", upc), \
+                mock.patch.object(S.llm_pool, "ENDPOINTS", three), \
+                mock.patch.object(S.llm_pool, "relayed", lambda url: False), \
+                mock.patch.object(sys, "argv", ["synthesize.py", "--corpus", d, "--codebook", "theory", *extra]), \
+                mock.patch("builtins.print"):
+            self.assertEqual(S.main(), 0)
+        return calls, added
+
+    def test_pooled_overviews_match_serial(self):
+        with tempfile.TemporaryDirectory() as d1, tempfile.TemporaryDirectory() as d3:
+            serial_calls, serial = self.run_main(d1, "--url", "http://one/v1/chat/completions")
+            pooled_calls, pooled = self.run_main(d3, "--pool")
+        self.assertEqual({u for u, _m in serial_calls}, {"http://one/v1/chat/completions"})
+        self.assertGreater(len({u for u, _m in pooled_calls}), 1, "more than one server wrote")
+        key = lambda added: sorted(json.dumps(o, sort_keys=True) for o in added)  # noqa: E731
+        self.assertEqual(len(pooled), 4)
+        self.assertEqual(key(serial), key(pooled))
+
+
 if __name__ == "__main__":
     unittest.main()

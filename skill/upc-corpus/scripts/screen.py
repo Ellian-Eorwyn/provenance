@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 """Judge each paper as a whole: how relevant it is, and what kind of study it is.
 
-    python3 screen.py --corpus <dir> --coder <project>-screen-v1 [--model task]
+    python3 screen.py --corpus <dir> --coder <project>-screen-v1 [--model task] [--url … | --pool]
 
 This is the cheap pass. It answers the questions a newcomer asks first — *which
 of these papers should I actually read, and what kind of thing is each one?* —
 against the source-level codebooks, using the small fast model rather than the
-large model that reads whole documents for quotable passages.
+large model that reads whole documents for quotable passages. `--pool` screens on
+every server in the machine's pool at once (llm_pool.py, one worker each; `task`
+goes to them as `chat`), writing the corpus one paper at a time.
 
 `--context` says what the research team is studying; it defaults to the
 corpus title. Say it as a question with its why, for example: "how households adopt
@@ -32,6 +34,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 import common as C  # noqa: E402
+import llm_pool  # noqa: E402
 
 HEAD_CHARS = 5000
 TAIL_CHARS = 2500
@@ -102,6 +105,8 @@ def main() -> int:
     ap.add_argument("--coder", default="", help="the screener's handle (default: settings coders.screen)")
     ap.add_argument("--model", default="task")
     ap.add_argument("--url", default=C.TASK_URL)
+    ap.add_argument("--pool", action="store_true",
+                    help="screen on every server in the machine's pool at once (one worker each)")
     ap.add_argument("--set", dest="cds", default=None)
     ap.add_argument("--prompt-version", default="screen.v2")
     ap.add_argument("--context", default="",
@@ -143,13 +148,14 @@ def main() -> int:
 
     title = (C.load_json(corpus / "corpus.json", {}) or {}).get("title") or corpus.name
     prompt = system_prompt(books, args.context or f"the material in the corpus titled '{title}'")
+    endpoints = dict(llm_pool.ENDPOINTS) if args.pool else {}
     C.counts_header("Screening plan", [
         ("sources", len(sources)),
         ("already screened", len(list(st_dir.glob("*.json")))),
         ("to screen now", len(todo)),
         ("schemes", ", ".join(b["slug"] for b in books)),
         ("coder", f"{args.coder} (model)"),
-        ("model", f"{args.model} at {args.url}"),
+        ("model", f"{args.model} on {', '.join(endpoints)}" if endpoints else f"{args.model} at {args.url}"),
         ("upc", spec),
     ])
     if args.plan:
@@ -162,25 +168,34 @@ def main() -> int:
 
     totals = {"papers": 0, "failed": 0, "coded": 0, "unchanged": 0, "dropped": 0}
     t0 = time.time()
-    for n, (alias, info) in enumerate(todo, 1):
+
+    def judge(alias: str, info: dict, url: str, pooled: bool = False) -> dict:
+        """The model's answer on one paper: {"parsed", "model", "seconds"}, or {"failed": why}."""
         text = Path(info["text_path"]).read_text(encoding="utf-8")
         user = (f"TITLE: {info['title']}\n\nOPENING:\n{text[:HEAD_CHARS]}\n\n"
                 f"CLOSING:\n{text[-TAIL_CHARS:]}")
+        model = llm_pool.model_for(url, args.model)
         try:
-            res = C.llm_chat(prompt, user, url=args.url, model=args.model,
-                             max_tokens=1200, schema=SCHEMA)
+            res = C.llm_chat(prompt, user, url=url, model=model, max_tokens=1200, schema=SCHEMA)
         except C.Unavailable as e:
-            print(f"  UNAVAILABLE {alias}: {e}")
-            totals["failed"] += 1
-            continue
+            if pooled:
+                raise llm_pool.Unavailable(str(e)) from None
+            return {"failed": str(e)}
+        if pooled and llm_pool.is_relayed(res.get("headers") or {}, url):
+            raise llm_pool.Relayed(url)
         parsed = C.parse_json_loose(res["content"])
         if not parsed or "judgements" not in parsed:
-            print(f"  UNAVAILABLE {alias}: no usable JSON (finish: {res.get('finish_reason')})")
-            totals["failed"] += 1
-            continue
+            return {"failed": f"no usable JSON (finish: {res.get('finish_reason')})"}
+        return {"parsed": parsed, "model": model, "seconds": res["seconds"]}
 
+    def store(alias: str, info: dict, got: dict, server: str = "") -> None:
+        """One paper's judgements into the corpus (`upc code`) and its state file. Pooled, under the pool's lock."""
+        if "failed" in got:
+            print(f"  UNAVAILABLE {alias}: {got['failed']}")
+            totals["failed"] += 1
+            return
         records, seen = [], set()
-        for jdg in parsed["judgements"]:
+        for jdg in got["parsed"]["judgements"]:
             book = by_slug.get(str(jdg.get("scheme", "")).strip())
             code = str(jdg.get("code", "")).strip()
             if not book or not any(c["code"] == code for c in book.get("codes", [])):
@@ -202,20 +217,32 @@ def main() -> int:
             })
         out = C.upc_jsonl("code", "--corpus", str(corpus), "--set", cds,
                           "--coder-kind", "model", "--tool", "upc-corpus",
-                          "--model", args.model, "--prompt-version", args.prompt_version,
+                          "--model", got["model"], "--prompt-version", args.prompt_version,
                           records=records) if records else {"tally": {}}
         tally = out.get("tally", {}) if isinstance(out, dict) else {}
         C.save_json(st_dir / f"{alias}.json",
                     {"alias": alias, "source_id": info["source_id"],
                      "judgements": len(records), "tally": tally,
-                     "seconds": round(res["seconds"], 1)})
+                     "seconds": round(got["seconds"], 1), **({"server": server} if server else {})})
         totals["papers"] += 1
         totals["coded"] += tally.get("coded", 0)
         totals["unchanged"] += tally.get("unchanged", 0)
+        n = totals["papers"] + totals["failed"]
         if n % 25 == 0 or n == len(todo):
             rate = (time.time() - t0) / n
-            print(f"  [{n}/{len(todo)}] {alias}: {len(records)} judgements "
-                  f"(~{int(rate * (len(todo) - n)) // 60}m left)")
+            print(f"  [{n}/{len(todo)}] {alias}: {len(records)} judgements{f' on {server}' if server else ''} "
+                  f"(~{int(rate * (len(todo) - n)) // 60}m left)", flush=True)
+
+    if endpoints:
+        problems, left = llm_pool.run_all(todo, lambda item, name, url: judge(*item, url, pooled=True),
+                                          lambda item, got, name, _s: store(*item, got, name), endpoints)
+        for prob in dict.fromkeys(problems):
+            print(f"  POOL {prob}", flush=True)
+        if left:
+            print(f"  {len(left)} papers left: no server could take them; run the same command again", flush=True)
+    else:
+        for alias, info in todo:
+            store(alias, info, judge(alias, info, args.url))
 
     C.upc("regen", str(corpus))
     rep = C.upc("validate", str(corpus))

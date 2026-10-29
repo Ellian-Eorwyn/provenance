@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Write an overview per code, from the passages that carry it.
 
-    python3 synthesize.py --corpus <dir> --codebook theory [--limit-codes 3]
+    python3 synthesize.py --corpus <dir> --codebook theory [--limit-codes 3] [--pool]
     python3 synthesize.py --corpus <dir> --matrix theory:analytical-dimension
     python3 synthesize.py --corpus <dir> --v2 --codes domain:heat-pump-adoption,… [--plan]
         (revise the current overviews from the rated evidence: references/criteria-v2.md)
@@ -29,6 +29,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 import common as C  # noqa: E402
+import llm_pool  # noqa: E402
 
 MARKER = re.compile(r"\[(ext-[0-9a-f]{12})\]")
 # A thinking model sometimes writes its planning into the answer itself, with no
@@ -186,7 +187,7 @@ def write_one(corpus: Path, title: str, question: str, lines: list[str], syn_typ
                            "evidence_ids": [eid]})
 
     cited = list(dict.fromkeys(MARKER.findall(prose)))
-    return {"prose": prose, "claims": claims, "cited": cited, "seconds": res["seconds"]}
+    return {"prose": prose, "claims": claims, "cited": cited, "seconds": res["seconds"], "headers": res.get("headers")}
 
 
 QUOTED = re.compile(r'"([^"\n]{10,600})"\s*(\[ext-[0-9a-f]{12}\])')
@@ -458,7 +459,7 @@ def v2_checks(prose: str, claims: list[dict], info: dict) -> list[str]:
 
 
 def chat_text(url: str, system: str, user: str, max_tokens: int, model: str, seed: int) -> tuple[str, float]:
-    """One plain-text call; a relayed answer stops this worker (the pool puts the item back)."""
+    """One plain-text call; a relayed answer rests this worker (the pool puts the item back)."""
     import urllib.error
     import urllib.request
     import appraise as A  # noqa: E402  (the pool and its relay check)
@@ -691,6 +692,9 @@ def main() -> int:
     ap.add_argument("--matrix", default="", help="slugA:slugB — a cross-tabulated overview")
     ap.add_argument("--model", default=C.DEFAULT_MODEL)
     ap.add_argument("--url", default=C.CHAT_URL)
+    ap.add_argument("--pool", action="store_true",
+                    help="write overviews on every server in the machine's pool at once (one worker each); "
+                         "the corpus is written one overview at a time (v2 always uses the pool)")
     ap.add_argument("--min-passages", type=int, default=4)
     ap.add_argument("--max-passages", type=int, default=26)
     ap.add_argument("--limit-codes", type=int, default=0)
@@ -772,7 +776,7 @@ def main() -> int:
     C.counts_header("Overviews to write", [
         ("overviews", len(jobs)),
         ("passages available", sum(len(j[2]) for j in jobs)),
-        ("model", f"{args.model} at {args.url}"),
+        ("model", f"{args.model} on {', '.join(llm_pool.ENDPOINTS)}" if args.pool else f"{args.model} at {args.url}"),
         ("minimum passages per overview", args.min_passages),
     ])
     for title, _, ids, _ in jobs:
@@ -794,14 +798,30 @@ def main() -> int:
         C.die(f"already stored: {', '.join(clash)}. --replace swaps an overview out (journaled, no label); "
               "--supersede keeps it as the previous version and labels the new one Revised")
     wrote, refused, unquoted_total, t0 = 0, 0, 0, time.time()
-    for title, definition, ids, syn_type in jobs:
-        lines = evidence_lines(corpus, ids, sources, exts, args.max_passages)
-        try:
-            got = write_one(corpus, title, definition, lines, syn_type, args.model, args.url, "")
-        except C.Unavailable as e:
-            print(f"  UNAVAILABLE {title}: {e}")
-            continue
+    endpoints = dict(llm_pool.ENDPOINTS) if args.pool else {}
+    prepared = [(title, definition, ids, syn_type, evidence_lines(corpus, ids, sources, exts, args.max_passages))
+                for title, definition, ids, syn_type in jobs]
 
+    def draft(job: tuple, url: str, pooled: bool = False) -> dict:
+        """The model's overview for one job; nothing is written. Pooled, a relayed or missing server hands it back."""
+        title, definition, _ids, syn_type, lines = job
+        try:
+            got = write_one(corpus, title, definition, lines, syn_type, llm_pool.model_for(url, args.model), url, "")
+        except C.Unavailable as e:
+            if pooled:
+                raise llm_pool.Unavailable(str(e)) from None
+            return {"unavailable": str(e)}
+        if pooled and llm_pool.is_relayed(got.get("headers") or {}, url):
+            raise llm_pool.Relayed(url)
+        return got
+
+    def store(job: tuple, got: dict, server: str = "") -> None:
+        """Check one overview and `upc add` it. Pooled, the pool runs this under its lock: one write at a time."""
+        nonlocal wrote, refused, unquoted_total
+        title, definition, _ids, syn_type, _lines = job
+        if "unavailable" in got:
+            print(f"  UNAVAILABLE {title}: {got['unavailable']}")
+            return
         prose, unquoted = unquote_misquotes(got["prose"], exts)
         got["prose"] = prose
         got["cited"] = list(dict.fromkeys(MARKER.findall(prose)))
@@ -809,7 +829,7 @@ def main() -> int:
         if why:
             refused += 1
             print(f"  REFUSED {title[:44]:44} — {why}; nothing was written")
-            continue
+            return
 
         # Rule 2.4: the prose must name every source its claims rely on. A
         # reference list is what a reader wants anyway, so build one.
@@ -858,13 +878,26 @@ def main() -> int:
                 done = f" (supersedes {old})"
             print(f"  wrote {title[:44]:46} {len(got['claims']):3} claims, "
                   f"{len(got['cited']):3} passages cited"
-                  f"{f', {unquoted} unquoted' if unquoted else ''}, {got['seconds']}s{done}")
+                  f"{f', {unquoted} unquoted' if unquoted else ''}, {got['seconds']}s{f' on {server}' if server else ''}"
+                  f"{done}", flush=True)
         else:
             refused += 1
             fails = (res or {}).get("failures", [])
             print(f"  REFUSED {title[:44]:44} — {(res or {}).get('detail', 'unknown')[:70]}")
             for f in fails[:3]:
                 print(f"      {f.get('marker')}: {f.get('reason')}")
+
+    if endpoints:
+        problems, left = llm_pool.run_all(prepared, lambda job, name, url: draft(job, url, pooled=True),
+                                          lambda job, got, name, _s: store(job, got, name), endpoints)
+        for prob in dict.fromkeys(problems):
+            print(f"  POOL {prob}", flush=True)
+        if left:
+            print(f"  {len(left)} overviews not written: no server could take them; run again with --only "
+                  + ",".join(f"<{t}>" for t, *_ in left[:3]), flush=True)
+    else:
+        for job in prepared:
+            store(job, draft(job, args.url))
 
     C.upc("regen", str(corpus))
     rep = C.upc("validate", str(corpus))

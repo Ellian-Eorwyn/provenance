@@ -3,7 +3,7 @@
 
     python3 check_codes.py plan   --corpus <dir> --set <cds-id> [--codebook slug,…]
     python3 check_codes.py run    --corpus <dir> --set <cds-id> --checker <handle> [--codebook slug,…]
-                                  [--papers N | --sample N] [--seed 1] [--limit N] [--model chat] [--url …]
+                                  [--papers N | --sample N] [--seed 1] [--limit N] [--model chat] [--url … | --pool]
     python3 check_codes.py report --corpus <dir> --set <cds-id> --checker <handle> [--out review.csv]
     python3 check_codes.py apply  --corpus <dir> --set <cds-id> --checker <handle> --approved-by <handle>
                                   (--sheet review.csv | --accept wrong,none,reason) [--dry-run]
@@ -24,6 +24,8 @@ of every coding:
 A fixed check runs beside the model on every reason (`rationale_flags`): think tags, questions,
 "wait", "let's use", talk of the code list. The answers go to
 `<corpus>/.upc/upc-corpus/check_codes/<checker>/<set>.jsonl`, one per coding, so a stopped run resumes.
+`--pool` checks papers on every server in the machine's pool at once (llm_pool.py, one worker each, the
+same model on each), writing a paper's answers when it is done; without it, one server at `--url`.
 
 `report` counts how often the codes fit, per codebook and code, and writes a review sheet: one row per
 coding the checker doubts, with an `apply` column left empty for a person. `apply` turns the rows
@@ -53,6 +55,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 import common as C  # noqa: E402
+import llm_pool  # noqa: E402
 
 PROMPT_VERSION = "check-codes.v2"
 FITS = ("yes", "partly", "no")
@@ -274,35 +277,47 @@ def cmd_run(a) -> int:
     windows = load_windows(corpus) if papers else {}
     used = sorted({c["codebook_ref"] for c in codings}, key=lambda i: books[i].get("slug", ""))
     system = system_prompt([books[i] for i in used], a.context)
+    endpoints = dict(llm_pool.ENDPOINTS) if getattr(a, "pool", False) else {}
     C.counts_header("Checking the codes", [
         ("coding set", a.set), ("checker", a.checker), ("already checked", len(done)),
         ("to check now", sum(len(v) for p in papers for v in by_paper[p].values())), ("papers", len(papers)),
-        ("model", f"{a.model} at {a.url}"),
+        ("model", f"{a.model} on {', '.join(endpoints)}" if endpoints else f"{a.model} at {a.url}"),
     ])
-    t0, n_ok, n_calls, n_missing = time.time(), 0, 0, 0
+    t0 = time.time()
+    n = collections.Counter()
+
+    def check_paper(p: str, url: str, pooled: bool = False) -> list[tuple[dict, dict]]:
+        """The model's verdicts on one paper's codings, one call per `--batch` passages: [(ids, verdicts)]."""
+        answers = []
+        plist = list(by_paper[p].items())
+        for i in range(0, len(plist), a.batch):
+            ids, batch, k = {}, [], 0
+            for xid, cs in plist[i:i + a.batch]:
+                row = []
+                for c in cs:
+                    k += 1
+                    ids[f"c{k}"] = (c, books[c["codebook_ref"]])
+                    row.append((f"c{k}", c, books[c["codebook_ref"]]))
+                batch.append((exts[xid], row))
+            try:
+                r = C.llm_chat(system, user_prompt(titles.get(p, p), batch, windows), url=url, model=a.model,
+                               max_tokens=200 + 120 * k, temperature=0.1)
+            except C.Unavailable as e:
+                if pooled:
+                    raise llm_pool.Unavailable(str(e)) from None
+                raise
+            if pooled and llm_pool.is_relayed(r.get("headers") or {}, url):
+                raise llm_pool.Relayed(url)
+            answers.append((ids, parse_checks(r["content"], ids)))
+        return answers
+
     with out.open("a", encoding="utf-8") as fh:
-        for pi, p in enumerate(papers, 1):
-            plist = list(by_paper[p].items())
-            for i in range(0, len(plist), a.batch):
-                chunk = plist[i:i + a.batch]
-                ids, batch, k = {}, [], 0
-                for xid, cs in chunk:
-                    row = []
-                    for c in cs:
-                        k += 1
-                        ids[f"c{k}"] = (c, books[c["codebook_ref"]])
-                        row.append((f"c{k}", c, books[c["codebook_ref"]]))
-                    batch.append((exts[xid], row))
-                try:
-                    r = C.llm_chat(system, user_prompt(titles.get(p, p), batch, windows), url=a.url, model=a.model,
-                                   max_tokens=200 + 120 * k, temperature=0.1)
-                except C.Unavailable as e:
-                    print(f"  stopped: {e}. Run again to resume.")
-                    return 1
-                n_calls += 1
-                got = parse_checks(r["content"], ids)
-                n_missing += k - len(got)
-                for sid, (c, b) in ids.items():
+        def record(p: str, answers: list[tuple[dict, dict]], server: str = "") -> None:
+            """One paper's verdicts into the state file. Pooled, the pool runs this under its lock."""
+            for ids, got in answers:
+                n["calls"] += 1
+                n["missing"] += len(ids) - len(got)
+                for c, b in ids.values():
                     v = got.get(c["coding_id"])
                     if not v:
                         continue
@@ -313,14 +328,34 @@ def cmd_run(a) -> int:
                               "at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())})
                     v["kind"] = kind_of(v)
                     fh.write(json.dumps(v, ensure_ascii=False) + "\n")
-                    n_ok += 1
-                fh.flush()
-            if pi % 10 == 0 or pi == len(papers):
+                    n["ok"] += 1
+            fh.flush()
+            n["papers"] += 1
+            if n["papers"] % 10 == 0 or n["papers"] == len(papers):
                 el = time.time() - t0
-                print(f"  [{pi}/{len(papers)}] {n_ok} checked, {n_calls} calls, "
-                      f"~{el / pi * (len(papers) - pi) / 60:.0f}m left", flush=True)
-    C.counts_header("Checked", [("codings checked", n_ok), ("model calls", n_calls),
-                                ("answers to ask again (malformed)", n_missing),
+                print(f"  [{n['papers']}/{len(papers)}] {n['ok']} checked, {n['calls']} calls, "
+                      f"~{el / n['papers'] * (len(papers) - n['papers']) / 60:.0f}m left"
+                      f"{f' (last on {server})' if server else ''}", flush=True)
+
+        if endpoints:
+            problems, left = llm_pool.run_all(papers, lambda p, name, url: check_paper(p, url, pooled=True),
+                                              lambda p, answers, name, _s: record(p, answers, name), endpoints)
+            for prob in dict.fromkeys(problems):
+                print(f"  POOL {prob}", flush=True)
+            if left:
+                print(f"  stopped with {len(left)} of {len(papers)} papers left: no server could take them. "
+                      "Run again to resume.")
+                return 1
+        else:
+            for p in papers:
+                try:
+                    answers = check_paper(p, a.url)
+                except C.Unavailable as e:
+                    print(f"  stopped: {e}. Run again to resume.")
+                    return 1
+                record(p, answers)
+    C.counts_header("Checked", [("codings checked", n["ok"]), ("model calls", n["calls"]),
+                                ("answers to ask again (malformed)", n["missing"]),
                                 ("minutes", round((time.time() - t0) / 60, 1))])
     print("Nothing in the corpus changed. Next: check_codes.py report.")
     return 0
@@ -433,6 +468,8 @@ def main() -> int:
         if name == "run":
             p.add_argument("--model", default="chat")
             p.add_argument("--url", default=C.TASK_URL)
+            p.add_argument("--pool", action="store_true",
+                           help="check papers on every server in the machine's pool at once (one worker each)")
             p.add_argument("--context", default="", help="one line on the project, for the checker")
             p.add_argument("--sample", type=int, default=0, help="check a random sample of N codings")
             p.add_argument("--papers", type=int, default=0, help="check every coding of N random papers")

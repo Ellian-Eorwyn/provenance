@@ -42,8 +42,8 @@ overview.
 
 Every server in the config's pool at once (llm_pool.py, one worker per server). When
 a server is someone's everyday model, full passes run overnight (--not-before /
---stop-at). A worker whose proxy relays to another server in the pool stops rather
-than doubling up on it.
+--stop-at). A worker whose proxy relays to another server in the pool puts its item
+back and rests (llm_pool.RELAY_REST) rather than doubling up on it, then asks again.
 """
 
 from __future__ import annotations

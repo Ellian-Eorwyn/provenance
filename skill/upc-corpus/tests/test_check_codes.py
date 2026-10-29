@@ -124,5 +124,58 @@ class RunTests(unittest.TestCase):
             self.assertFalse((corpus / "provenance").exists(), "a run writes nothing to the corpus")
 
 
+    def test_a_pooled_run_stores_what_a_serial_run_does(self):
+        """--pool: papers spread over the servers; the verdicts are the same rows, in any order."""
+        def corpus_of(d: str) -> Path:
+            corpus = Path(d)
+            (corpus / "codebooks").mkdir()
+            (corpus / "codebooks" / f"{BOOK['codebook_id']}.json").write_text(json.dumps(BOOK))
+            items = []
+            for i in range(1, 7):
+                src = corpus / "sources" / f"s{i}"
+                src.mkdir(parents=True)
+                (src / "source.json").write_text(json.dumps({"source_id": f"src-{i}", "title": f"Paper {i}"}))
+                (src / "extractions.jsonl").write_text(json.dumps(
+                    {"extraction_id": f"ext-00000000000{i}", "source_id": f"src-{i}", "direct_quote": f"Quote {i}."}) + "\n")
+                items.append(json.dumps(dict(CODING, coding_id=f"cod-00000000000{i}",
+                                             target={"kind": "extraction", "id": f"ext-00000000000{i}"})))
+            (corpus / "codings" / "cds-1").mkdir(parents=True)
+            (corpus / "codings" / "cds-1" / "items.jsonl").write_text("\n".join(items) + "\n")
+            return corpus
+
+        servers = []
+
+        def fake(system, user, url="", **kw):
+            servers.append(url)
+            fits = "yes" if "Quote 2." in user or "Quote 5." in user else "no"
+            return {"content": json.dumps({"checks": [{"id": "c1", "fits": fits, "better": "other-electric",
+                                                       "reason_ok": True, "why": "Because."}]}), "headers": {}}
+
+        def rows(corpus: Path) -> set:
+            got = K.done_ids(K.state_file(corpus, "chk", "cds-1"))
+            return {json.dumps({k: v for k, v in o.items() if k != "at"}, sort_keys=True) for o in got.values()}
+
+        three = {"a": "http://a/v1/chat/completions", "b": "http://b/v1/chat/completions",
+                 "c": "http://c/v1/chat/completions"}
+        real, K.C.llm_chat = K.C.llm_chat, fake
+        saved = K.llm_pool.ENDPOINTS, K.llm_pool.relayed
+        K.llm_pool.ENDPOINTS, K.llm_pool.relayed = three, lambda url: False
+        try:
+            with tempfile.TemporaryDirectory() as d1, tempfile.TemporaryDirectory() as d3:
+                c1, c3 = corpus_of(d1), corpus_of(d3)
+                base = dict(set="cds-1", codebook="", batch=10, checker="chk", model="chat", url="http://x",
+                            context="", sample=0, papers=0, seed=1, limit=0)
+                self.assertEqual(K.cmd_run(SimpleNamespace(corpus=d1, **base)), 0)
+                servers.clear()
+                self.assertEqual(K.cmd_run(SimpleNamespace(corpus=d3, pool=True, **base)), 0)
+                self.assertEqual(len(servers), 6)
+                self.assertGreater(len(set(servers)), 1, "more than one server took papers")
+                self.assertEqual(rows(c1), rows(c3))
+                self.assertEqual(len(rows(c3)), 6)
+        finally:
+            K.C.llm_chat = real
+            K.llm_pool.ENDPOINTS, K.llm_pool.relayed = saved
+
+
 if __name__ == "__main__":
     unittest.main()

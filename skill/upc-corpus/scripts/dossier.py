@@ -3,7 +3,7 @@
 
     python3 dossier.py init  --corpus <dir> --audience <a.yaml> --project <p.yaml> --title T [options]
     python3 dossier.py add   --corpus <dir> --from <entry.json> --writer "<who>" [--model M] [--replace] [--plan]
-    python3 dossier.py write --corpus <dir> [--source <id>] [--redo] [--plan]
+    python3 dossier.py write --corpus <dir> [--source <id>] [--redo] [--plan] [--pool]
     python3 dossier.py brief --corpus <dir> --from <brief.json> --writer "<who>" [--model M] [--plan]
     python3 dossier.py brief --corpus <dir> --draft [--model M] [--writer "<who>"] [--plan]
     python3 dossier.py build --corpus <dir> --out <dir> [--scope <scope.md>] [--copies] [--no-docx] [--no-xlsx] [--no-images]
@@ -64,6 +64,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 import common as C  # noqa: E402
+import llm_pool  # noqa: E402
 from corpus_view import (check_extraction, esc, extractions, find_span, generations, latest_per_source,  # noqa: E402
                          meta_content, suppressed_in, thumbnail, validate)
 from synthesize import MARKER, NOTES_LINE, NOTES_META, NOTES_START, unquote_misquotes  # noqa: E402  (the overviews' guards)
@@ -562,7 +563,7 @@ Output JSON only:
   from a single passage. A quotation not in the document is thrown away, and so is its item."""
 
 
-def cmd_write(corpus: Path, source: str | None, redo: bool, plan: bool, max_chars: int) -> int:
+def cmd_write(corpus: Path, source: str | None, redo: bool, plan: bool, max_chars: int, pool: bool = False) -> int:
     cfg = load_cfg(corpus)
     aud, proj = load_profile(cfg["audience"], "audience"), load_profile(cfg["project"], "project")
     idx = source_index(corpus)
@@ -578,30 +579,56 @@ def cmd_write(corpus: Path, source: str | None, redo: bool, plan: bool, max_char
             continue
         if redo or sid not in have:
             todo.append(info)
+    endpoints = dict(llm_pool.ENDPOINTS) if pool else {}
     C.counts_header("Write: plan", [("documents", len(seen)), ("with an entry", len(have)), ("to write now", len(todo)),
-                                    ("model", f"{C.DEFAULT_MODEL} at {C.CHAT_URL}"), ("characters read, at most", max_chars)])
+                                    ("model", f"{C.DEFAULT_MODEL} on {', '.join(endpoints)}" if endpoints
+                                     else f"{C.DEFAULT_MODEL} at {C.CHAT_URL}"),
+                                    ("characters read, at most", max_chars)])
     if plan or not todo:
         return 0
     system, schema = write_prompt(aud, proj), entry_schema(proj)
     t0, failed = time.time(), 0
-    for info in todo:
+
+    def draft(info: dict, url: str, pooled: bool = False) -> dict:
+        """The model's entry for one document (no corpus writes): {"entry"} or {"failed": why}."""
         text = Path(info["text_path"]).read_text(encoding="utf-8")
         try:
             out = C.llm_chat(system, f"Title: {info['title']}\nURL: {info.get('url') or '—'}\n\n{text[:max_chars]}",
-                             schema=schema, max_tokens=6000, temperature=0.2)
+                             url=url, schema=schema, max_tokens=6000, temperature=0.2)
         except C.Unavailable as e:
-            print(f"  UNAVAILABLE {info['title'][:60]}: {e}")
-            failed += 1
-            continue
+            if pooled:
+                raise llm_pool.Unavailable(str(e)) from None
+            return {"failed": f"  UNAVAILABLE {info['title'][:60]}: {e}"}
+        if pooled and llm_pool.is_relayed(out.get("headers") or {}, url):
+            raise llm_pool.Relayed(url)
         d = C.parse_json_loose(out["content"]) or {}
         if not d.get("summary"):
-            print(f"  NO ENTRY {info['title'][:60]}: the model's reply had no summary")
-            failed += 1
-            continue
+            return {"failed": f"  NO ENTRY {info['title'][:60]}: the model's reply had no summary"}
         d.update(source=info["source_id"], read_chars=min(len(text), max_chars), total_chars=len(text))
-        rep = add_entry(corpus, d, writer=f"{C.AGENT_NAME} ({C.DEFAULT_MODEL})", model=C.DEFAULT_MODEL,
+        return {"entry": d}
+
+    def store(info: dict, got: dict) -> None:
+        """Anchor and store one entry. Pooled, the pool runs this under its lock: one upc write at a time."""
+        nonlocal failed
+        if "failed" in got:
+            print(got["failed"])
+            failed += 1
+            return
+        rep = add_entry(corpus, got["entry"], writer=f"{C.AGENT_NAME} ({C.DEFAULT_MODEL})", model=C.DEFAULT_MODEL,
                         replace=redo, prompt="dossier-entry@1")
         print_entry_report(rep)
+
+    if endpoints:
+        problems, left = llm_pool.run_all(todo, lambda info, name, url: draft(info, url, pooled=True),
+                                          lambda info, got, name, _s: store(info, got), endpoints)
+        for prob in dict.fromkeys(problems):
+            print(f"  POOL {prob}")
+        failed += len(left)
+        if left:
+            print(f"  {len(left)} documents left: no server could take them; run write again")
+    else:
+        for info in todo:
+            store(info, draft(info, C.CHAT_URL))
     C.upc("regen", str(corpus), check=False)
     C.counts_header("Write: result", [("written", len(todo) - failed), ("failed", failed),
                                       ("seconds", round(time.time() - t0, 1))])
@@ -3098,6 +3125,9 @@ def main() -> int:
     p.add_argument("--redo", action="store_true")
     p.add_argument("--plan", action="store_true")
     p.add_argument("--max-chars", type=int, default=48000)
+    p.add_argument("--pool", action="store_true",
+                   help="write entries on every server in the machine's pool at once (one worker each); "
+                        "the corpus is written one entry at a time")
     p = sub.add_parser("build", help="the site, the Word file and the spreadsheet")
     p.add_argument("--corpus", required=True)
     p.add_argument("--out", required=True)
@@ -3135,7 +3165,7 @@ def main() -> int:
             C.upc("regen", str(corpus), check=False)
         return 0
     if a.cmd == "write":
-        return cmd_write(corpus, a.source, a.redo, a.plan, a.max_chars)
+        return cmd_write(corpus, a.source, a.redo, a.plan, a.max_chars, a.pool)
     if a.cmd == "check":
         return cmd_check(corpus)
     t0 = time.time()

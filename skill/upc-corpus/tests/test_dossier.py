@@ -416,6 +416,27 @@ class Dossier(unittest.TestCase):
         self.assertIn("differs", str(cm.exception))
 
     # -- the local model
+    def test_a_pooled_write_stores_every_entry_once(self):
+        """write --pool: entries drafted on several servers at once, stored one at a time."""
+        corpus, _ = self.fresh("write-pool")
+        servers = []
+
+        def stub(system, user, url="", **kw):
+            servers.append(url)
+            title = user.splitlines()[0].removeprefix("Title: ")
+            return {"content": json.dumps({"kind": "doc", "summary": f"About {title}.", "why_it_matters": [],
+                                           "relevance": {}, "key_points": [], "figures": [], "dates": [],
+                                           "actors": [], "terms": [], "cites": [], "questions": []}), "headers": {}}
+        three = {"a": "http://a/v1/chat/completions", "b": "http://b/v1/chat/completions"}
+        with mock.patch.object(D.C, "llm_chat", stub), mock.patch.object(D.llm_pool, "ENDPOINTS", three), \
+                mock.patch.object(D.llm_pool, "relayed", lambda url: False), mock.patch("builtins.print"):
+            rc = D.cmd_write(corpus, None, redo=True, plan=False, max_chars=1000, pool=True)
+        self.assertEqual(rc, 0)
+        self.assertEqual(len(servers), 2, "the two documents (the request note is never an entry)")
+        self.assertTrue(set(servers) <= set(three.values()))
+        summaries = sorted(e["summary"] for e in D.entries(corpus))
+        self.assertEqual(summaries, ["About Comments of a consumer advocate.", "About Retail gas in a low-carbon future."])
+
     def test_write_runs_the_same_gate_on_a_model_entry(self):
         corpus, _ = self.fresh("write")
         reply = {"kind": "comments", "author_org": "An advocate", "date": "2025", "summary": "A model's summary.",
