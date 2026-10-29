@@ -174,6 +174,20 @@ class Checks(unittest.TestCase):
         s, _ = A.tidy("word " * 50, set(), 10, dict.fromkeys(("unknown_citation", "quotation_marks", "trimmed"), 0))
         self.assertEqual(s, "word " * 9 + "word…")
 
+    def test_a_quotation_ends_on_its_own_words(self):
+        self.assertEqual(A.whole("Costs for electrification can be high. For"), "Costs for electrification can be high.")
+        self.assertEqual(A.whole("Paperwork took a day. Another said a week."), "Paperwork took a day. Another said a week.")
+        self.assertEqual(A.whole("barriers such as cost and disruption,"), "barriers such as cost and disruption")
+        self.assertEqual(A.whole("Heat pumps (in most homes) were kept"), "Heat pumps (in most homes) were kept")
+
+    def test_a_repeated_quotation_is_widened_by_a_sentence(self):
+        text = "Summary. Costs can be high. For homes it varies.\nBody text. Costs can be high. Grants helped most.\n"
+        self.assertEqual(A.by_sentence(text, "Costs can be high."), "Costs can be high. For homes it varies.")
+        twice = "Costs can be high.\nCosts can be high.\n"
+        self.assertIsNone(A.by_sentence(twice, "Costs can be high."))
+        last = "Rebates came late. Costs can be high.\nOwners waited. Costs can be high.\n"
+        self.assertEqual(A.by_sentence(last, "Costs can be high."), "Rebates came late. Costs can be high.")
+
     def test_a_note_does_not_repeat_its_code(self):
         recs, _ = A.clean({"fields": {"setting": {"codes": ["multifamily"], "note": "Multifamily buildings; six in one city."}}},
                           A_FIELDS, BOOKS, set())

@@ -29,7 +29,9 @@ The model proposes, the tool disposes:
   * quotation marks in a note or a text are removed: the one quotation a field
     carries is its `quote`, kept only when `upc anchor` finds it in the paper (into
     a hidden set, so it is checked but not listed as a passage; a quote that is a
-    coded passage resolves to that passage);
+    coded passage resolves to that passage); a few words after a quote's last sentence
+    end, or a trailing comma, are dropped first, so it ends on whole words of its own,
+    and a quote the paper prints twice is widened by a whole sentence to occur once;
   * words over `max_words` are cut, at a sentence end when one fits; a first sentence
     up to half again the limit is kept whole rather than cut mid-phrase.
 
@@ -263,13 +265,41 @@ def clean(raw: dict | None, fields: list[dict], books: dict[str, dict], ids: set
         extra = [x for x in dict.fromkeys(listed) if x in ids and x not in cites]
         rec["note" if f["kind"] == "code" else "text"] = " ".join([body, *(f"[{x}]" for x in extra)]).strip()
         rec["cites"] = cites + extra
-        q = re.sub(r"\s+", " ", EXT_MARK.sub("", str(a.get("quote") or ""))).strip().strip('"“” ')
+        q = whole(re.sub(r"\s+", " ", EXT_MARK.sub("", str(a.get("quote") or ""))).strip().strip('"“” '))
         if q and (len(q) < 12 or len(q) > 400 or "..." in q or "…" in q):
             drops["quote_unusable"] += 1
         elif q:
             rec["proposed_quote"] = q
         out[f["key"]] = rec
     return out, drops
+
+
+def whole(q: str) -> str:
+    """A quotation ending on whole words of its own: a few words after its last sentence end
+    ("… was high. For") and a trailing comma are dropped. What is left is still the paper's own
+    words, checked like any quote."""
+    m = re.search(r"([.!?][\"”’)]?)\s+(\S+(?:\s+\S+){0,3})$", q)
+    if m and not re.search(r"[.!?][\"”’)]?$", m.group(2)):
+        q = q[:m.end(1)]
+    return q.rstrip(",;–— ")
+
+
+def by_sentence(text: str, q: str, limit: int = 300) -> str | None:
+    """A quote the paper prints more than once (a summary repeats the body), widened by one
+    whole sentence of its own line, the next or else the one before, so it occurs once.
+    Widening by words would end it on a fragment ("… can be high. For"). None if neither does."""
+    position = text.find(q)
+    while position >= 0:
+        end = position + len(q)
+        line_start = text.rfind("\n", 0, position) + 1
+        nxt = re.compile(r"[ \t]+[^\n]{0,%d}?[.!?][\"”’)]?(?=\s|$)" % limit).match(text, end)
+        before = [m.end() for m in re.finditer(r"[.!?][\"”’)]?[ \t]+", text[line_start:position - 1])]
+        start = line_start + (before[-1] if before else 0)
+        for wider in ([text[position:nxt.end()]] if nxt else []) + ([text[start:end]] if position - start <= limit and start < position else []):
+            if C.occurrences(text, wider) == 1:
+                return wider
+        position = text.find(q, position + 1)
+    return None
 
 
 def anchor_quotes(corpus: Path, info: dict, text: str, recs: dict, set_id: str, model: str, drops: dict) -> None:
@@ -279,7 +309,8 @@ def anchor_quotes(corpus: Path, info: dict, text: str, recs: dict, set_id: str, 
     want = [(k, r.pop("proposed_quote")) for k, r in recs.items() if r.get("proposed_quote")]
     if not want:
         return
-    cands = [{"quote": (C.widen_to_unique(text, q) or q) if C.occurrences(text, q) > 1 else q} for _, q in want]
+    cands = [{"quote": q if C.occurrences(text, q) == 1 else (by_sentence(text, q) or C.widen_to_unique(text, q) or q)}
+             for _, q in want]
     base = ["anchor", "--corpus", str(corpus), "--rep", info["text_rep"], "--source", info["source_id"],
             "--hidden", "--set", set_id, "--type", "passage", "--tool", TOOL["tool"], "--model", model,
             "--prompt-version", PROMPT_VERSION]
