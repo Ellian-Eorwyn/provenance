@@ -2,7 +2,7 @@
 """One row per source: its citation, links, codes and annotation, as a spreadsheet and a Word file.
 
     python3 sources_table.py --corpus <dir> --site-base https://example.org/library \\
-        [--front front.md] [--coders scheme=coder,…] [--annotator <coder>] [--title T] \\
+        [--front front.md] [--back back.md] [--coders scheme=coder,…] [--annotator <coder>] [--title T] \\
         --xlsx <out.xlsx> --docx <out.docx>
 
 Each row (and each Word entry) has:
@@ -12,14 +12,16 @@ Each row (and each Word entry) has:
     source's folder name, as the site names its pages;
   * the codes coded on the paper as a whole, one column per scheme. `--coders
     scheme=coder` picks whose codes a scheme shows; a scheme left out shows each of
-    its coders in a column of its own. The evidence group (a grade, a citation tier)
-    comes last;
+    its coders in a column of its own. `--schemes` keeps only the schemes it names
+    (a codebook used for passages and papers alike may repeat an annotation's field).
+    The evidence group (a grade, a citation tier) comes last;
   * the newest annotation (`annotate.py`; `--annotator` picks a coder), field by
     field, with each field's checked quotation. The Word file links every passage an
     annotation cites to that passage on the site.
 
 The Word file is the front matter (`--front`, Markdown: methods, search strings, flow
-diagram, appendices), then one compact entry per source, made with pandoc and the
+diagram), then one compact entry per source, then the back matter (`--back`, Markdown:
+appendices such as the records not retrieved), made with pandoc and the
 dossier's reference document. Before anything is kept, the outputs are read back:
 every quotation must equal its stored passage and be found at that passage's place in
 the paper, and must appear in the Word file word for word; no local path may appear
@@ -31,6 +33,7 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import json
+import os
 import re
 import subprocess
 import sys
@@ -45,7 +48,15 @@ import corpus_view as V  # noqa: E402
 import dossier as D  # noqa: E402
 
 EXT_MARK = re.compile(r"\s?\[(ext-[0-9a-f]{12})\]")
+# An entry is a reference card, not a page of prose: smaller type and tighter spacing than a
+# dossier's, so an entry with six fields takes about a third of a page.
+LIST_STYLES = {
+    "BodyText": D._style("BodyText", "Body Text", "Normal",
+                         '<w:spacing w:before="0" w:after="50" w:line="250" w:lineRule="auto"/>', D._sz(20)),
+    "Heading2": D._heading(2, 22, 220, "3A2F1E"),
+}
 URI_SAFE = "-_.!~*'()"  # what encodeURIComponent leaves alone, as the site names its pages
+SIGNED = re.compile(r"(?i)[?&](x-amz-[a-z-]+|signature|expires|token|sig|awsaccesskeyid)=")
 ANNOTATION = "x-annotation"
 
 
@@ -62,7 +73,9 @@ def citation(s: dict) -> dict:
     venue = bib.get("container_title") or bib.get("container-title") or bib.get("publisher") or ""
     doi = bib.get("doi") or next((i["value"] for i in s.get("identifiers") or [] if i.get("scheme") == "doi"), "")
     ret = s.get("retrieval") or {}
-    url = f"https://doi.org/{doi}" if doi else bib.get("url") or ret.get("final_url") or ret.get("original_url") or ""
+    # A signed download address (an S3 or CDN redirect) expires and carries a token: never print one.
+    url = f"https://doi.org/{doi}" if doi else next(
+        (u for u in (bib.get("url"), ret.get("final_url"), ret.get("original_url")) if u and not SIGNED.search(u)), "")
     text = " ".join(x for x in (f"{authors} ({year or 'n.d.'})." if authors else f"({year or 'n.d.'}).",
                                 title.strip() + ("" if title.strip()[-1:] in ".?!" else "."),
                                 f"{venue}." if venue else "") if x)
@@ -86,15 +99,19 @@ def source_codes(corpus: Path, books_by_id: dict) -> dict[str, dict[tuple[str, s
     return out
 
 
-def scheme_columns(codes: dict, books: dict, chosen: dict[str, str]) -> list[tuple[str, str, str]]:
-    """(slug, coder, header) per column: the named coder, else every coder of the scheme."""
+def scheme_columns(codes: dict, books: dict, chosen: dict[str, str],
+                   only: list[str] | None = None) -> list[tuple[str, str, str]]:
+    """(slug, coder, header) per column: the named coder, else every coder of the scheme;
+    with `only`, just those schemes."""
     by_slug: dict[str, set] = {}
     for per in codes.values():
         for slug, coder in per:
-            by_slug.setdefault(slug, set()).add(coder)
-    for slug in chosen:
-        if slug not in books:
-            C.die(f"--coders: {slug} is not a codebook here ({', '.join(sorted(books))})")
+            if not only or slug in only:
+                by_slug.setdefault(slug, set()).add(coder)
+    for flag, slugs in (("--coders", chosen), ("--schemes", only or [])):
+        for slug in slugs:
+            if slug not in books:
+                C.die(f"{flag}: {slug} is not a codebook here ({', '.join(sorted(books))})")
     evidence = lambda s: ((books[s].get("ext") or {}).get("upc-site") or {}).get("group") == "evidence"  # noqa: E731
     cols = []
     for slug in sorted(by_slug, key=lambda s: (evidence(s), books[s].get("title") or s)):
@@ -124,7 +141,7 @@ def build_rows(corpus: Path, args, books: dict, exts: dict) -> tuple[list[dict],
     srcs = V.sources(corpus)
     codes = source_codes(corpus, {b["codebook_id"]: b for b in books.values()})
     chosen = dict((k.strip(), v.strip()) for k, v in (x.split("=", 1) for x in args.coders.split(",") if "=" in x))
-    cols = scheme_columns(codes, books, chosen)
+    cols = scheme_columns(codes, books, chosen, [s.strip() for s in args.schemes.split(",") if s.strip()])
     anns = annotations(corpus, args.annotator)
     fields: list[dict] = []
     for g in anns.values():
@@ -209,8 +226,7 @@ def esc(s: str) -> str:
 
 def entry_markdown(n: int, r: dict, fields: list[dict]) -> list[str]:
     L = [f"## {n}\\. {esc(r['text'])}", ""]
-    links = " · ".join(x for x in (f"*{esc(r['venue'])}*" if r["venue"] else "", f"<{r['url']}>" if r["url"] else "",
-                                   f"[On the site]({r['site']})") if x)
+    links = " · ".join(x for x in (f"<{r['url']}>" if r["url"] else "", f"[On the site]({r['site']})") if x)
     L += [links, ""]
     codes = " · ".join(f"*{esc(h)}:* {esc('; '.join(v))}" for h, v in r["codes"] if v)
     if codes:
@@ -234,7 +250,7 @@ def entry_markdown(n: int, r: dict, fields: list[dict]) -> list[str]:
     return L + [f"*{esc('Annotation by ' + r['by'])}.*", ""]
 
 
-def docx_markdown(rows: list[dict], fields: list[dict], front: str, title: str, heading: str) -> str:
+def docx_markdown(rows: list[dict], fields: list[dict], front: str, title: str, heading: str, back: str = "") -> str:
     L = [] if front.lstrip().startswith("---") else ["---", f"title: {json.dumps(esc(title))}", f"date: {dt.date.today():%-d %B %Y}",
                                                     "---", ""]
     L += [front.rstrip(), ""] if front.strip() else []
@@ -245,6 +261,7 @@ def docx_markdown(rows: list[dict], fields: list[dict], front: str, title: str, 
         + "*", ""]
     for n, r in enumerate(rows, 1):
         L += entry_markdown(n, r, fields)
+    L += ["", back.strip(), ""] if back.strip() else []
     return "\n".join(L)
 
 
@@ -257,8 +274,10 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--corpus", required=True)
     ap.add_argument("--site-base", required=True, help="where the folder site is published, e.g. https://example.org/library")
-    ap.add_argument("--front", default="", help="Markdown placed before the entries (methods, search strings, appendices)")
+    ap.add_argument("--front", default="", help="Markdown placed before the entries (methods, search strings, flow diagram)")
+    ap.add_argument("--back", default="", help="Markdown placed after the entries (appendices)")
     ap.add_argument("--coders", default="", help="scheme=coder,… : whose codes each scheme shows")
+    ap.add_argument("--schemes", default="", help="slug,… : only these paper-level schemes get columns (default: all)")
     ap.add_argument("--annotator", default="", help="whose annotations (default: the newest of any coder)")
     ap.add_argument("--title", default="", help="the Word file's title (default: the corpus title)")
     ap.add_argument("--heading", default="Annotated list", help="the heading above the entries")
@@ -274,17 +293,19 @@ def main(argv: list[str] | None = None) -> int:
     rows, cols, fields = build_rows(corpus, args, books, exts)
     title = args.title or (C.load_json(corpus / "corpus.json", {}) or {}).get("title") or corpus.name
     front = Path(args.front).expanduser().read_text(encoding="utf-8") if args.front else ""
+    back = Path(args.back).expanduser().read_text(encoding="utf-8") if args.back else ""
 
     xlsx.parent.mkdir(parents=True, exist_ok=True)
     docx.parent.mkdir(parents=True, exist_ok=True)
     sheet_text = write_xlsx(rows, cols, fields, xlsx, title)
     with tempfile.TemporaryDirectory() as tmp:
         src = Path(tmp) / "list.md"
-        src.write_text(docx_markdown(rows, fields, front, title, args.heading), encoding="utf-8")
-        # Pictures in the front matter (a flow diagram) are found beside it.
-        where = str(Path(args.front).expanduser().resolve().parent) if args.front else str(corpus)
+        src.write_text(docx_markdown(rows, fields, front, title, args.heading, back), encoding="utf-8")
+        # Pictures in the front and back matter (a flow diagram) are found beside them.
+        where = os.pathsep.join(dict.fromkeys(str(Path(p).expanduser().resolve().parent)
+                                              for p in (args.front, args.back) if p)) or str(corpus)
         p = subprocess.run(["pandoc", str(src), "-f", "markdown-smart", "-t", "docx", "--reference-doc",
-                            str(D.reference_docx(Path(tmp) / "reference.docx")), "--resource-path", where,
+                            str(D.reference_docx(Path(tmp) / "reference.docx", LIST_STYLES)), "--resource-path", where,
                             "-o", str(docx)], capture_output=True, text=True, timeout=600)
     if p.returncode != 0:
         C.die(f"pandoc failed: {p.stderr.strip()[:400]}")

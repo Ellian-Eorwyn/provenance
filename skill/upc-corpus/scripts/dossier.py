@@ -2210,8 +2210,10 @@ DOCX_DEFAULTS = ("<w:docDefaults><w:rPrDefault><w:rPr>" + FONT + _sz(22) +
                  '<w:spacing w:after="120" w:line="276" w:lineRule="auto"/></w:pPr></w:pPrDefault></w:docDefaults>')
 
 
-def reference_docx(dest: Path) -> Path:
-    """pandoc's own reference document, restyled (Calibri, warm headings, ruled block quotes)."""
+def reference_docx(dest: Path, styles: dict | None = None) -> Path:
+    """pandoc's own reference document, restyled (Calibri, warm headings, ruled block quotes);
+    `styles` replaces some of DOCX_STYLES by style id."""
+    styles = {**DOCX_STYLES, **(styles or {})}
     default = dest.with_name("default-reference.docx")
     subprocess.run(["pandoc", "-o", str(default), "--print-default-data-file", "reference.docx"],
                    check=True, capture_output=True, timeout=60)
@@ -2220,7 +2222,7 @@ def reference_docx(dest: Path) -> Path:
             data = zin.read(item.filename)
             if item.filename == "word/styles.xml":
                 xml = re.sub(r"(?s)<w:docDefaults>.*?</w:docDefaults>", DOCX_DEFAULTS, data.decode("utf-8"), count=1)
-                for sid, block in DOCX_STYLES.items():
+                for sid, block in styles.items():
                     xml, n = re.subn(r'(?s)<w:style [^>]*w:styleId="%s".*?</w:style>' % sid, block, xml)
                     if n == 0:
                         xml = xml.replace("</w:styles>", block + "</w:styles>")

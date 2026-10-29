@@ -791,19 +791,23 @@ passages is annotated from its opening alone, and the plan counts them.
    some); a paper with the same inputs keeps one annotation.
 5. **Page numbers and sections**, so the Word file gives them (`p. 12`, or `§3.2 ¶4` for a
    full-text XML): `<python> <skill>/scripts/paginate.py --corpus <corpus>`.
-6. **The front matter:** `<recipe folder>/front.md`, in Markdown (methods, search strings,
-   a flow diagram as a picture beside the file, appendices). It may start with its own
-   `---` title block; otherwise `--title` (default: the corpus title) is used.
+6. **The front and back matter:** `<recipe folder>/front.md`, in Markdown (methods, search
+   strings, a flow diagram as a picture beside the file). It may start with its own `---`
+   title block; otherwise `--title` (default: the corpus title) is used. Appendices that
+   belong after the entries (records not retrieved, say) go in `<recipe folder>/back.md`.
 7. **The list:**
    ```
-   <python> -u <skill>/scripts/sources_table.py --corpus <corpus> --site-base <the site's URL> --front <recipe folder>/front.md --coders <scheme>=<coder>,… --xlsx <staging>/<Name>.xlsx --docx <staging>/<Name>.docx
+   <python> -u <skill>/scripts/sources_table.py --corpus <corpus> --site-base <the site's URL> --front <recipe folder>/front.md --back <recipe folder>/back.md --coders <scheme>=<coder>,… --schemes <scheme>,… --xlsx <staging>/<Name>.xlsx --docx <staging>/<Name>.docx
    ```
    `--site-base` is where the folder site will be hosted: each row links
    `<site-base>/sources/<slug>.html`, and the Word file links each cited passage there.
    `--coders` says whose codes each paper-level scheme shows; a scheme left out gets a column
-   per coder, and the evidence schemes (grade, citation tier) come last. `--annotator
-   <coder>` picks whose annotations when there are several. Expect a `Sources table` table
-   with `local paths none`.
+   per coder, and the evidence schemes (grade, citation tier) come last. `--schemes` keeps
+   only the paper-level schemes it names: a codebook used for passages and papers alike
+   would otherwise repeat an annotation's field. `--annotator <coder>` picks whose
+   annotations when there are several. Expect a `Sources table` table with `local paths
+   none`. A signed download address (an expiring S3 or CDN link) is never printed; the
+   source's original address is.
    - If it prints `Refusing to keep the list`, nothing was kept. Fix what it names (Known
      failures) and run it again.
 8. **Look at both:** the Word file (an entry is about a third of a page) and the

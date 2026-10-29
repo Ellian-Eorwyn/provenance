@@ -42,6 +42,10 @@ class Citations(unittest.TestCase):
                 "retrieval": {"original_url": "https://example.org/t"}}
         self.assertEqual((T.citation(many)["authors"], T.citation(many)["url"], T.citation(many)["year"]),
                          ("A0, et al.", "https://example.org/t", ""))
+        signed = {"source_id": "src-3", "title": "A report", "retrieval": {
+            "original_url": "https://example.org/documents/12/report.pdf",
+            "final_url": "https://bucket.s3.amazonaws.com/report.pdf?AWSAccessKeyId=AKIA0&Signature=x&x-amz-security-token=y"}}
+        self.assertEqual(T.citation(signed)["url"], "https://example.org/documents/12/report.pdf")
 
     def test_scheme_columns_put_evidence_last_and_split_coders(self):
         books = {"grade": {"slug": "grade", "title": "Evidence grade", "ext": {"upc-site": {"group": "evidence"}}},
@@ -50,6 +54,7 @@ class Citations(unittest.TestCase):
         self.assertEqual([h for _, _, h in T.scheme_columns(codes, books, {})],
                          ["Setting (a)", "Setting (b)", "Evidence grade"])
         self.assertEqual([h for _, _, h in T.scheme_columns(codes, books, {"setting": "b"})], ["Setting", "Evidence grade"])
+        self.assertEqual([h for _, _, h in T.scheme_columns(codes, books, {"setting": "b"}, ["setting"])], ["Setting"])
 
 
 @unittest.skipUnless(TA.upc_ok() and shutil.which("pandoc") and openpyxl, "needs the upc CLI, pandoc and openpyxl")
@@ -111,6 +116,19 @@ class Table(unittest.TestCase):
 
     def test_a_local_path_keeps_nothing(self):
         code, xlsx, docx = self.build(FRONT + "\nSee /Users/someone/notes/screening.xlsx for the sheet.\n")
+        self.assertEqual(code, 1)
+        self.assertFalse(xlsx.exists() or docx.exists())
+
+    def test_the_back_matter_follows_the_entries(self):
+        back = Path(tempfile.mkdtemp(dir=self.tmp)) / "back.md"
+        back.write_text("# Appendix: not retrieved\n\nA report behind a paywall.\n")
+        code, _, docx = self.build(FRONT, "--back", str(back))
+        self.assertEqual(code, 0)
+        words = T.D.docx_text(docx)
+        self.assertLess(words.index("Retrofits in one county"), words.index("Appendix: not retrieved"))
+        self.assertLess(words.index("A survey of apartment owners"), words.index("A report behind a paywall."))
+        back.write_text("# Appendix\n\nThe list is in /Users/someone/notes/missing.csv.\n")
+        code, xlsx, docx = self.build(FRONT, "--back", str(back))
         self.assertEqual(code, 1)
         self.assertFalse(xlsx.exists() or docx.exists())
 
