@@ -40,9 +40,11 @@ NOTES_START = re.compile(r"\s*(the user\b|i need to\b|i must\b|i should\b|i'll\b
 NOTES_LINE = re.compile(r"^\s*(?:now )?let me (?:draft|write|organi[sz]e|structure|plan|check|re-?read|count|verify|"
                         r"go through|look)\b", re.I | re.M)
 # ...or talks about its own input, which means nothing to a reader: "The passages before me
-# describe…", "…is not reconciled in the passages provided" (2 of FORGE 2.2's 65; none of 2.1's).
+# describe…", "…is not reconciled in the passages provided" (2 of FORGE 2.2's 65; none of 2.1's),
+# "…in the passages available here", "Across the sampled passages" (2 more).
 NOTES_META = re.compile(r"\b(?:the|these) passages (?:before me|provided|given|supplied|i (?:was|have been) given|"
-                        r"shown to me|you (?:gave|provided))\b|\bas an ai\b|\bword count\b|\b(?:my|this) draft\b", re.I)
+                        r"shown to me|you (?:gave|provided)|available (?:here|to me))\b|\bsampled passages\b|"
+                        r"\bas an ai\b|\bword count\b|\b(?:my|this) draft\b", re.I)
 
 
 def not_an_overview(got: dict) -> str:

@@ -44,6 +44,15 @@ class NotAnOverviewTests(unittest.TestCase):
             "The passages before me describe European heat decarbonization [ext-0123456789ab].")))
         self.assertIn("passages it was given", S.not_an_overview(got(
             "Costs differ, and the range is not reconciled in the passages provided [ext-0123456789ab].")))
+        self.assertIn("passages it was given", S.not_an_overview(got(
+            "These positions are not reconciled in the passages available here [ext-0123456789ab].")))
+        self.assertIn("passages it was given", S.not_an_overview(got(
+            "Across the sampled passages, direct evidence is absent [ext-0123456789ab].")))
+
+    def test_saying_no_passage_reports_passes(self):
+        # The site is built of passages, so "no passage reports…" tells a reader something.
+        self.assertEqual(S.not_an_overview(got(
+            "No passage reports how capacity decays over time [ext-0123456789ab].")), "")
 
     def test_a_real_overview_passes(self):
         prose = ("Electrical capacity is among the most cited barriers [ext-0123456789ab]. Several "
