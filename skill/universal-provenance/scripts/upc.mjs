@@ -32,6 +32,7 @@ import { execFileSync } from "node:child_process";
 import * as U from "./upc_common.mjs";
 import { isTextualMedia as U_TEXTUAL } from "./upc_common.mjs";
 import { writeSite, writeSingleFile } from "./site.mjs";
+import { checkStructure } from "./reading.mjs";
 import { writeRoCrate, buildAnnotationTargets } from "./ro-crate.mjs";
 import { buildProvGraph } from "./prov.mjs";
 import { writeVault } from "./obsidian.mjs";
@@ -280,7 +281,7 @@ function idFormatOk(id) {
   return re ? re.test(id) : false;
 }
 const TEXTUAL = U_TEXTUAL; // shared predicate (upc_common), kept as a local alias
-const { TIMINGS_MEDIA_TYPE, timestampProblem } = U;
+const { TIMINGS_MEDIA_TYPE, STRUCTURE_MEDIA_TYPE, timestampProblem } = U;
 const BAND = { high: [0.67, 1.0], medium: [0.34, 0.66], low: [0.0, 0.33] };
 
 export function validateCorpus(root, opts = {}) {
@@ -928,6 +929,29 @@ export function validateCorpus(root, opts = {}) {
         const bad = timestampProblem({ start: s.start, end: s.end }, duration);
         if (bad && shown++ < 3) warn("timestamp_out_of_bounds", id, `segment ${bad}`);
       }
+    }
+  }
+
+  // --- structure maps (1.16.0): what each block of a reading copy is (spec/02) ---
+  // Advisory: a map is navigation and layout, never evidence. One that does not fit its
+  // text would put a heading or a paragraph number in the wrong place, so a reader's view
+  // does not use it, and this says why.
+  {
+    for (const r of loaded.representations) {
+      if (r.obj.media_type !== STRUCTURE_MEDIA_TYPE || !r.contained || !fs.existsSync(r.abs)) continue;
+      const id = r.obj.representation_id;
+      let doc;
+      try { doc = JSON.parse(fs.readFileSync(r.abs, "utf8")); } catch { warn("structure_unreadable", id, "structure map is not JSON"); continue; }
+      if (!doc || doc.upc_structure !== 1 || !Array.isArray(doc.blocks)) { warn("structure_unreadable", id, "not a structure map (upc_structure: 1, blocks[])"); continue; }
+      const parent = r.obj.parent_representation_ref ? model.repById.get(r.obj.parent_representation_ref) : null;
+      if (!parent || !parent.contained || !fs.existsSync(parent.abs) || !TEXTUAL(parent.obj.media_type)) {
+        warn("structure_unreadable", id, "its parent is not a textual representation of this corpus");
+        continue;
+      }
+      const rec = U.getRepFile(parent.abs);
+      if (!rec.utf8ok) continue;
+      const got = checkStructure(doc, rec.cps);
+      if (!got.ok) warn("structure_char_mismatch", id, `does not fit ${parent.obj.representation_id}: ${got.problem}`);
     }
   }
 

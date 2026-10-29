@@ -146,6 +146,34 @@ have drifted. It is a recovery aid and a projection input, **never** a
 verification path: a `quote_hint` is not checked by any gate, and matching one
 does not make a quotation verified. Only hop B does that.
 
+### A section and its paragraph (1.16.0)
+
+A text with no pages (a full text converted from publisher XML, §02 "Structure") is
+cited the way its own reader would find a passage: by section and paragraph. That
+is a `section` secondary locator whose `value` is the section as the source names it
+— its number and title, `"3.2 Research directions"` — with these advisory members
+beside `value`:
+
+| Member | Meaning |
+|---|---|
+| `label` | The section's number as printed (`"3.2"`, `"A.1"`), when it has one. |
+| `title` | The section's title (`"Research directions"`). |
+| `paragraph` | Which paragraph of the section the passage starts in, from 1. |
+| `block` | The kind of block it starts in (§02 `kind`): `paragraph`, `caption`, `row`, `note`, … |
+| `item` | A table's, figure's, footnote's or reference's own label (`"Table 2"`, `"Fig. 1"`, `"3"`). |
+
+A paragraph is counted within its own section, never across a subsection: §3 ¶2
+and §3.1 ¶2 are different paragraphs. The locator names where the passage
+**starts**, as a page locator does; a passage that runs on into the next paragraph
+keeps its first. Like every secondary locator it is navigation, outside the `ext-`
+recipe (§06) and never gated, so working it out later (or again, from a better map)
+re-mints nothing.
+
+Shown to a reader, it is cited compactly (§09): `§3.2 ¶4` when the label is a
+number; the title when the section has none (`Abstract ¶1`, `Acknowledgements ¶1`);
+the item's own label for a caption, table row or table note (`Table 2`, `Fig. 1`);
+`n. 3` for a footnote.
+
 ### `char_range`, defined normatively
 
 `char_range` counts **Unicode codepoints** (Unicode scalar values), **0-based**,

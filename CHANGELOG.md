@@ -5,10 +5,11 @@ Versioning is semantic (§00 Versioning policy).
 
 ## Unreleased — 1.16.0: interviews and recordings
 
-**Minor release: recordings you can hear, and interviews coded by their questions.** Three
-advisory rules are added (spec/08); no closed vocabulary, schema or id recipe changes, so a
-1.15 corpus is a valid 1.16 corpus and renders as before. A transcript's timings use the
-existing `metadata` role with their own media type.
+**Minor release: recordings you can hear, interviews coded by their questions, and full
+texts from publisher XML read and cited as papers.** Five advisory rules are added
+(spec/08); no closed vocabulary, schema or id recipe changes, so a 1.15 corpus is a valid
+1.16 corpus and renders as before. A transcript's timings and a reading copy's structure
+map use the existing `metadata` role, each with its own media type.
 
 ### Added
 
@@ -18,7 +19,37 @@ existing `metadata` role with their own media type.
   page numbers). Elsevier's Article Retrieval API serves an entitled request the whole article
   only as XML; its PDF is the first page. `add_acquired.py` takes kind `xml` and `ingest.py` an
   `.xml` manifest row: the XML is the `original`, its reading copy the `text`, and a
-  metadata-only response is refused. No standard change.
+  metadata-only response is refused.
+- **Structure maps** (spec/02 "Structure"): `application/vnd.upc.structure+json`, a
+  `metadata` representation beside a reading copy saying what each block is (title, heading,
+  paragraph, caption, table row and its cells, table note, list item, formula, box, footnote,
+  reference), the section it is in (by the source's own nesting) and its paragraph number.
+  Advisory: never gated, never in an id. `upc validate` reports `structure_unreadable` and
+  `structure_char_mismatch` (advisory), and readers show a map that doesn't fit as plain text.
+- **A section and its paragraph** (spec/03): a `section` secondary locator may carry
+  `label`, `title`, `paragraph`, `block` and `item` beside its `value`, and is cited
+  `§3.2 ¶4`, `Abstract ¶1`, `Table 2` or `n. 3` (spec/09). One rule, one shared case table
+  (`tests/section-cites.json`) for the Python and JavaScript formatters.
+- **xmltext 1.2.0** (upc-corpus toolkit) writes the same reading copy as 1.1.0, byte for byte
+  (a frozen copy of 1.1.0 is the test oracle; all 417 FORGE 2.2 XMLs were compared), and from
+  the same pass its structure map (`--blocks`). Elsevier's acknowledgement and
+  competing-interest titles, which 1.1.0 leaves out of the text, are named in the map.
+- **`paginate.py` places full-text XML passages** (the step after coding, as for PDFs): for a
+  reading copy converted from XML it adds the structure map (only when re-converting gives
+  the stored bytes exactly; otherwise the source is named and left unmapped) and a `section`
+  locator on each passage. Rawtext and metadata-only conversions get none.
+- **The reader's site and `index.html` show a full-text XML as the paper it is** (spec/09):
+  headings, tables, captions and notes set as such, ¶ numbers in the margin (outside the
+  text), sections without a heading in the text named beside it, the passages highlighted;
+  wording that names the publisher's XML with links to the XML (copied into the bundle) and
+  the DOI; passage cards, the browse view and its CSV cite `§ ¶`; the browser's chip opens
+  the text at the passage. One renderer (`reading.mjs`) serves the folder site, the single
+  file and `index.html`. The badge stays plain **verified**: XML to text is text to text.
+- **Cites by section in the toolkit's outputs**: the Annotated List (`sources_table.py`),
+  dossiers (`dossier.py`: quote lines, copy buttons, Word, the spreadsheet's page column),
+  one-pagers' figures notes and `publish.py`'s count of placed passages read a section
+  locator where there is no page.
+
 - **Manifest types and project ids** (upc-corpus toolkit): `ingest.py` reads a CSL item type
   and a publisher when the column map names `type` and `publisher` (reports stop being filed
   as journal articles); an `add_acquired.py` item may carry `aliases`, so a web page keeps the
@@ -60,6 +91,18 @@ existing `metadata` role with their own media type.
     referrals marked.
   - `interview_drop.py`: a drop folder watched (a cron job): each settled interview folder
     transcribed, coded, the site rebuilt and published, one message per interview.
+
+### Fixed
+
+- **The site showed an XML paper's raw XML** as its reading copy, with the highlights at
+  offsets that belong to the converted text. It now shows the copy the passages are anchored
+  in, and finds a passage's span only in that copy.
+- **"Extracted from the PDF"** was said of every reading copy; it is now said only of one
+  extracted from a PDF.
+- **Literal author names** (`{"literal": "Soeder, Daniel J."}`, as `add_acquired.py` writes
+  them) were read as "undefined" in the site's titles and left out of its byline.
+- **`index.html` highlights in a dark system theme**: with no theme chosen, a passage's mark
+  was pale text on pale yellow; highlight colours are now theme tokens.
 
 ## Unreleased — toolkit 1.2.0: one-pagers
 

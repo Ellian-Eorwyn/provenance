@@ -57,7 +57,7 @@ def pages_present(corpus: Path) -> tuple[int, int]:
             if not o.get("direct_quote"):
                 continue
             total += 1
-            if any(s.get("type") == "page" for s in (o.get("secondary_locators") or [])):
+            if C.place_of(o):  # a page, or a full-text XML's section (paginate.py does both)
                 with_page += 1
     return with_page, total
 
@@ -121,7 +121,7 @@ def main() -> int:
             return 1
         print(f"  citation figures: all {n_ok} found again in ASR's payloads")
     if args.pdfs and with_page < total:
-        print(f"  NOTE {total - with_page} passages have no page number — run paginate.py first")
+        print(f"  NOTE {total - with_page} passages have no page or section — run paginate.py first")
         print("       for links that open the PDF at the right page rather than page 1.")
     if args.plan:
         print("Planning only; nothing was written.")

@@ -149,6 +149,57 @@ across tools and platforms:
   file, whatever they are. Normalization is a property of how a tool *creates* a
   representation, never something applied at hash or verify time.
 
+### Structure (1.16.0)
+
+A reading copy converted from a publisher's structured full text (journal XML, say)
+is plain text: a heading is a line starting with `#`, each paragraph is one block, a
+table's rows are lines of cells joined by ` | `, a caption reads "Fig. 1. …". What
+each block *is* — heading, paragraph, caption, table row, footnote — is known to the
+converter but not written into the text, and it cannot be added later, because the
+text's bytes are what every quotation is anchored in.
+
+So it is stored beside the text, as its **structure map**: a `metadata`
+representation with media type `application/vnd.upc.structure+json` whose
+`parent_representation_ref` is the reading copy, `produced_by` the conversion that
+made both:
+
+```json
+{ "upc_structure": 1, "made_by": "xmltext 1.2.0", "format": "elsevier-ce", "chars": 51234,
+  "sections": [
+    { "label": "", "title": "Abstract", "depth": 2, "parent": null, "heading": true },
+    { "label": "3.2", "title": "Research directions", "depth": 3, "parent": 4, "heading": true },
+    { "label": "", "title": "Acknowledgements", "depth": 2, "parent": null, "heading": false } ],
+  "blocks": [
+    { "kind": "paragraph", "c0": 4120, "c1": 5012, "s": 1, "p": 4 },
+    { "kind": "row", "c0": 9050, "c1": 9101, "s": 1, "p": 4, "label": "Table 2", "t": 1, "head": false,
+      "cells": [[9050, 9058], [9061, 9101]] } ] }
+```
+
+- `c0`/`c1` are codepoint offsets into the reading copy (the unit of `char_range`,
+  §03), in order, never overlapping, with nothing but white space between blocks;
+  `chars` is the text's `char_count`.
+- `kind` is one of `title`, `heading`, `paragraph`, `keywords`, `caption`, `row`,
+  `table_note`, `list_item`, `formula`, `box`, `note` (a footnote) or `reference`.
+- `s` indexes `sections`, which follow the source's own nesting (`parent`, `depth`),
+  so a paragraph after a subsection belongs to its own section, not to the last
+  heading seen. `heading: false` marks a section whose heading the text does not
+  contain (a converter that drops the title of an acknowledgements section, say); a
+  reader names it outside the text.
+- `p` numbers a section's paragraphs from 1; a block that is not a paragraph (a list
+  item, a caption) carries the number of the paragraph it follows. `label` is a
+  float's, note's or reference's own label ("Table 2", "Fig. 1", "3").
+- A table row also carries `t` (which table, in order), `head` (a header row) and
+  `cells`, each cell's span inside the row.
+
+A structure map is **advisory**. It never changes a byte of the text, never enters a
+quotation gate or an id, and is never needed to verify anything: a corpus without one
+is complete, and a map that does not fit its text (`chars` differs, a block runs past
+the end, text between blocks) is not used (§08 `structure_unreadable`,
+`structure_char_mismatch`). It is stored, not recomputed, so that every reader shows
+the same structure without parsing the publisher's format again; being a
+representation it is hash-pinned and immutable like any other. Its media type is not
+textual, so it is never taken for a reading copy.
+
 ## Bibliographic metadata (CSL-aligned)
 
 Bibliographic data is CSL-JSON-aligned (snake_cased) so it round-trips with a CSL

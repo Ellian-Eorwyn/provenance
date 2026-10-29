@@ -130,8 +130,10 @@ task, embeddings, or several chat servers in a `pool`) may run at once.
      `X-ELS-Status: WARNING - Response limited to first page`). A manifest row may name that
      `.xml` file instead of a PDF: it is kept as the source's original, and `xmltext.py`
      makes the reading copy (title, abstracts, sections, tables, captions, notes,
-     references). It has **no page numbers**, so cite its passages by section. A response
-     that is metadata only (an unentitled request) is refused, never stored as a text.
+     references). It has **no page numbers**: step 10 gives each passage its section and
+     paragraph instead (`§3.2 ¶4`), and the site shows the text with its headings and
+     tables (`references/xml-full-text.md`). A response that is metadata only (an
+     unentitled request) is refused, never stored as a text.
      `add_acquired.py` takes the same files as kind `xml`. Check one with
      `<python> <skill>/scripts/xmltext.py <file.xml> --info`: `full_text` must be true.
 2. **Preflight** (Task 0) with `--config`, then plan the ingest:
@@ -192,11 +194,15 @@ task, embeddings, or several chat servers in a `pool`) may run at once.
    ```
    <python> -u <skill>/scripts/embed.py --corpus <corpus> build
    ```
-10. **Page numbers**, so each quotation opens its PDF at the right page (about 1 s per
-    paper):
+10. **Page numbers and sections**, so each quotation opens its PDF at the right page and
+    each full-text XML passage cites as `§3.2 ¶4` (about 1 s per paper):
     ```
-    <python> -u <skill>/scripts/paginate.py --corpus <corpus>
+    <python> -u <skill>/scripts/paginate.py --corpus <corpus> --plan
     ```
+    Expect `could not be placed 0` under both headings and, under `## Sections (full-text
+    XML)`, `text differs from what xmltext 1.2.0 makes (no map) 0`. Then run it without
+    `--plan`. A re-run changes nothing; `--force` recomputes every page and section.
+    - If `text differs` is above 0, see Known failures. Those papers keep line numbers.
 11. **Publish** into a handover folder:
     ```
     <python> -u <skill>/scripts/publish.py --corpus <corpus> --out <handover folder> --name <Name> --matrix <codebook>:<codebook> --pdfs --zip --folder-site
@@ -774,7 +780,8 @@ passages is annotated from its opening alone, and the plan counts them.
 4. **Full run, on the owner's go:** the same command without `--limit`, in the background.
    A re-run does only the papers left. `--redo` writes them again (`--ids <alias,…>` for
    some); a paper with the same inputs keeps one annotation.
-5. **Page numbers**, so the Word file gives them: `<python> <skill>/scripts/paginate.py --corpus <corpus>`.
+5. **Page numbers and sections**, so the Word file gives them (`p. 12`, or `§3.2 ¶4` for a
+   full-text XML): `<python> <skill>/scripts/paginate.py --corpus <corpus>`.
 6. **The front matter:** `<recipe folder>/front.md`, in Markdown (methods, search strings,
    a flow diagram as a picture beside the file, appendices). It may start with its own
    `---` title block; otherwise `--title` (default: the corpus title) is used.
@@ -814,7 +821,9 @@ passages is annotated from its opening alone, and the plan counts them.
 | `onepager.py build`: `not confirmed by a reviewer` | No reviewer has checked that figure | Build `--draft` for now; ask the reviewer; record their reply with `signoff` |
 | `onepager.py build`: `it prints on 2 pages, not one` | The words are too long for one sheet | Shorten the blocks it names; never shrink the type |
 | `onepager.py build`: `figures changed since revision …` | A figure was replaced after the page was written | Add the page again |
-| `NOTE … passages have no page number` | `paginate.py` hasn't run | Run it (Task 3, step 10), then publish again |
+| `NOTE … passages have no page or section` | `paginate.py` hasn't run | Run it (Task 3, step 10), then publish again |
+| `paginate.py`: `text differs from what xmltext 1.2.0 makes (no map)` above 0 | That reading copy was made another way (an earlier converter, by hand), so converting its XML again doesn't give its bytes | Leave it: its passages keep line numbers and stay verified. Never rewrite a reading copy to fit; every quotation is anchored in its bytes. Report the sources it names |
+| A full-text XML paper's page shows plain text, no headings or ¶ | No structure map yet, or `upc validate` warns `structure_char_mismatch` | Run `paginate.py` (Task 3, step 10) and publish again; report a mismatch with the warning |
 | `annotate.py`: `REFUSED …: … already exists from these inputs with a different output` | Another coder's annotation of that paper read the same passages (an annotation's id is its type and inputs) | `--redo` replaces it; or leave that paper to the first coder |
 | `sources_table.py`: `Refusing to keep the list: a local path in …` | The front matter (or an annotation) names a file on this machine | Reword it; nothing was kept |
 | `sources_table.py`: `… quotation differs from its passage` | An annotation's quotation no longer matches its stored passage | `annotate.py --redo --ids <alias>`, then the list again |

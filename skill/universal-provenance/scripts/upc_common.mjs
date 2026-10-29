@@ -675,6 +675,71 @@ export function isTextualMedia(mt) {
  *  times in seconds of the recording and c0/c1 codepoint offsets into the transcript. */
 export const TIMINGS_MEDIA_TYPE = "application/vnd.upc.timings+json";
 
+/** A reading copy's structure map (1.16.0, spec/02): a `metadata` representation whose
+ *  parent is the text, `{ upc_structure: 1, sections: [...], blocks: [{ kind, c0, c1, s, p }] }`,
+ *  saying what each block of the text is (a heading, a paragraph and its number, a caption,
+ *  a table row…). Advisory: reading.mjs checks one against its text before using it. */
+export const STRUCTURE_MEDIA_TYPE = "application/vnd.upc.structure+json";
+
+/** The textual representation a source is read in: the one most of its passages are
+ *  anchored in; else the first, unless that is an XML original with a textual child (a
+ *  publisher's full-text XML and the reading copy made from it), which is the child. */
+export function readingCopyOf(reps, anchored = new Map()) {
+  const texts = (reps || []).filter((r) => isTextualMedia(r.media_type));
+  let best = null, most = 0;
+  for (const r of texts) {
+    const n = anchored.get(r.representation_id) || 0;
+    if (n > most) { best = r; most = n; }
+  }
+  if (best) return best;
+  const first = texts[0] || null;
+  if (first && /^(text|application)\/xml$/.test(first.media_type || "")) {
+    const child = texts.find((r) => r.parent_representation_ref === first.representation_id);
+    if (child) return child;
+  }
+  return first;
+}
+
+// Where a passage is, as a reader cites it: "p. 12" in a PDF, "§3.2 ¶4" in a full-text
+// XML. The same rule as place_of in the upc-corpus toolkit (common.py); both pass the
+// cases in tests/section-cites.json.
+const NUMBERED_LABEL = /^(\d+|[A-Z])(\.(\d+|[A-Z]))*\.?$/;
+
+/** At most n characters, whole words, with "…" when cut. */
+export function shortWords(s, n = 40) {
+  s = String(s || "");
+  if (s.length <= n) return s;
+  let out = "";
+  for (const w of s.split(/\s+/).filter(Boolean)) {
+    if (out.length + w.length + (out ? 1 : 0) > n) break;
+    out = out ? `${out} ${w}` : w;
+  }
+  return (out || s.slice(0, n)) + "…";
+}
+
+/** A `section` locator as a reader cites it (spec/09): "§3.2 ¶4", "Abstract ¶1",
+ *  "Appendix A ¶2", "Table 2", "n. 3", "References". */
+export function sectionCite(loc) {
+  const block = loc.block, item = loc.item;
+  if (["caption", "row", "table_note", "box"].includes(block) && item) return String(item);
+  if (block === "note") return item ? `n. ${item}` : "Notes";
+  if (["reference", "keywords", "title"].includes(block)) return String(loc.value || "");
+  const label = String(loc.label || "");
+  const head = label && NUMBERED_LABEL.test(label) ? "§" + label.replace(/\.$/, "")
+    : label || shortWords(loc.title || loc.value || "");
+  return loc.paragraph && head ? `${head} ¶${loc.paragraph}` : head;
+}
+
+/** A passage's place: its page, else its section (only a section placed by its paper's
+ *  structure, which says what block it is in), else "". */
+export function placeOf(o) {
+  const secs = (o && o.secondary_locators) || [];
+  const page = secs.find((s) => s && s.type === "page");
+  if (page && page.value) return `p. ${page.value}`;
+  const sec = secs.find((s) => s && s.type === "section" && s.block);
+  return sec ? sectionCite(sec) : "";
+}
+
 /** Rounding between tools (ffprobe's duration, an engine's last word) is allowed this
  *  much past a recording's end before a time is called out of bounds. */
 export const TIME_GRACE_SECONDS = 0.5;

@@ -1735,8 +1735,8 @@ def figures_markdown(ctx: dict, e=str) -> str:
         if f.get("extraction_id"):
             ext = exts.get(f["extraction_id"]) or {}
             src = idx.get(f["source_id"]) or {}
-            pg = D.page_of(ext)
-            L += [f"> {e(f['quote'])}", ">", f"> — {e(src.get('title') or f['source_id'])}" + (f", p. {pg}" if pg else "")
+            pl = C.place_of(ext)
+            L += [f"> {e(f['quote'])}", ">", f"> — {e(src.get('title') or f['source_id'])}" + (f", {pl}" if pl else "")
                   + f" ({f['source_id']}, passage {f['extraction_id']})", ""]
         for i, r in enumerate(f.get("readings") or [], 1):
             agree = {True: "agrees", False: "DISAGREES", None: "no tolerance set"}[r.get("agrees")]

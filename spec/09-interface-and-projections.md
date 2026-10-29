@@ -79,7 +79,9 @@ unverified text as verified:
   quotation was checked against the document when it was checked against a
   rendering of it. A text-to-text conversion (raw HTML → cleaned Markdown) is
   *not* derived in this sense; §11 counts that as exact in the cleaned
-  representation.
+  representation. Nor is a publisher's full-text XML converted to plain text
+  (1.16.0): XML is text, the conversion keeps every word in reading order, and
+  a quotation checked against the converted text is plain **verified**.
 - **Model-rewritten text badges distinctly.** A textual representation is
   *model-rewritten* when a **model** produced it from another **textual**
   representation — an LLM "cleanup" of extracted Markdown, say. Rewriting is
@@ -110,6 +112,12 @@ unverified text as verified:
   source. It MUST render them visibly distinct from the gate result, and MUST NOT
   let any of them change a badge. Resolving a presentation locator is a reading
   aid; only hop B decides whether a quotation is verified.
+- **A section locator is cited as section and paragraph (1.16.0).** Where a
+  text has no pages, a `section` secondary locator carrying `block` (§03 "A
+  section and its paragraph") SHOULD be shown where a page would be, in the
+  compact form §03 gives (`§3.2 ¶4`, `Abstract ¶1`, `Table 2`, `n. 3`), and it
+  opens the reading copy at the passage. Like a page, it is navigation and
+  never changes a badge.
 - **A region drawn on an image MUST be labeled as recorded, not gated.** When a
   surface highlights a `bbox` on an image — including the cross-representation
   case where a quotation verified against an `ocr` text is shown against the
@@ -130,6 +138,22 @@ unverified text as verified:
   text that no longer matches what was verified. A representation too large to
   carry MUST be omitted entirely and offered as an external link; a **truncated**
   document MUST NOT be presented as the document.
+- **The reading copy shown is the one the passages are anchored in (1.16.0).**
+  When a source holds several textual representations (the publisher's XML and
+  the plain text converted from it, say), a source view MUST show the one its
+  passages' `char_range`s index, never another whose offsets would put the
+  highlights on the wrong words. It SHOULD say in one line how that copy was
+  made from its parent ("Converted from the publisher's full-text XML…",
+  "Extracted from the PDF…") and link the parent when it is carried.
+- **A structured reading copy SHOULD be shown by its structure (1.16.0).** A
+  reading copy with a structure map (§02 "Structure") that fits it SHOULD be
+  shown as the document it is: headings as headings, a table's rows as a
+  table, captions, notes and references set apart from the body, and each
+  paragraph's number in the margin. The number and the name of a section whose
+  heading the text lacks MUST sit outside the text (not selectable, never part
+  of a copied quotation), and every character of the text MUST still be shown,
+  in order: the map decides presentation only. A map that does not fit its
+  text is ignored, and the text is shown plain.
 - **Image representations carry their three pieces.** Where a browser shows an
   image it SHOULD show the `description` (what the image is), the `has_text`
   indication (whether it contains legible text), and a path to the verified

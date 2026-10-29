@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -371,6 +372,85 @@ def reading_copy(representations: list[dict]) -> dict | None:
 
 
 READING_ROLES = ("clean_markdown", "text", "markdown", "transcript", "ocr")
+XML_TYPES = ("text/xml", "application/xml")
+# A reading copy's structure map (spec/02): what each block is, its section and paragraph (xmltext.structure()).
+STRUCTURE = "application/vnd.upc.structure+json"
+
+
+# --- where a passage is: "p. 12", "§3.2 ¶4" --------------------------------
+# The same rule as placeOf in upc_common.mjs; tests/section-cites.json holds the cases both must pass.
+
+_NUMBERED_LABEL = re.compile(r"^(\d+|[A-Z])(\.(\d+|[A-Z]))*\.?$")
+
+
+def short(s: str, n: int = 40) -> str:
+    """At most n characters, whole words, with "…" when cut."""
+    if len(s) <= n:
+        return s
+    out = ""
+    for w in s.split():
+        if len(out) + len(w) + (1 if out else 0) > n:
+            break
+        out = f"{out} {w}" if out else w
+    return (out or s[:n]) + "…"
+
+
+def section_cite(loc: dict) -> str:
+    """A `section` locator as a reader cites it: "§3.2 ¶4" (a numbered section), "Abstract ¶1", "Appendix A ¶2",
+    "Table 2" (a caption, table row or table note), "n. 3" (a footnote), "References"."""
+    block, item = loc.get("block"), loc.get("item")
+    if block in ("caption", "row", "table_note", "box") and item:
+        return str(item)
+    if block == "note":
+        return f"n. {item}" if item else "Notes"
+    if block in ("reference", "keywords", "title"):
+        return str(loc.get("value") or "")
+    label = str(loc.get("label") or "")
+    head = "§" + label.rstrip(".") if label and _NUMBERED_LABEL.match(label) else \
+        label or short(str(loc.get("title") or loc.get("value") or ""))
+    para = loc.get("paragraph")
+    return f"{head} ¶{para}" if para and head else head
+
+
+def add_child_rep(corpus: Path, source_json: Path, parent: dict, data: bytes, filename: str, *, role: str,
+                  media_type: str, produced_by: str, provenance: dict) -> tuple[dict, bool]:
+    """Add a representation derived from `parent` to an existing source: its file beside the parent's, its record
+    appended to source.json (both written atomically). `upc add source` never touches a source that exists, and
+    spec/02 lets a source gain representations (never change one). The id is the bytes' (rep-<sha256[:12]>), so the
+    same bytes twice are one representation. -> (record, added)."""
+    import hashlib  # noqa: PLC0415
+    hexd = hashlib.sha256(data).hexdigest()
+    rid = "rep-" + hexd[:12]
+    src = json.loads(source_json.read_text(encoding="utf-8"))
+    have = next((r for r in src.get("representations", []) if r.get("representation_id") == rid), None)
+    if have:
+        return have, False
+    rel = (Path(parent["path"]).parent / filename).as_posix()
+    dest = corpus / rel
+    if not dest.resolve().is_relative_to(corpus.resolve()):
+        raise ValueError(f"refusing to write outside the corpus: {rel}")
+    tmp = dest.with_suffix(dest.suffix + ".tmp")
+    tmp.write_bytes(data)
+    os.replace(tmp, dest)
+    rec = {"representation_id": rid, "role": role, "media_type": media_type, "path": rel,
+           "sha256": "sha256:" + hexd, "bytes": len(data), "produced_by": produced_by,
+           "parent_representation_ref": parent["representation_id"], "provenance": provenance}
+    src.setdefault("representations", []).append(rec)
+    tmp = source_json.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(src, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    os.replace(tmp, source_json)
+    return rec, True
+
+
+def place_of(e: dict) -> str:
+    """Where a passage is in its paper: "p. 12" in a PDF (paginate.py's page), "§3.2 ¶4" in a full-text XML (its
+    section locator). A section locator without `block` (a bundle's heading, a table cell) is not a citable place."""
+    secs = e.get("secondary_locators") or []
+    page = next((s.get("value") for s in secs if s.get("type") == "page"), None)
+    if page:
+        return f"p. {page}"
+    sec = next((s for s in secs if s.get("type") == "section" and s.get("block")), None)
+    return section_cite(sec) if sec else ""
 
 
 def create_corpus(corpus: Path, spec: str, title: str, corpus_id: str | None = None) -> bool:

@@ -795,6 +795,7 @@ def recheck(corpus: Path, es: list[dict], br: dict | None, cfg: dict) -> tuple[l
             problems.append(f"{where}: its quotation differs from the stored passage {eid}")
             return
         item["page"] = page_of(e)
+        item["place"] = C.place_of(e)  # "p. 12", or "§3.2 ¶4" in a full-text XML
         n += 1
 
     for en in es:
@@ -1332,15 +1333,20 @@ def first_sentence(s) -> str:
     return re.split(r"(?<=[.!?])\s+", str(s or "").strip(), maxsplit=1)[0]
 
 
-def cite_text(quote: str, d: dict, page: int | None) -> str:
-    return f"“{quote}” ({short_title(d)}{f', p. {page}' if page else ''})"
+def where(item: dict) -> str:
+    """A quotation's place: "p. 12", or "§3.2 ¶4" for a full-text XML; an item recorded before places, its page."""
+    return item.get("place") or (f"p. {item['page']}" if item.get("page") else "")
+
+
+def cite_text(quote: str, d: dict, place: str) -> str:
+    return f"“{quote}” ({short_title(d)}{f', {place}' if place else ''})"
 
 
 def quote_html(item: dict, d: dict, link: str | None = None) -> str:
     src = f'<a href="{esc(link)}">{esc(short_title(d))}</a>' if link else esc(short_title(d))
-    page = f", p. {item['page']}" if item.get("page") else ""
+    page = f", {esc(where(item))}" if where(item) else ""
     return (f'<blockquote class="q">“{esc(item["quote"])}”</blockquote><div class="src">{src}{page}'
-            f'<button class="copy" type="button" data-cite="{esc(cite_text(item["quote"], d, item.get("page")))}">Copy</button></div>')
+            f'<button class="copy" type="button" data-cite="{esc(cite_text(item["quote"], d, where(item)))}">Copy</button></div>')
 
 
 def dots(n: int) -> str:
@@ -2067,7 +2073,7 @@ def docx_markdown(ctx: dict, out: Path) -> str:
     L = ["---"] + [f"{k}: {json.dumps(v, ensure_ascii=False)}" for k, v in meta.items() if v] + ["---", ""]
 
     def q(it, d):
-        page = f", p. {it['page']}" if it.get("page") else ""
+        page = f", {where(it)}" if where(it) else ""
         return [f"> {md(it['quote'])}", ">", f"> — {md(short_title(d))}{md(page)}", ""]
 
     if b:
@@ -2299,7 +2305,7 @@ def make_xlsx(ctx: dict, dest: Path) -> tuple[dict[str, int], str]:
         text.extend(cols)
 
     def src(it, d):
-        return [short_title(d), it.get("page"), it["quote"], it.get("extraction_id")]
+        return [short_title(d), it.get("page") or it.get("place") or None, it["quote"], it.get("extraction_id")]
 
     docs = ctx["docs"]
     secs = {s["slug"]: s["title"] for s in ctx["cfg"].get("sections") or []}
