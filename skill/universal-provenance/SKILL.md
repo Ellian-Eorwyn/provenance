@@ -65,6 +65,7 @@ node scripts/upc.mjs regen <corpus-dir>
 node scripts/upc.mjs export <corpus-dir> --format bibtex|ris|csl-json|jsonl|markdown|ro-crate|prov [-o <file>]
 node scripts/upc.mjs export <corpus-dir> --format obsidian -o <vault-dir> [--into <vault>] [--strip none|standard|aggressive]
 node scripts/upc.mjs reanchor <ext-id>|--all --corpus <corpus-dir> [--to <rep-id>]
+node scripts/upc.mjs recode --corpus <corpus-dir> --set <cds-id> [--coder <handle>] [--why <reason>] [--dry-run] < changes.jsonl
 node scripts/upc.mjs build-index <corpus-dir>
 node scripts/upc.mjs export <corpus-dir> --format site -o <dir> [--matrix a:b] [--bundle]
 node scripts/upc.mjs mint <src|rep|ext|gen|syn|cod|cbk> [--batch] < object.json
@@ -108,6 +109,13 @@ node scripts/upc.mjs check-compat --requires "^1.8"
   says what it stripped).
 - **reanchor** — after a representation is re-rendered, byte-exact-searches the
   successor for each quote and re-locates it (unique hit) or flags `needs_review`.
+- **recode** — changes or withdraws stored codings. Each line is
+  `{"coding_id", "to": <code> | "retract": true, "why"}`. A change mints the new
+  coding under the changer's handle and marks the old one `superseded`, with links
+  both ways. A withdrawal marks it `retracted`. Nothing is deleted, and only
+  active codings are shown. It works in multi-label codebooks too, where
+  `upc code` would only add a second code. One `modify` (or `retract`) event
+  records the batch with every reason.
 - **build-index** — writes a self-contained, offline `index.html` browser (a
   projection): findability, the provenance graph both ways, and a **verification
   badge on every quotation** with context read from the representation at the

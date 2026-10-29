@@ -23,7 +23,7 @@ import { buildModel as buildBrowserModel } from "../skill/universal-provenance/s
 import { buildProvGraph } from "../skill/universal-provenance/scripts/prov.mjs";
 import { buildVaultPlan, writeVault, loadProfile, renderCallout, serializeFrontmatter,
   stripBoilerplate, yamlScalar } from "../skill/universal-provenance/scripts/obsidian.mjs";
-import { validateCorpus, anchorCmd, codeCmd, codebookCmd, batchCmd, mintBatchCmd, locateCmd, satisfiesRequirement, specVersion, addSourceCmd, addSynthesisCmd, addGenerationCmd } from "../skill/universal-provenance/scripts/upc.mjs";
+import { validateCorpus, anchorCmd, codeCmd, recodeCmd, codebookCmd, batchCmd, mintBatchCmd, locateCmd, satisfiesRequirement, specVersion, addSourceCmd, addSynthesisCmd, addGenerationCmd } from "../skill/universal-provenance/scripts/upc.mjs";
 import { buildSiteModel, writeSite, writeSingleFile, renderOverviewMarkdown } from "../skill/universal-provenance/scripts/site.mjs";
 import { textBlocks, contextWindow, windowText, utf16Offsets, CONTEXT_CAP } from "../skill/universal-provenance/scripts/context.mjs";
 import { checkStructure, readingHtml, READING_JS, blocksU16, sectionsCompact, STRUCTURE_MEDIA_TYPE } from "../skill/universal-provenance/scripts/reading.mjs";
@@ -1154,6 +1154,71 @@ ok("filename rejects reserved", !checkFilename("sources/con/x.md").ok);
   {
     const items = fs.readFileSync(path.join(dir, "codings", "cds-1", "items.jsonl"), "utf8").trim().split("\n").map((l) => JSON.parse(l));
     eq("code: still one active answer per coder", items.filter((o) => o.coder === "model-a" && o.codebook_ref === cbk.codebook_id && (o.status || "active") === "active").map((o) => o.code).join(","), "operator");
+  }
+
+  // recode: withdraw or change a stored coding, in a copy so the checks below see cds-1 as it is.
+  {
+    const rdir = fs.mkdtempSync(path.join(os.tmpdir(), "upc-recode-"));
+    fs.cpSync(dir, rdir, { recursive: true });
+    const bcodes = [{ code: "cost", label: "Cost", definition: "Money." }, { code: "panel", label: "Panel", definition: "Electrical capacity." }];
+    const multi = { codebook_id: "", namespace: "demo", slug: "barrier", title: "Barrier", closed: true, multi_label: true, revision: 1, revision_digest: codebookRevisionDigest(bcodes), codes: bcodes, provenance: stamp };
+    multi.codebook_id = mintCbkId(multi);
+    fs.writeFileSync(path.join(rdir, "codebooks", multi.codebook_id + ".json"), JSON.stringify(multi, null, 2));
+    clearRepCache();
+    const m1 = codeCmd(rdir, "cds-m", [{ codebook_ref: multi.codebook_id, code: "cost", target: T, coder: "model-a", rationale: "Cost? No, wait: panel. Let's use cost." }], { tool: "selftest" });
+    const wrongId = m1.results[0].coding_id;
+    const readItems = (set) => fs.readFileSync(path.join(rdir, "codings", set, "items.jsonl"), "utf8").trim().split("\n").map((l) => JSON.parse(l));
+    const lastEvent = () => fs.readFileSync(path.join(rdir, "provenance", "events.jsonl"), "utf8").trim().split("\n").map((l) => JSON.parse(l)).pop();
+    const nEvents = () => fs.readFileSync(path.join(rdir, "provenance", "events.jsonl"), "utf8").trim().split("\n").length;
+
+    const before = nEvents();
+    const bad = recodeCmd(rdir, "cds-m", [
+      { coding_id: wrongId, to: "panel", coder: "checker" },
+      { coding_id: wrongId, why: "neither" },
+      { coding_id: wrongId, to: "panel", retract: true, why: "both" },
+      { coding_id: "cod-000000000000", retract: true, why: "x" },
+      { coding_id: wrongId, to: "nope", coder: "checker", why: "x" },
+      { coding_id: wrongId, to: "panel", why: "no coder" },
+    ], { tool: "selftest" });
+    eq("recode: a change with no reason is refused", bad.results[0].status, "invalid");
+    eq("recode: a line with neither to nor retract is refused", bad.results[1].status, "invalid");
+    eq("recode: a line with both is refused", bad.results[2].status, "invalid");
+    eq("recode: an unknown coding is refused", bad.results[3].status, "error");
+    eq("recode: a code outside the codebook is refused", bad.results[4].status, "error");
+    eq("recode: a change with no changer is refused", bad.results[5].status, "invalid");
+    eq("recode: refusals write nothing", bad.wrote, 0);
+    eq("recode: and log no event", nEvents(), before);
+    eq("recode: an unknown set is an error", recodeCmd(rdir, "cds-none", [{ coding_id: wrongId, retract: true, why: "x" }]).status, "error");
+
+    const ch = recodeCmd(rdir, "cds-m", [{ coding_id: wrongId, to: "panel", why: "The passage is about the panel, not cost.", coder: "checker" }],
+      { tool: "selftest", coderKind: "model", model: "m-27b" });
+    eq("recode: a change in a multi-label codebook lands", ch.results[0].status, "changed");
+    {
+      const items = readItems("cds-m");
+      const old = items.find((o) => o.coding_id === wrongId);
+      const neu = items.find((o) => o.coding_id === ch.results[0].to);
+      eq("recode: the old coding is kept, superseded", old.status, "superseded");
+      eq("recode: it points forward", old.superseded_by, neu.coding_id);
+      eq("recode: the new one points back", neu.supersedes, wrongId);
+      ok("recode: under the changer's handle, with the reason as its rationale", neu.coder === "checker" && neu.code === "panel" && neu.rationale === "The passage is about the panel, not cost.");
+      eq("recode: one active coding where there was one", items.filter((o) => (o.status || "active") === "active").length, 1);
+      const man = JSON.parse(fs.readFileSync(path.join(rdir, "codings", "cds-m", "manifest.json"), "utf8"));
+      ok("recode: the changer is declared, with its kind and model", man.coders.some((c) => c.coder === "checker" && c.kind === "model" && c.model === "m-27b"));
+      const ev = lastEvent();
+      ok("recode: one modify event names both codings and the reason",
+        ev.activity_type === "modify" && ev.inputs.coding_ids[0] === wrongId && ev.outputs.coding_ids[0] === neu.coding_id && ev.notes.includes("not cost"));
+    }
+    eq("recode: changing a superseded coding again is a no-op", recodeCmd(rdir, "cds-m", [{ coding_id: wrongId, to: "panel", why: "again", coder: "checker" }]).results[0].status, "unchanged");
+
+    const rt = recodeCmd(rdir, "cds-m", [{ coding_id: ch.results[0].to, retract: true, why: "Not a barrier at all." }], { tool: "selftest" });
+    eq("recode: a retraction lands", rt.results[0].status, "retracted");
+    eq("recode: the coding is kept, retracted", readItems("cds-m").find((o) => o.coding_id === ch.results[0].to).status, "retracted");
+    ok("recode: a retract event, no outputs", lastEvent().activity_type === "retract" && !lastEvent().outputs);
+    clearRepCache();
+    const rv = validateCorpus(rdir);
+    eq("recode: the corpus still passes", rv.status, "passed");
+    fs.rmSync(rdir, { recursive: true, force: true });
+    clearRepCache();
   }
 
   clearRepCache();

@@ -80,7 +80,7 @@ function specVersion() {
 
 const COMMANDS = [
   "validate", "verify-quotes", "verify", "quote", "locate", "anchor", "code",
-  "codebook", "regen", "build-index", "export", "mint", "add", "event", "batch", "reanchor",
+  "recode", "codebook", "regen", "build-index", "export", "mint", "add", "event", "batch", "reanchor",
   "version", "check-compat",
 ];
 
@@ -2193,6 +2193,125 @@ function codeCmd(root, setId, records, opts = {}) {
   return { status: "ok", set: setId, wrote: opts.dryRun ? 0 : fresh.length + revivedIds.length, tally, results };
 }
 
+/**
+ * upc recode — withdraw or change codings already stored (spec/12's lifecycle).
+ * Each change names a coding of the set and either a new code (`to`) of the same
+ * codebook, or `retract: true`. A change mints a new coding under the changer's
+ * handle (`coder` on the line, else --coder) and marks the old one superseded, the
+ * two linked both ways; a retraction marks it retracted. Nothing is deleted, and
+ * only active codings are shown. `upc code` can't do this for a multi-label codebook
+ * (a second code there is an addition, not a change) and has no withdrawal at all.
+ * One event records the batch, with each change's reason (`why`, required).
+ */
+function recodeCmd(root, setId, changes, opts = {}) {
+  const loaded = U.loadCorpus(root);
+  const model = buildModel(loaded);
+  const base = loaded.sections.codings || "codings/";
+  const setDirRel = path.join(base, setId).replace(/\\/g, "/");
+  const { abs: itemsAbs, contained: ic } = U.resolveInside(loaded.root, path.join(setDirRel, "items.jsonl").replace(/\\/g, "/"));
+  const { abs: manAbs, contained: mc } = U.resolveInside(loaded.root, path.join(setDirRel, "manifest.json").replace(/\\/g, "/"));
+  if (!ic || !mc) throw new Error(`refusing to write outside the corpus: ${setDirRel}`);
+  if (!fs.existsSync(itemsAbs)) return { status: "error", set: setId, wrote: 0, tally: { error: 1 }, results: [], detail: `no coding set ${setId}` };
+
+  const items = U.readJSONL(itemsAbs);
+  const byId = new Map(items.map((o) => [o.coding_id, o]));
+  const results = [];
+  const fresh = [];
+  const touched = [];
+  const whys = [];
+  const coders = new Set();
+
+  for (let i = 0; i < changes.length; i++) {
+    const c = changes[i] || {};
+    const why = String(c.why || "").trim();
+    const hasTo = c.to !== undefined && c.to !== null && c.to !== "";
+    if (!c.coding_id || hasTo === (c.retract === true)) { results.push({ i, status: "invalid", detail: "need coding_id and exactly one of to or retract: true" }); continue; }
+    if (!why) { results.push({ i, status: "invalid", coding_id: c.coding_id, detail: "need why: the reason is part of the record" }); continue; }
+    const old = byId.get(c.coding_id);
+    if (!old) { results.push({ i, status: "error", coding_id: c.coding_id, detail: `no coding ${c.coding_id} in ${setId}` }); continue; }
+    const st = old.status || "active";
+    if (st !== "active") { results.push({ i, status: "unchanged", coding_id: c.coding_id, detail: `already ${st}` }); continue; }
+
+    if (c.retract === true) {
+      old.status = "retracted";
+      touched.push(old.coding_id);
+      whys.push(`${old.coding_id} withdrawn: ${why}`);
+      results.push({ i, status: "retracted", coding_id: old.coding_id });
+      continue;
+    }
+
+    const cbk = model.cbkById.get(old.codebook_ref);
+    if (!cbk) { results.push({ i, status: "error", coding_id: c.coding_id, detail: `unknown codebook ${old.codebook_ref}` }); continue; }
+    const closed = cbk.closed !== false;
+    if (closed && !(cbk.codes || []).some((cd) => cd && cd.code === c.to)) {
+      results.push({ i, status: "error", coding_id: c.coding_id, detail: `code ${JSON.stringify(c.to)} is not in codebook ${cbk.codebook_id}` });
+      continue;
+    }
+    const coder = c.coder || opts.coder;
+    if (!coder) { results.push({ i, status: "invalid", coding_id: c.coding_id, detail: "need coder (on the line or --coder): who made the change" }); continue; }
+    const t = old.target;
+    const cod = {
+      codebook_ref: old.codebook_ref,
+      ...(closed ? { code: c.to } : { value: c.to }),
+      target: { kind: t.kind, id: t.id },
+      coder,
+      status: "active",
+      ...(cbk.revision ? { codebook_revision: cbk.revision } : {}),
+      ...(cbk.revision_digest ? { codebook_revision_digest: cbk.revision_digest } : {}),
+      ...(c.confidence ? { confidence: c.confidence } : {}),
+      rationale: c.rationale || why,
+      provenance: {
+        produced_by: { tool: opts.tool || "upc", method: opts.method || (opts.coderKind === "model" ? "model" : "human"), ...(opts.model ? { model: opts.model } : {}) },
+        created_at: nowStamp(),
+        derived_from: t.kind === "extraction" ? { extraction_ids: [t.id] } : t.kind === "source" ? { source_ids: [t.id] } : { representation_refs: [t.id] },
+      },
+    };
+    cod.coding_id = U.mintCodId(cod);
+    if (cod.coding_id === old.coding_id) { results.push({ i, status: "unchanged", coding_id: old.coding_id, detail: "the same code by the same coder" }); continue; }
+    const there = byId.get(cod.coding_id);
+    if (there) {
+      // The changer gave this answer before: bring it back rather than writing a twin.
+      there.status = "active";
+      delete there.superseded_by;
+      there.supersedes = old.coding_id;
+    } else {
+      cod.supersedes = old.coding_id;
+      fresh.push(cod);
+      byId.set(cod.coding_id, cod);
+    }
+    old.status = "superseded";
+    old.superseded_by = cod.coding_id;
+    coders.add(coder);
+    touched.push(old.coding_id);
+    whys.push(`${old.coding_id} → ${c.to} (${cod.coding_id}): ${why}`);
+    results.push({ i, status: "changed", coding_id: old.coding_id, to: cod.coding_id, ...(there ? { revived: true } : {}) });
+  }
+
+  if (!opts.dryRun && touched.length) {
+    const man = fs.existsSync(manAbs) ? U.readJSON(manAbs) : null;
+    if (man && coders.size) {
+      const declared = new Map((man.coders || []).map((x) => [x.coder, x]));
+      for (const c of coders) {
+        if (!declared.has(c)) declared.set(c, { coder: c, kind: opts.coderKind || "human", ...(opts.model ? { model: opts.model } : {}), ...(opts.tool ? { tool: opts.tool } : {}) });
+      }
+      man.coders = [...declared.values()];
+      U.atomicWriteFile(manAbs, JSON.stringify(man, null, 2) + "\n");
+    }
+    U.atomicWriteFile(itemsAbs, items.concat(fresh).map((o) => JSON.stringify(o)).join("\n") + "\n");
+    const changedTo = results.filter((r) => r.status === "changed").map((r) => r.to);
+    appendEvent(loaded, {
+      activity_type: changedTo.length ? "modify" : "retract", tool: opts.tool || "upc", started_at: nowStamp(), status: "success",
+      inputs: { coding_ids: touched },
+      ...(changedTo.length ? { outputs: { coding_ids: changedTo } } : {}),
+      notes: (opts.why ? opts.why + "\n" : "") + whys.join("\n"),
+    });
+  }
+
+  const tally = {};
+  for (const r of results) tally[r.status] = (tally[r.status] || 0) + 1;
+  return { status: "ok", set: setId, wrote: opts.dryRun ? 0 : touched.length, tally, results };
+}
+
 /** upc codebook — read-only inspection of the coding schemes in a corpus. */
 function codebookCmd(root, id) {
   const loaded = U.loadCorpus(root);
@@ -2495,6 +2614,19 @@ async function main() {
         process.exitCode = Object.keys(out.tally).some((k) => k === "error" || k === "invalid") ? 1 : 0;
         break;
       }
+      case "recode": {
+        const corpus = arg(rest, "--corpus");
+        const set = arg(rest, "--set");
+        if (!corpus || !set) { process.stderr.write("usage: upc recode --corpus <dir> --set <cds-id> [--coder <handle>] [--coder-kind human|model|adjudicator] [--model <m>] [--tool <t>] [--why <reason for the batch>] [--dry-run] < changes.jsonl\n  each line: {\"coding_id\": \"cod-…\", \"to\": \"<code>\" | \"retract\": true, \"why\": \"…\", [\"coder\"], [\"rationale\"], [\"confidence\"]}\n"); process.exit(2); }
+        const recs = readJsonlText(fs.readFileSync(0, "utf8"));
+        const out = recodeCmd(corpus, set, recs, {
+          coder: arg(rest, "--coder"), coderKind: arg(rest, "--coder-kind"), model: arg(rest, "--model"), tool: arg(rest, "--tool"),
+          method: arg(rest, "--method"), why: arg(rest, "--why"), dryRun: rest.includes("--dry-run"),
+        });
+        print(out);
+        process.exitCode = out.status !== "ok" || Object.keys(out.tally).some((k) => k === "error" || k === "invalid") ? 1 : 0;
+        break;
+      }
       case "codebook": {
         const corpus = arg(rest, "--corpus") || rest.find((a) => !a.startsWith("--") && !a.startsWith("cbk-"));
         const id = rest.find((a) => a.startsWith("cbk-"));
@@ -2547,7 +2679,7 @@ async function main() {
 
 // Exports for thin wrappers / tests; only run the CLI when invoked directly.
 // (validateCorpus is already exported at its declaration.)
-export { verifyQuotesFile, verifyExtractionCmd, quoteCmd, locateCmd, regenCmd, exportCmd, mintCmd, mintBatchCmd, anchorCmd, codeCmd, codebookCmd, batchCmd, addSourceCmd, addSynthesisCmd, addGenerationCmd, appendEvent, ensureSection, reanchorCmd, buildModel, sourcesCsv, extractionsCsv, computeSchemaHash, specVersion, satisfiesRequirement, COMMANDS };
+export { verifyQuotesFile, verifyExtractionCmd, quoteCmd, locateCmd, regenCmd, exportCmd, mintCmd, mintBatchCmd, anchorCmd, codeCmd, recodeCmd, codebookCmd, batchCmd, addSourceCmd, addSynthesisCmd, addGenerationCmd, appendEvent, ensureSection, reanchorCmd, buildModel, sourcesCsv, extractionsCsv, computeSchemaHash, specVersion, satisfiesRequirement, COMMANDS };
 
 const _isDirect = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
 if (_isDirect) main();
