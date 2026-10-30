@@ -167,9 +167,12 @@ task, embeddings, or several chat servers in a `pool`) may run at once.
 5. **Full pass**, only when the owner says so: the same command without `--limit`, in the
    background (179 papers took 2 h 20).
    - `--pool` reads papers on every chat server in the machine's `pool` at once, one each,
-     and writes the corpus one paper at a time: with two servers, about twice as fast. Each
-     paper's record (`code_pass/<coder>/<id>.json`) says which server read it. A server that
-     stops answering, or whose proxy relays to another, drops out and the others go on.
+     and writes the corpus one paper at a time: with three servers, about three times as fast.
+     Each paper's record (`code_pass/<coder>/<id>.json`) says which server read it. A server
+     that stops answering drops out and the others go on; one whose proxy relays to another
+     rests and comes back, and one whose `gate` says it is busy waits (`scripts/llm_pool.py`
+     describes the config). `screen.py`, `synthesize.py`, `check_codes.py run` and
+     `dossier.py write` take `--pool` too.
    - To pause, create `<corpus>/.upc/upc-corpus/code_pass/PAUSE`: the pass stops after the
      paper (or, pooled, the papers) in hand and validates. Delete the file and run the same
      command to go on.
@@ -354,7 +357,7 @@ doubted codings change, and `upc recode` records each change.
 2. Estimate first. Check every coding of 15 random papers:
    ```
    <python> -u <skill>/scripts/check_codes.py run --corpus <corpus> --set <cds-id> --checker <project>-27b-check-v1 \
-     --papers 15 --model chat --url <a 27B> --context "<one line on the project>"
+     --papers 15 --model chat --url <a 27B> --context "<one line on the project>"   # or --pool for every server
    ```
    Then run it without `--papers` for every coding; it resumes where it stopped. Each passage is read in its "In
    context" window (built once, about a minute). Nothing in the corpus changes.
