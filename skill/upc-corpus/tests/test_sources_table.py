@@ -110,6 +110,19 @@ class Table(unittest.TestCase):
             rels = z.read("word/_rels/document.xml.rels").decode()
         self.assertIn(f"{SITE}/sources/{slug}.html#ex={self.fx['x1']}", rels)
 
+    def test_the_rows_for_the_site_s_list_page(self):
+        dest = Path(tempfile.mkdtemp(dir=self.tmp)) / "list.json"
+        code, _, _ = self.build(FRONT, "--json", str(dest), "--list-title", "The list", "--facets", "Theory,Place")
+        self.assertEqual(code, 0)
+        d = json.loads(dest.read_text(encoding="utf-8"))
+        self.assertEqual((d["title"], d["facets"]), ("The list", ["Theory", "Place"]))
+        self.assertEqual([x["label"] for x in d["downloads"]], ["Word", "Spreadsheet"])
+        row = next(r for r in d["rows"] if r["fields"])
+        self.assertEqual([r["no"] for r in d["rows"]], list(range(1, len(d["rows"]) + 1)))
+        self.assertTrue(row["sid"].startswith("src-"))
+        self.assertTrue({"citation", "slug", "year", "title", "schemes"} <= row.keys())
+        self.assertNotIn(SITE, dest.read_text(encoding="utf-8"), "the page's links are the site's own, wherever it is hosted")
+
     def test_without_coders_each_coder_has_a_column(self):
         code, xlsx, _ = self.build()
         self.assertEqual(code, 0)

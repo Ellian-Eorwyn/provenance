@@ -888,6 +888,11 @@ passages is annotated from its opening alone, and the plan counts them.
    ```
    `--site-base` is where the folder site will be hosted: each row links
    `<site-base>/sources/<slug>.html`, and the Word file links each cited passage there.
+   For a list page on the site, add `--json <staging>/list.json` (and `--pdf <staging>/<Name>.pdf`,
+   `--list-title "<its name>"`, `--facets "<label>,…"` for the filters to show first) and build the site with
+   `publish.py … --list <staging>/list.json`. Then copy the list's files into the `-site` folder: the page and
+   the home page's band link them by name. The page's links are relative, so a package for another host
+   needs only the List rebuilt with its `--site-base`.
    `--coders` says whose codes each paper-level scheme shows; a scheme left out gets a column
    per coder, and the evidence schemes (grade, citation tier) come last. `--schemes` keeps
    only the paper-level schemes it names: a codebook used for passages and papers alike

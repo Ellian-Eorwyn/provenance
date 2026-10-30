@@ -1881,6 +1881,33 @@ ok("filename rejects reserved", !checkFilename("sources/con/x.md").ok);
   clearRepCache();
   const out = fs.mkdtempSync(path.join(os.tmpdir(), "upc-115o-"));
   writeSite(dir, { out, about, originalEdition: "https://example.org/2.1/" });
+  // The annotated list page (sources_table.py --json).
+  {
+    const slug = fs.readdirSync(path.join(dir, "sources")).filter((x) => !x.startsWith("."))[0];
+    const sid = JSON.parse(fs.readFileSync(path.join(dir, "sources", slug, "source.json"), "utf8")).source_id;
+    const list = { title: "Annotated list", schemes: ["Kind"], fields: [{ key: "b", label: "Barriers", kind: "text" }], facets: [],
+                   downloads: [{ label: "Word", file: "The-List.docx" }],
+                   rows: [{ no: 1, sid, slug, citation: "A (2024). T.", authors: "A", year: "2024", title: "T", venue: "", doi: "",
+                            url: "https://example.org/t", by: "a-coder-name", schemes: { Kind: ["Survey"] },
+                            fields: { b: { codes: [], note: "", text: "Cost [ext-0123456789ab]" } } }] };
+    const outList = fs.mkdtempSync(path.join(os.tmpdir(), "upc-list-"));
+    clearRepCache();
+    writeSite(dir, { out: outList, list });
+    const page = (rel) => fs.readFileSync(path.join(outList, rel), "utf8");
+    const data = page("data/list.js");
+    ok("list page: its nav item, on every page", /href="annotated-list\.html"/.test(page("index.html")) && /href="\.\.\/annotated-list\.html"/.test(page(`sources/${slug}.html`)));
+    ok("list page: the home page offers its files", /class="card listband"/.test(page("index.html")) && /href="The-List\.docx" download/.test(page("index.html")));
+    ok("list page: loads its rows, not the whole library", /data\/list\.js/.test(page("annotated-list.html")) && !/data\/browse\.js/.test(page("annotated-list.html")));
+    ok("list page: with no PDF here, a row's full text is the web", /"kind":"Web page"/.test(data));
+    ok("list page: a row links to its study page", data.includes(`"page":"sources/${slug}.html"`));
+    ok("list page: the coder's name stays out of the page", !data.includes("a-coder-name"));
+    const noList = fs.mkdtempSync(path.join(os.tmpdir(), "upc-nolist-"));
+    clearRepCache();
+    writeSite(dir, { out: noList });
+    ok("list page: none without --list", !fs.existsSync(path.join(noList, "annotated-list.html")) &&
+      !/annotated-list|listband/.test(fs.readFileSync(path.join(noList, "index.html"), "utf8")));
+    clearRepCache();
+  }
   const read = (rel) => fs.readFileSync(path.join(out, rel), "utf8");
   const home = read("index.html");
   ok("1.15 site: home counts topical codebooks only", /<span class="n">1<\/span><br><span class="u">codebooks/.test(home));

@@ -35,6 +35,7 @@ import datetime as dt
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -275,6 +276,25 @@ def docx_markdown(rows: list[dict], fields: list[dict], front: str, title: str, 
     return "\n".join(L)
 
 
+def write_list_json(rows: list[dict], fields: list[dict], cols: list, args, xlsx: Path, docx: Path, dest: Path) -> None:
+    """The rows for the site's list page. The site adds its own links, so nothing here depends on where it is hosted."""
+    downloads = [("Word", docx), *([("PDF", Path(args.pdf))] if args.pdf else []), ("Spreadsheet", xlsx)]
+    C.save_json(dest, {
+        "title": args.list_title,
+        "schemes": [h for _, _, h in cols], "fields": fields,
+        "facets": [x.strip() for x in args.facets.split(",") if x.strip()],
+        "downloads": [{"label": label, "file": p.name} for label, p in downloads],
+        "rows": [{"no": n, "sid": r["sid"], "slug": r["slug"], "citation": r["text"], "authors": r["authors"],
+                  "year": r["year"], "title": r["title"], "venue": r["venue"], "doi": r["doi"], "url": r["url"],
+                  "by": r.get("by", ""), "schemes": {h: v for h, v in r["codes"]},
+                  "fields": {k: {"codes": f["codes"], "note": f["note"],
+                                 **({"text": f["body"]} if not f["codes"] and not f["note"] else {}),
+                                 **({"quote": {"text": f["quote"]["text"], "place": f["quote"].get("place") or ""}}
+                                    if f.get("quote") else {})}
+                             for k, f in r["fields"].items()}}
+                 for n, r in enumerate(rows, 1)]})
+
+
 def zip_text(path: Path) -> str:
     with zipfile.ZipFile(path) as z:
         return "\n".join(z.read(n).decode("utf-8", "replace") for n in z.namelist() if n.endswith((".xml", ".rels")))
@@ -293,6 +313,10 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--heading", default="Annotated list", help="the heading above the entries")
     ap.add_argument("--xlsx", required=True)
     ap.add_argument("--docx", required=True)
+    ap.add_argument("--pdf", default="", help="also make a PDF of the Word file here (needs soffice)")
+    ap.add_argument("--json", default="", help="also write the rows for the site's list page (publish.py --list)")
+    ap.add_argument("--list-title", default="Annotated list", help="the list page's name in the site")
+    ap.add_argument("--facets", default="", help="label,… : the filters the list page shows first, in this order")
     args = ap.parse_args(argv)
 
     corpus = Path(args.corpus).expanduser()
@@ -335,6 +359,19 @@ def main(argv: list[str] | None = None) -> int:
         print("Refusing to keep the list:\n  " + "\n  ".join(problems[:12]))
         print("Nothing was kept.")
         return 1
+    if args.pdf:
+        pdf = Path(args.pdf).expanduser()
+        C.require_tools("soffice")
+        pdf.parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory() as tmp:
+            subprocess.run(["soffice", "--headless", "--convert-to", "pdf", "--outdir", tmp, str(docx)],
+                           capture_output=True, text=True, timeout=900)
+            made = Path(tmp) / f"{docx.stem}.pdf"
+            if not made.exists():
+                C.die("soffice made no PDF")
+            shutil.move(str(made), pdf)
+    if args.json:
+        write_list_json(rows, fields, cols, args, xlsx, docx, Path(args.json).expanduser())
     C.counts_header("Sources table", [
         ("sources", len(rows)), ("with an annotation", sum(1 for r in rows if r["fields"])),
         ("scheme columns", ", ".join(h for _, _, h in cols) or "none"),

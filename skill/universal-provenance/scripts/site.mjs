@@ -31,6 +31,7 @@ import * as U from "./upc_common.mjs";
 import { textBlocks, contextWindow, windowText, utf16Offsets } from "./context.mjs";
 import { checkStructure, blocksU16, sectionsCompact, readingHtml, READING_JS, READING_CSS } from "./reading.mjs";
 import * as IV from "./interviews.mjs";
+import { LIST_CSS, LIST_JS, listPayload, listBody, listBandHtml } from "./site_list.mjs";
 
 const INLINE_TEXT_MAX = 2_000_000;   // a reading copy embedded straight into its page
 const SIDECAR_TEXT_MAX = 8_000_000;  // ... or loaded from data/text/<rep>.js
@@ -556,6 +557,8 @@ export function buildSiteModel(loaded, opts = {}) {
     sources, sourceById, passages, passageById,
     codebooks, cbkById, codeIndex, syntheses, homeSummary, overviewByCode, homeCandidates: homes.length, hiddenById,
     about: typeof opts.about === "string" ? readAbout(opts.about) : (opts.about || null),
+    // The annotated list page (sources_table.py --json), on the folder site.
+    list: typeof opts.list === "string" ? JSON.parse(fs.readFileSync(opts.list, "utf8")) : (opts.list || null),
     findings,
     findingsSettings: (typeof opts.findings === "string" ? readFindingsSettings(opts.findings) : opts.findings) ||
       { starts: [], words: {}, mapPlace: "" },
@@ -600,6 +603,13 @@ a:hover{text-decoration:underline}
 header.top{border-bottom:1px solid var(--line);background:var(--panel);position:sticky;top:0;z-index:10}
 header.top .in{max-width:var(--maxw);margin:0 auto;padding:.7rem 1rem;display:flex;gap:.8rem;align-items:baseline;flex-wrap:wrap}
 header.top .brand{font-weight:700;letter-spacing:-.01em}
+.listband{display:flex;flex-wrap:wrap;gap:.6rem 1.4rem;align-items:center;justify-content:space-between;margin:0 0 1.2rem;font-family:ui-sans-serif,system-ui,sans-serif}
+.listband h2{margin:0;font-size:1.05rem}
+.listband p{margin:.1rem 0 0}
+.listband-go{display:flex;flex-wrap:wrap;gap:.45rem;align-items:center}
+.dlbtn{display:inline-block;border:1px solid var(--line);border-radius:8px;padding:.4rem .75rem;text-decoration:none;color:var(--ink);font-size:.88rem;white-space:nowrap}
+.dlbtn:hover{border-color:var(--accent)}
+.dlbtn.main{background:var(--accent);border-color:var(--accent);color:var(--panel);font-weight:600;margin-right:.5rem}
 header.top nav{display:flex;gap:.75rem;flex-wrap:wrap;font-family:ui-sans-serif,system-ui,sans-serif;font-size:.86rem}
 header.top nav a.on{color:var(--ink);border-bottom:2px solid var(--accent)}
 header.top .spacer{flex:1}
@@ -1717,6 +1727,7 @@ function page({ title, rel, body, model, active, extraHead = "", data = false })
   const nav = [
     // Not "": on a top-level page (the matrix) an empty link is *this* page.
     ["index.html", "Home", "home"],
+    ...(model.list ? [["annotated-list.html", model.list.title, "list"]] : []),
     // A rated library (1.15.0) leads with what the literature says, then how it was built.
     ...(model.findings.length
       ? [["findings.html", "Findings", "findings"], ["evidence.html", "Evidence map", "evidence"], ...reviews, ...library]
@@ -1734,7 +1745,10 @@ function page({ title, rel, body, model, active, extraHead = "", data = false })
 <title>${esc(title)}</title>
 <link rel="stylesheet" href="${base}assets/site.css">
 ${extraHead}
-${data ? `<script src="${base}data/browse.js" defer></script>` : ""}
+${data === "list" ? `<link rel="stylesheet" href="${base}assets/list.css">
+<script src="${base}data/list.js" defer></script>
+<script src="${base}assets/list.js" defer></script>`
+    : data ? `<script src="${base}data/browse.js" defer></script>` : ""}
 ${data === "findings" ? `<script src="${base}data/findings.js" defer></script>` : ""}
 <script src="${base}assets/site.js" defer></script>
 </head><body>
@@ -1913,6 +1927,7 @@ function homePage(model) {
 <p class="lede">A searchable library of what this literature actually says. Every quotation was compared with the
 source text character by character when this page was built${verified === nPass && nPass ? " — all of them matched" : ""}.</p>
 ${statusNoteHtml(model)}
+${listBandHtml(model)}
 ${findingsHomeHtml(model, folderLinks(""))}
 ${hc ? `${model.findings.length ? "<h2>What the literature says</h2>" : ""}<section class="card homesum"><h2>${esc(hc.t)}</h2>${hc.r || ""}${hc.h}</section>` : ""}
 ${model.syntheses.length ? `<p class="lede">${hc ? "<strong>Go deeper:</strong> read the" : "<strong>New here?</strong> Start with the"}
@@ -2958,6 +2973,13 @@ export function writeSite(root, opts = {}) {
     for (const syn of model.syntheses) w(`overviews/${syn._addr}.html`, overviewPage(model, syn, loaded.root));
   }
   if (model.about) w("methods.html", methodsPage(model));
+  if (model.list) {
+    w("data/list.js", `window.__UPCL_DATA=${j(listPayload(model))};\n`);
+    w("assets/list.css", LIST_CSS);
+    w("assets/list.js", LIST_JS);
+    w("annotated-list.html", page({ title: `${model.list.title} — ${model.title}`, rel: "annotated-list.html", model,
+                                    active: "list", data: "list", body: listBody(model) }));
+  }
   if (model.findings.length) {
     w("findings.html", findingsPage(model));
     w("evidence.html", evidencePage(model));

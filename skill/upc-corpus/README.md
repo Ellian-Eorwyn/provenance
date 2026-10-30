@@ -25,7 +25,7 @@ is the overview.
 | Write overviews | `synthesize.py`, `claim_groups.py`, `place_summary.mjs` |
 | Rate the evidence | `appraise.py`, `ctx_windows.mjs`, `citations.py`, `methods.py` |
 | Publish and check | `paginate.py`, `publish.py`, `compare_site.py`, `digest.py` |
-| Annotate each paper, then list them all (Word, spreadsheet) | `annotate.py`, `sources_table.py` |
+| Annotate each paper, then list them all (Word, PDF, spreadsheet, and a page on the site) | `annotate.py`, `sources_table.py`, `publish.py --list` |
 | A dossier for an audience and a project (site, Word, spreadsheet) | `dossier.py`, with profiles in `references/profiles/` |
 | Shared | `common.py`, `llm_pool.py`, `pdftext.py`, `corpus_view.py` |
 
@@ -59,6 +59,12 @@ card on the paper's page and labelled as a model's work.
 annotation) as a spreadsheet and a Word file with your front matter. It reads both back
 before keeping them: every quotation must match its stored passage and appear word for
 word, and no local path may appear.
+
+With `--pdf` it also makes a PDF of the Word file. With `--json` it writes the rows for the site's
+list page: pass them to `publish.py --list`, and the folder site gains an annotated list page (filters
+with live counts, a year chart, a choice of columns, rows that open into the whole entry, the view as a
+CSV) and a band on its home page with the list's files. Run `sources_table.py` first, then copy its files
+into the `-site` folder.
 
 ## Install
 
