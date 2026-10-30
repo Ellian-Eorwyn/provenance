@@ -1898,6 +1898,8 @@ ok("filename rejects reserved", !checkFilename("sources/con/x.md").ok);
     ok("list page: its nav item, on every page", /href="annotated-list\.html"/.test(page("index.html")) && /href="\.\.\/annotated-list\.html"/.test(page(`sources/${slug}.html`)));
     ok("list page: the home page offers its files", /class="card listband"/.test(page("index.html")) && /href="The-List\.docx" download/.test(page("index.html")));
     ok("list page: loads its rows, not the whole library", /data\/list\.js/.test(page("annotated-list.html")) && !/data\/browse\.js/.test(page("annotated-list.html")));
+    ok("list page: its width follows the window, with no cap", /:root\{--maxw:none\}/.test(page("assets/list.css")));
+    ok("list page: the table scrolls sideways from a rail above it", /class="alrail"/.test(page("assets/list.js")) && /type="range"/.test(page("assets/list.js")));
     ok("list page: with no PDF here, a row's full text is the web", /"kind":"Web page"/.test(data));
     ok("list page: a row links to its study page", data.includes(`"page":"sources/${slug}.html"`));
     ok("list page: the coder's name stays out of the page", !data.includes("a-coder-name"));

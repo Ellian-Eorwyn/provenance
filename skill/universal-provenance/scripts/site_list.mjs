@@ -57,7 +57,7 @@ downloads above, and each study has its own page under <a href="sources/">Source
 }
 
 export const LIST_CSS = String.raw`
-:root{--maxw:min(1560px,96vw)}
+:root{--maxw:none}
 main{padding-bottom:2rem}
 p.lede{max-width:82ch}
 .al{font-family:ui-sans-serif,system-ui,sans-serif;font-size:.9rem;--gap:.9rem}
@@ -69,7 +69,7 @@ p.lede{max-width:82ch}
 .altop{display:flex;flex-wrap:wrap;gap:.55rem;align-items:center;margin:.2rem 0 .7rem}
 .alsearch{flex:1 1 260px;min-width:0}
 .alsearch input{width:100%;font:inherit;color:var(--ink);background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:.46rem .7rem}
-.alsearch input:focus,.al button:focus-visible,.al a:focus-visible,.pick summary:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+.alsearch input:focus,.al button:focus-visible,.al a:focus-visible,.alrail input:focus-visible,.pick summary:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
 .fbtn{display:none}
 .seg{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden}
 .seg button{border:0;background:var(--panel);padding:.42rem .7rem}
@@ -120,8 +120,17 @@ p.lede{max-width:82ch}
 .yax{display:flex;justify-content:space-between;color:var(--muted);font-size:.74rem;font-variant-numeric:tabular-nums}
 .yline{min-height:1.2rem;font-size:.78rem;color:var(--muted);margin-top:.15rem}
 .res{min-width:0}
+.alrail{position:sticky;top:var(--top,3.2rem);z-index:4;display:flex;align-items:center;gap:.4rem;margin-top:-.6rem;padding:.6rem 0 .35rem;background:var(--bg)}
+.alrail[hidden]{display:none}
+.alrail .albtn{padding:.1rem .6rem;font-size:1.05rem}
+.alrail input{flex:1;min-width:0;height:.8rem;margin:0;background:var(--line);border-radius:999px;cursor:pointer;-webkit-appearance:none;appearance:none}
+.alrail input::-webkit-slider-thumb{width:var(--thumb,3rem);height:.8rem;background:var(--accent);border:0;border-radius:999px;-webkit-appearance:none;appearance:none}
+.alrail input::-moz-range-thumb{width:var(--thumb,3rem);height:.8rem;background:var(--accent);border:0;border-radius:999px}
+.alrail input::-moz-range-track{background:none}
+.alrailn{color:var(--muted);font-size:.8rem;white-space:nowrap;font-variant-numeric:tabular-nums}
 .tw{background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:auto;
   max-height:calc(100vh - var(--top,3.2rem) - 1.2rem)}
+.alrail:not([hidden])+.tw{max-height:calc(100vh - var(--top,3.2rem) - 3.6rem)}
 .al table{border-collapse:separate;border-spacing:0;font-size:inherit;width:100%}
 .al thead th{position:sticky;top:0;z-index:2;background:var(--panel);box-shadow:inset 0 -1px 0 var(--line);padding:0;text-align:left;vertical-align:bottom;white-space:nowrap}
 .al thead th button{display:flex;gap:.3rem;align-items:center;width:100%;background:none;border:0;padding:.55rem .7rem;font-weight:600}
@@ -134,6 +143,9 @@ p.lede{max-width:82ch}
 .c-title{min-width:17rem}
 .c-text{min-width:21rem}
 .c-tags{min-width:13rem}
+.al:not(.cardy) .c-title{position:sticky;left:0;z-index:1;background:var(--panel);box-shadow:inset -1px 0 0 var(--line)}
+.al:not(.cardy) thead th.c-title{z-index:3;box-shadow:inset -1px -1px 0 var(--line)}
+.al:not(.cardy) tr.r:not(.isopen):hover td.c-title{background:color-mix(in srgb,var(--accent-soft) 45%,var(--panel))}
 .t{display:block;width:100%;text-align:left;background:none;border:0;padding:0}
 .t b{font-weight:600}
 .t .sub{display:block;margin-top:.12rem;color:var(--muted);font-size:.8rem;font-weight:400}
@@ -380,7 +392,7 @@ export const LIST_JS = String.raw`
     var cols=S.cols.map(function(id){ return byId[id]; });
     var head=cols.map(function(c){
       var s=S.sort&&S.sort.id===c.id, can=!!c.sort;
-      return '<th scope="col" class="'+(can?"":"nosort")+'"'+(s?' aria-sort="'+(S.sort.dir<0?"descending":"ascending")+'"':"")+'>'+
+      return '<th scope="col" class="'+(can?"":"nosort")+(c.id==="title"?" c-title":"")+'"'+(s?' aria-sort="'+(S.sort.dir<0?"descending":"ascending")+'"':"")+'>'+
         '<button data-act="sort" data-c="'+c.id+'"'+(can?"":" disabled")+'>'+E(c.label)+'<span class="ar">'+(s?(S.sort.dir<0?"▼":"▲"):"")+"</span></button></th>";
     }).join("");
     var body=rows.map(function(r){
@@ -394,6 +406,30 @@ export const LIST_JS = String.raw`
     els.tw.innerHTML="<table><thead><tr>"+head+"</tr></thead><tbody>"+body+"</tbody></table>";
     els.tw.scrollTop=keepRow?top:0; els.tw.scrollLeft=left;
     root.style.setProperty("--tw",els.tw.clientWidth+"px");
+    syncRail();
+  }
+  // The table's sideways scrollbar sits at the foot of a pane taller than the screen, and macOS hides it,
+  // so the rail above the table does that job, always in view. A range input drags on every browser and keyboard.
+  function syncRail(){
+    var tw=els.tw, over=tw.scrollWidth-tw.clientWidth, on=over>1&&!root.classList.contains("cardy");
+    els.rail.hidden=!on;
+    if(!on) return;
+    els.range.max=over;
+    els.range.value=tw.scrollLeft;
+    els.range.style.setProperty("--thumb",Math.max(32,els.range.clientWidth*tw.clientWidth/tw.scrollWidth)+"px");
+    var box=tw.getBoundingClientRect(), fz=tw.querySelector("thead th.c-title"), z=fz&&fz.getBoundingClientRect();
+    var ths=[].slice.call(tw.querySelectorAll("thead th")), seen=ths.filter(function(t){
+      var x=t.getBoundingClientRect();
+      return x.left>=box.left-1&&x.right<=box.right+1&&(t===fz||!z||x.right<=z.left+1||x.left>=z.right-1);
+    }).length;
+    els.railn.textContent=seen+" of "+ths.length+" columns in view";
+  }
+  // One column along: the next one lands just right of the frozen title.
+  function stepCol(d){
+    var tw=els.tw, fz=tw.querySelector("thead th.c-title"), w=fz?fz.getBoundingClientRect().width:0, x=tw.scrollLeft, o=tw.querySelector("table").getBoundingClientRect().left;
+    var stops=[0].concat([].slice.call(tw.querySelectorAll("thead th")).filter(function(t){ return t!==fz; }).map(function(t){ return Math.floor(t.getBoundingClientRect().left-o-w); })).filter(function(s){ return s>=0; });
+    var next=stops.filter(function(s){ return d>0?s>x+2:s<x-2; });
+    tw.scrollLeft=next.length?(d>0?Math.min.apply(null,next):Math.max.apply(null,next)):(d>0?tw.scrollWidth:0);
   }
   function renderSide(){
     var T=terms(), h='<div class="fclose"><strong>Filters</strong><button class="albtn" data-act="filters">Show '+count.n+" studies</button></div>";
@@ -466,8 +502,13 @@ export const LIST_JS = String.raw`
     '<div class="acts"><button class="albtn" data-act="cols-default">Default</button><button class="albtn" data-act="cols-all">All</button></div></div></details>'+
     '<div class="seg" role="group" aria-label="View"><button data-act="view" data-v="table">Table</button><button data-act="view" data-v="cards">Cards</button></div>'+
     '<button class="albtn" data-act="csv" title="The studies and columns you see, as a CSV file">Download this view</button></div>'+
-    '<div class="alstat"></div><div class="algrid"><aside class="alside" aria-label="Filters"></aside><section class="res"><div class="tw"></div></section></div>';
+    '<div class="alstat"></div><div class="algrid"><aside class="alside" aria-label="Filters"></aside><section class="res"><div class="alrail" hidden>'+
+    '<button class="albtn" data-act="step" data-d="-1" aria-label="Previous column" title="Previous column">‹</button>'+
+    '<input type="range" min="0" max="0" value="0" step="any" aria-label="Scroll the table sideways">'+
+    '<button class="albtn" data-act="step" data-d="1" aria-label="Next column" title="Next column">›</button>'+
+    '<span class="alrailn"></span></div><div class="tw"></div></section></div>';
   var els={side:root.querySelector(".alside"),tw:root.querySelector(".tw"),stat:root.querySelector(".alstat"),
+    rail:root.querySelector(".alrail"),range:root.querySelector(".alrail input"),railn:root.querySelector(".alrailn"),
     pop:root.querySelector(".pop"),pickn:root.querySelector("[data-pickn]"),fbtn:root.querySelector(".fbtn"),q:root.querySelector("input[type=search]")};
   var narrow=window.matchMedia("(max-width:820px)");
   els.q.value=S.q;
@@ -477,6 +518,9 @@ export const LIST_JS = String.raw`
   }
   setTop();
   window.addEventListener("resize",function(){ setTop(); render(null,true); });
+  els.range.addEventListener("input",function(){ els.tw.scrollLeft=+els.range.value; });
+  var railX=0;
+  els.tw.addEventListener("scroll",function(){ if(els.tw.scrollLeft!==railX){ railX=els.tw.scrollLeft; syncRail(); } },{passive:true});
 
   function saveCols(){ try{ localStorage.setItem(KEY,JSON.stringify(S.cols)); }catch(e){} }
   function toggle(f,v){
@@ -523,6 +567,7 @@ export const LIST_JS = String.raw`
     else if(act==="view"){ S.view=v; render(); }
     else if(act==="filters"){ root.classList.toggle("fopen"); }
     else if(act==="csv") csv();
+    else if(act==="step") stepCol(+b.dataset.d);
     else if(act==="cols-default"){ S.cols=DEFAULT.slice(); saveCols(); render(); }
     else if(act==="cols-all"){ S.cols=COLS.map(function(c){ return c.id; }); saveCols(); render(); }
   });
