@@ -47,8 +47,8 @@ ${L.downloads.length ? `<span class="small muted">Download</span> ${downloadLink
 export function listBody(model) {
   const L = model.list;
   return `<h1>${esc(L.title)}</h1>
-<p class="lede">The ${L.rows.length} studies, each with its annotation. Filter by what a study covers, choose your columns,
-and open a row to read the whole entry. The annotations are written by a model${
+<p class="lede">The ${L.rows.length} studies${model.criteria ? ` that met the <a href="criteria.html">criteria</a>` : ""}, each with its annotation.
+Filter by what a study covers, choose your columns, and open a row to read the whole entry. The annotations are written by a model${
   model.about ? `: <a href="methods.html">how</a>` : ""}.${L.downloads.length ? ` Download the whole list: ${
   L.downloads.map((d) => `<a href="${encodeURI(d.file)}" download>${esc(d.label)}</a>`).join(", ")}.` : ""}</p>
 <div class="al" data-list></div>

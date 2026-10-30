@@ -557,6 +557,8 @@ export function buildSiteModel(loaded, opts = {}) {
     sources, sourceById, passages, passageById,
     codebooks, cbkById, codeIndex, syntheses, homeSummary, overviewByCode, homeCandidates: homes.length, hiddenById,
     about: typeof opts.about === "string" ? readAbout(opts.about) : (opts.about || null),
+    // A Criteria page (`--criteria <md>`): what a study needed to enter, on the folder site.
+    criteria: typeof opts.criteria === "string" ? readAbout(opts.criteria) : (opts.criteria || null),
     // The annotated list page (sources_table.py --json), on the folder site.
     list: typeof opts.list === "string" ? JSON.parse(fs.readFileSync(opts.list, "utf8")) : (opts.list || null),
     findings,
@@ -1733,6 +1735,7 @@ function page({ title, rel, body, model, active, extraHead = "", data = false })
       ? [["findings.html", "Findings", "findings"], ["evidence.html", "Evidence map", "evidence"], ...reviews, ...library]
       : [...library, ...reviews]),
     ...(model.matrix ? [["matrix.html", "Matrix", "matrix"]] : []),
+    ...(model.criteria ? [["criteria.html", "Criteria", "criteria"]] : []),
     ...(model.about ? [["methods.html", "Methods", "methods"]] : []),
   ];
   const banner = model.failures
@@ -2443,6 +2446,9 @@ export function renderOverviewMarkdown(md, model, links, opts = {}) {
     // in a model's overview or card; a bare file name with a download extension, nothing else.
     .replace(/\[([^\]\n]+)\]\(([A-Za-z0-9][A-Za-z0-9._-]*\.(?:docx|xlsx|csv|pdf|zip))\)/g,
       (m, t, u) => (opts.files ? `<a href="${u}" download>${t}</a>` : m))
+    // Another page of the site, on the same terms.
+    .replace(/\[([^\]\n]+)\]\(([A-Za-z0-9][A-Za-z0-9._-]*\.html)\)/g,
+      (m, t, u) => (opts.files ? `<a href="${u}">${t}</a>` : m))
     // **strong** (1.15.0: rating cards and Methods pages use it), before *em*
     .replace(/\*\*([^*\s](?:[^*\n]*?[^*\s])?)\*\*/g, "<strong>$1</strong>")
     .replace(/(^|[^*\w])\*([^*\s][^*\n]*?)\*(?=[^*\w]|$)/g, "$1<em>$2</em>");
@@ -2811,6 +2817,40 @@ function methodsPage(model) {
   });
 }
 
+/** Markdown with pipe tables, which the overviews' grammar has no need of: a Criteria page. */
+function renderTabledMarkdown(md, model, links) {
+  const render = (text) => renderOverviewMarkdown(text, model, links, { files: true });
+  const cells = (line) => line.trim().replace(/^\|/, "").replace(/\|$/, "").split("|").map((c) => c.trim());
+  const cell = (text, tag, num) => `<${tag}${num ? ' class="num"' : ""}>${text ? render(text).replace(/^\s*<p>|<\/p>\s*$/g, "") : ""}</${tag}>`;
+  const lines = md.split("\n"), out = [];
+  let prose = [];
+  const flush = () => { if (prose.join("").trim()) out.push(render(prose.join("\n"))); prose = []; };
+  for (let i = 0; i < lines.length; i++) {
+    if (!(lines[i].startsWith("|") && /^\|[\s:|-]+\|$/.test((lines[i + 1] || "").trim()))) { prose.push(lines[i]); continue; }
+    flush();
+    const head = cells(lines[i]), nums = cells(lines[i + 1]).map((c) => c.endsWith(":"));
+    const rows = [];
+    for (i += 2; i < lines.length && lines[i].startsWith("|"); i++) rows.push(cells(lines[i]));
+    i--;
+    out.push(`<div class="wrap"><table><thead><tr>${head.map((c, k) => cell(c, "th", nums[k])).join("")}</tr></thead><tbody>${
+      rows.map((r) => `<tr>${r.map((c, k) => cell(c, "td", nums[k])).join("")}</tr>`).join("\n")}</tbody></table></div>`);
+  }
+  flush();
+  return out.join("\n");
+}
+
+/** The Criteria page (`--criteria <md>`). */
+function criteriaPage(model) {
+  const md = model.criteria.md || "";
+  const h1 = /^\s*#\s+(.*)\n/.exec(md);
+  const title = h1 ? h1[1].trim() : "Criteria";
+  return page({
+    title: `${title} — ${model.title}`, rel: "criteria.html", model, active: "criteria",
+    body: `<h1>${esc(title)}</h1>
+${renderTabledMarkdown(md.replace(/^\s*#\s+.*\n+/, ""), model, folderLinks(""))}`,
+  });
+}
+
 /** The Methods page for the single file: {t, h}. */
 function aboutPayload(model, links) {
   const md = model.about.md || "";
@@ -2973,6 +3013,7 @@ export function writeSite(root, opts = {}) {
     for (const syn of model.syntheses) w(`overviews/${syn._addr}.html`, overviewPage(model, syn, loaded.root));
   }
   if (model.about) w("methods.html", methodsPage(model));
+  if (model.criteria) w("criteria.html", criteriaPage(model));
   if (model.list) {
     w("data/list.js", `window.__UPCL_DATA=${j(listPayload(model))};\n`);
     w("assets/list.css", LIST_CSS);

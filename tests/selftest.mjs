@@ -1901,11 +1901,22 @@ ok("filename rejects reserved", !checkFilename("sources/con/x.md").ok);
     ok("list page: with no PDF here, a row's full text is the web", /"kind":"Web page"/.test(data));
     ok("list page: a row links to its study page", data.includes(`"page":"sources/${slug}.html"`));
     ok("list page: the coder's name stays out of the page", !data.includes("a-coder-name"));
+    const crit = path.join(stage, "criteria.md");
+    fs.writeFileSync(crit, "# Criteria\n\nWhat a study needed.\n\n| Code | Reason | Count |\n|---|---|---:|\n| **E1** | Not residential | 12 |\n| | | |\n\nAfter the [list](annotated-list.html).\n");
+    const outCrit = fs.mkdtempSync(path.join(os.tmpdir(), "upc-crit-"));
+    clearRepCache();
+    writeSite(dir, { out: outCrit, criteria: crit, list });
+    const ch = fs.readFileSync(path.join(outCrit, "criteria.html"), "utf8");
+    ok("criteria page: a nav item and a link from the list", /href="criteria\.html"/.test(fs.readFileSync(path.join(outCrit, "index.html"), "utf8")) &&
+      /that met the <a href="criteria\.html">criteria/.test(fs.readFileSync(path.join(outCrit, "annotated-list.html"), "utf8")));
+    ok("criteria page: pipe tables, right-aligned numbers and prose", /<th class="num">Count<\/th>/.test(ch) && /<td><strong>E1<\/strong><\/td>/.test(ch) && /<td class="num">12<\/td>/.test(ch) && /<p>What a study needed/.test(ch));
+    ok("criteria page: a link to another page works", /href="annotated-list\.html"/.test(ch.split("<main>")[1]));
     const noList = fs.mkdtempSync(path.join(os.tmpdir(), "upc-nolist-"));
     clearRepCache();
     writeSite(dir, { out: noList });
     ok("list page: none without --list", !fs.existsSync(path.join(noList, "annotated-list.html")) &&
       !/annotated-list|listband/.test(fs.readFileSync(path.join(noList, "index.html"), "utf8")));
+    ok("criteria page: none without --criteria", !fs.existsSync(path.join(noList, "criteria.html")));
     clearRepCache();
   }
   const read = (rel) => fs.readFileSync(path.join(out, rel), "utf8");

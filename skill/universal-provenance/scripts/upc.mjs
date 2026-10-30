@@ -2461,7 +2461,7 @@ async function main() {
         // read a flag's argument as the corpus directory.
         const VALUE_FLAGS = new Set(["--format", "-o", "--into", "--profile", "--strip",
           "--frontmatter", "--filenames", "--image-names", "--domain", "--matrix", "--files",
-          "--about", "--original-edition", "--findings", "--list", "--max-file-bytes"]);
+          "--about", "--original-edition", "--findings", "--list", "--criteria", "--max-file-bytes"]);
         const dir = rest.find((a, i) => !a.startsWith("-") && !(i > 0 && VALUE_FLAGS.has(rest[i - 1])));
         const format = arg(rest, "--format");
         const out = arg(rest, "-o");
@@ -2472,6 +2472,8 @@ async function main() {
                              findings: arg(rest, "--findings") || null,
                              // The annotated list page's rows (upc-corpus sources_table.py --json).
                              list: arg(rest, "--list") || null,
+                             // What a study needed to enter, as a page of its own.
+                             criteria: arg(rest, "--criteria") || null,
                              // A bundle leaves out (and does not link) any PDF over this many bytes.
                              maxFileBytes: Number(arg(rest, "--max-file-bytes")) || null };
         if (format === "site-one" || (format === "site" && rest.includes("--single-file"))) {

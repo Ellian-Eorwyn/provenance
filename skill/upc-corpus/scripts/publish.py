@@ -82,6 +82,7 @@ def main() -> int:
                     help="starting points and wording for the Findings pages (JSON; UPC 1.15.0). "
                          "Default: <corpus>/.upc/upc-corpus/site/findings.json when it exists")
     ap.add_argument("--list", default="", help="an annotated list page on the folder site, from sources_table.py --json")
+    ap.add_argument("--criteria", default="", help="a Criteria page on the folder site, from this Markdown file (pipe tables work)")
     ap.add_argument("--max-pdf-mib", type=float, default=25,
                     help="leave out of the bundles any PDF larger than this (MiB; 0 = no limit)")
     ap.add_argument("--plan", action="store_true")
@@ -142,6 +143,8 @@ def main() -> int:
         C.die(f"no such file: {findings}")
     if args.list:
         mx += ["--list", str(Path(args.list).expanduser().resolve())]
+    if args.criteria:
+        mx += ["--criteria", str(Path(args.criteria).expanduser().resolve())]
 
     cap = ["--max-file-bytes", str(int(args.max_pdf_mib * 1048576))] if args.max_pdf_mib > 0 else []
     full = out / f"{args.name}.html"

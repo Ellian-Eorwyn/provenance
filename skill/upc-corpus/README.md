@@ -64,7 +64,7 @@ With `--pdf` it also makes a PDF of the Word file. With `--json` it writes the r
 list page: pass them to `publish.py --list`, and the folder site gains an annotated list page (filters
 with live counts, a year chart, a choice of columns, rows that open into the whole entry, the view as a
 CSV) and a band on its home page with the list's files. Run `sources_table.py` first, then copy its files
-into the `-site` folder.
+into the `-site` folder. `publish.py --criteria <md>` adds a Criteria page from a Markdown file with pipe tables.
 
 ## Install
 
